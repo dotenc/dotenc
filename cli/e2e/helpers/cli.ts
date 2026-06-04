@@ -150,11 +150,15 @@ export function runCliWithExpect(
 	extraEnv?: Record<string, string>,
 ): { stdout: string; stderr: string; exitCode: number } {
 	const invocation = [...getCliInvocation(), ...args]
+	const expectLogUser =
+		extraEnv?.DOTENC_E2E_EXPECT_LOG_USER ??
+		process.env.DOTENC_E2E_EXPECT_LOG_USER
 	const scriptLines = [
 		"set timeout 60",
 		"match_max 100000",
-		"log_user 1",
+		`log_user ${expectLogUser === "1" ? "1" : "0"}`,
 		`spawn -noecho ${invocation.map((part) => quoteTcl(part)).join(" ")}`,
+		"stty rows 40 columns 200",
 	]
 
 	for (const interaction of interactions) {
@@ -171,7 +175,9 @@ export function runCliWithExpect(
 		cwd: workspace,
 		env: {
 			...process.env,
+			COLUMNS: "200",
 			HOME: homeDir,
+			LINES: "40",
 			TERM: "xterm",
 			DOTENC_SKIP_UPDATE_CHECK: "1",
 			...extraEnv,

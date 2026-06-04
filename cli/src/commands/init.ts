@@ -13,6 +13,7 @@ import { keyAddCommand } from "./key/add"
 
 type Options = {
 	name?: string
+	privateKey?: string
 }
 
 export const _resolveDocsUrl = () => {
@@ -43,6 +44,10 @@ export const initCommand = async (options: Options) => {
 	try {
 		keyEntry = await choosePrivateKeyPrompt(
 			"Which SSH key would you like to use?",
+			{
+				nonInteractiveHint: "--private-key <name>",
+				preferredKeyName: options.privateKey,
+			},
 		)
 	} catch (error) {
 		console.error(error instanceof Error ? error.message : String(error))

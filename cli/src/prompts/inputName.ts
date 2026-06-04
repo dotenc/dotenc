@@ -1,24 +1,21 @@
-import { prompt } from "./prompt"
+import { promptText } from "../ui/prompts"
 
 export const inputNamePrompt = async (
 	message: string,
 	defaultValue?: string,
 ) => {
-	const result = await prompt([
-		{
-			type: "input",
-			name: "name",
-			message,
-			default: defaultValue,
-			filter: (input: string) =>
-				input
-					// allow only alphanumeric characters, underscores, and hyphens
-					.replace(/[^a-zA-Z0-9_-]/g, "")
-					// remove leading and trailing whitespace
-					.trim()
-					.toLocaleLowerCase(),
-		},
-	])
+	const result = await promptText(message, {
+		default: defaultValue,
+		nonInteractiveError:
+			"No name was provided in non-interactive mode. Pass --name <name> instead.",
+	})
 
-	return result.name as string
+	return (
+		result
+			// allow only alphanumeric characters, underscores, and hyphens
+			.replace(/[^a-zA-Z0-9_-]/g, "")
+			// remove leading and trailing whitespace
+			.trim()
+			.toLocaleLowerCase()
+	)
 }

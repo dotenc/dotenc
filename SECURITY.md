@@ -92,7 +92,7 @@ This means:
 
 ### Private Key Isolation
 
-**SSH private keys stay in `~/.ssh/`** — dotenc reads them in place and never copies, moves, or stores them elsewhere.
+**SSH private keys stay in `~/.ssh/`** — dotenc reads them in place and never copies, moves, or stores them elsewhere. When `dotenc key add --from-private-key <name>` or an interactive key-selection flow is used, dotenc loads the selected private key only long enough to derive and store its public key in `.dotenc/<name>.pub`; the private key itself is not written to the repository.
 
 **In-memory zeroing:** After the private key is used to decrypt the data key, the raw key bytes are explicitly overwritten with zeros before being released:
 
@@ -226,7 +226,7 @@ Alternatively, install via Homebrew, Scoop, npm, or a standalone binary from the
 ## Known Limitations
 
 - **dotenc does not prompt for passphrases.** To use passphrase-protected SSH keys, provide `DOTENC_PRIVATE_KEY_PASSPHRASE` in the environment. In interactive key selection flows (`dotenc init`, interactive `dotenc key add`), dotenc can also create an optional passwordless copy (for example `id_ed25519_passwordless`) after explicit user confirmation.
-- **No HSM or hardware key support.** Private keys must be accessible as files in `~/.ssh/` or via the `DOTENC_PRIVATE_KEY` environment variable.
+- **No HSM or hardware key support.** Private keys must be accessible as files in `~/.ssh/` or via the `DOTENC_PRIVATE_KEY` environment variable. Explicit key selection flags such as `--private-key` and `--from-private-key` select from those file-backed keys by name.
 - **Revocation is not retroactive.** See [Access Control Model](#access-control-model).
 - **No centralized policy engine.** Access control is enforced per-environment and per-repository, not across an organization.
 

@@ -35,9 +35,22 @@ export const _normalizePublicKeyNamesForCreate = (
 	return []
 }
 
+export const _resolvePublicKeySelectionForCreate = (
+	positionalPublicKey: string | undefined,
+	optionPublicKeys: string[] | undefined,
+): string | string[] | undefined => {
+	if (positionalPublicKey && optionPublicKeys?.length) {
+		throw new Error(
+			"Pass public keys either as the [publicKey] argument or with --public-key, not both.",
+		)
+	}
+
+	return optionPublicKeys?.length ? optionPublicKeys : positionalPublicKey
+}
+
 export const createCommand = async (
 	environmentNameArg: string,
-	publicKeyNameArg: string,
+	publicKeyNameArg: string | string[] | undefined,
 	initialContent?: string,
 ) => {
 	const invocationDir = process.cwd()

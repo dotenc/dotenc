@@ -7,7 +7,7 @@ import { validateKeyName } from "../../helpers/validateKeyName"
 import { choosePublicKeyPrompt } from "../../prompts/choosePublicKey"
 import { confirmPrompt } from "../../prompts/confirm"
 
-export const keyRemoveCommand = async (nameArg: string) => {
+export const keyRemoveCommand = async (nameArg: string, yes = false) => {
 	let name = nameArg
 
 	if (!name) {
@@ -34,12 +34,14 @@ export const keyRemoveCommand = async (nameArg: string) => {
 		process.exit(1)
 	}
 
-	const confirmed = await confirmPrompt(
-		`Are you sure you want to remove key ${name}?`,
-	)
-	if (!confirmed) {
-		console.log("Operation cancelled.")
-		return
+	if (!yes) {
+		const confirmed = await confirmPrompt(
+			`Are you sure you want to remove key ${name}?`,
+		)
+		if (!confirmed) {
+			console.log("Operation cancelled.")
+			return
+		}
 	}
 
 	await fs.unlink(filePath)

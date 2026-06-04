@@ -39,35 +39,8 @@ describe("Key Remove (key-deletion only)", () => {
 	}, TIMEOUT)
 
 	test("removes the .pub file", () => {
-		const result = runCli(aliceHome, workspace, [
-			"key", "remove", "bob", "--yes",
-		])
-		// Note: key remove does not have --yes; we need to use a workaround
-		// The command prompts for confirmation. Since we cannot pass --yes to key remove,
-		// we just check the result via the deps-injected path. The E2E confirms the file is gone.
-		// Actually key remove doesn't support --yes, so we handle the prompt via stdin.
-		void result
-		// Re-run with confirmation piped via stdin
-		const confirmed = Bun.spawnSync(
-			[...(() => {
-				if (process.env.DOTENC_E2E_CLI_RUNTIME === "node") {
-					return ["node", process.env.DOTENC_E2E_CLI_PATH ?? "/app/cli/dist/cli.js"]
-				}
-				return ["bun", process.env.DOTENC_E2E_CLI_PATH ?? "/app/cli/src/cli.ts"]
-			})(), "key", "remove", "bob"],
-			{
-				cwd: workspace,
-				env: {
-					...process.env,
-					HOME: aliceHome,
-					DOTENC_SKIP_UPDATE_CHECK: "1",
-				},
-				stdin: Buffer.from("y\n"),
-			},
-		)
-		void confirmed
-		// At this point bob.pub was already removed in the first attempt (which auto-confirmed via --yes)
-		// or via stdin. Check absence.
+		const result = runCli(aliceHome, workspace, ["key", "remove", "bob", "--yes"])
+		expect(result.exitCode).toBe(0)
 		expect(existsSync(path.join(workspace, ".dotenc", "bob.pub"))).toBe(false)
 	}, TIMEOUT)
 
@@ -85,22 +58,7 @@ describe("Key Remove (key-deletion only)", () => {
 				path.join(bobHome2, ".ssh", "id_ed25519"),
 			])
 
-			const cliArgs = process.env.DOTENC_E2E_CLI_RUNTIME === "node"
-				? ["node", process.env.DOTENC_E2E_CLI_PATH ?? "/app/cli/dist/cli.js"]
-				: ["bun", process.env.DOTENC_E2E_CLI_PATH ?? "/app/cli/src/cli.ts"]
-
-			const result = Bun.spawnSync(
-				[...cliArgs, "key", "remove", "bob"],
-				{
-					cwd: ws2,
-					env: {
-						...process.env,
-						HOME: aliceHome,
-						DOTENC_SKIP_UPDATE_CHECK: "1",
-					},
-					stdin: Buffer.from("y\n"),
-				},
-			)
+			const result = runCli(aliceHome, ws2, ["key", "remove", "bob", "--yes"])
 
 			const output = result.stdout.toString() + result.stderr.toString()
 			expect(output).toContain("dotenc auth purge bob")
@@ -125,23 +83,7 @@ describe("Key Remove (key-deletion only)", () => {
 			])
 			runCli(aliceHome, ws3, ["auth", "grant", "staging", "bob"])
 
-			const cliArgs = process.env.DOTENC_E2E_CLI_RUNTIME === "node"
-				? ["node", process.env.DOTENC_E2E_CLI_PATH ?? "/app/cli/dist/cli.js"]
-				: ["bun", process.env.DOTENC_E2E_CLI_PATH ?? "/app/cli/src/cli.ts"]
-
-			// Remove key file via stdin confirmation
-			Bun.spawnSync(
-				[...cliArgs, "key", "remove", "bob"],
-				{
-					cwd: ws3,
-					env: {
-						...process.env,
-						HOME: aliceHome,
-						DOTENC_SKIP_UPDATE_CHECK: "1",
-					},
-					stdin: Buffer.from("y\n"),
-				},
-			)
+			runCli(aliceHome, ws3, ["key", "remove", "bob", "--yes"])
 
 			// Bob's pub file is removed, but the encrypted env still has his entry
 			expect(existsSync(path.join(ws3, ".dotenc", "bob.pub"))).toBe(false)

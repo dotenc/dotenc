@@ -6,7 +6,10 @@ import { authPurgeCommand } from "./commands/auth/purge"
 import { revokeCommand } from "./commands/auth/revoke"
 import { configCommand } from "./commands/config"
 import { devCommand } from "./commands/dev"
-import { createCommand } from "./commands/env/create"
+import {
+	_resolvePublicKeySelectionForCreate,
+	createCommand,
+} from "./commands/env/create"
 import { decryptCommand } from "./commands/env/decrypt"
 import { envDeleteCommand } from "./commands/env/delete"
 import { editCommand } from "./commands/env/edit"
@@ -26,8 +29,14 @@ import { installVscodeExtensionCommand } from "./commands/tools/install-vscode-e
 import { updateCommand } from "./commands/update"
 import { whoamiCommand } from "./commands/whoami"
 import { maybeNotifyAboutUpdate } from "./helpers/updateNotifier"
+import { getErrorMessage } from "./ui/errors"
+import { logger } from "./ui/logger"
 
 const program = new Command()
+const collectValues = (value: string, previous: string[] = []) => [
+	...previous,
+	value,
+]
 
 program.name("dotenc").description(pkg.description).version(pkg.version)
 program.enablePositionalOptions()
@@ -35,6 +44,9 @@ program.enablePositionalOptions()
 program
 	.command("init")
 	.addOption(new Option("-n, --name <name>", "your username for the project"))
+	.addOption(
+		new Option("-k, --private-key <name>", "the SSH key to use for dotenc"),
+	)
 	.description("initialize a dotenc project in the current directory")
 	.action(initCommand)
 
@@ -47,8 +59,19 @@ env
 		"[publicKey]",
 		"the name of the public key to grant access to the environment",
 	)
+	.addOption(
+		new Option(
+			"-k, --public-key <name>",
+			"grant access to a public key (repeatable)",
+		).argParser(collectValues),
+	)
 	.description("create a new environment")
-	.action((env, pubKey) => createCommand(env, pubKey))
+	.action((env, pubKey, options) =>
+		createCommand(
+			env,
+			_resolvePublicKeySelectionForCreate(pubKey, options.publicKey),
+		),
+	)
 
 env
 	.command("edit")
@@ -181,6 +204,7 @@ program
 			"load only from the current directory, skip ancestor dirs",
 		),
 	)
+	.addOption(new Option("-i, --identity <name>", "the identity to use"))
 	.passThroughOptions()
 	.description("shortcut for 'run -e development,<yourname> <command>'")
 	.action((command, args, options) => devCommand(command, args, options))
@@ -194,6 +218,12 @@ key
 		new Option(
 			"--from-ssh <path>",
 			"add a public key derived from an SSH key file",
+		),
+	)
+	.addOption(
+		new Option(
+			"--from-private-key <name>",
+			"add a public key from an SSH key in ~/.ssh by name",
 		),
 	)
 	.addOption(
@@ -213,8 +243,9 @@ key
 key
 	.command("remove")
 	.argument("[name]", "the name of the public key to remove")
+	.addOption(new Option("--yes", "skip confirmation prompt"))
 	.description("remove a public key from the project")
-	.action(keyRemoveCommand)
+	.action((name, options) => keyRemoveCommand(name, options.yes ?? false))
 
 const tools = program
 	.command("tools")
@@ -223,6 +254,9 @@ const tools = program
 tools
 	.command("install-agent-skill")
 	.addOption(
+		new Option("--scope <scope>", "install scope").choices(["local", "global"]),
+	)
+	.addOption(
 		new Option("--force", "run npx skills in non-interactive mode (-y)"),
 	)
 	.description("install the agent skill for this project")
@@ -230,6 +264,18 @@ tools
 
 tools
 	.command("install-vscode-extension")
+	.addOption(
+		new Option(
+			"--open",
+			"open the extension page when a single editor is detected",
+		),
+	)
+	.addOption(
+		new Option(
+			"--manual",
+			"print the install URL instead of opening it automatically",
+		),
+	)
 	.description(
 		"add dotenc to VS Code / Cursor / Windsurf extension recommendations",
 	)
@@ -274,5 +320,7 @@ try {
 	if (error instanceof Error && error.name === "ExitPromptError") {
 		process.exit(0)
 	}
-	throw error
+
+	logger.error(getErrorMessage(error))
+	process.exit(1)
 }

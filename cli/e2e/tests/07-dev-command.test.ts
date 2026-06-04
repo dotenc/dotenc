@@ -2,7 +2,11 @@ import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { generateEd25519Key, runCli, runCliWithStdin, createMockEditor } from "../helpers/cli"
+import {
+	createMockEditor,
+	generateEd25519Key,
+	runCli,
+} from "../helpers/cli"
 
 const TIMEOUT = 30_000
 
@@ -42,14 +46,38 @@ describe("Dev Command", () => {
 		expect(result.stdout).toContain("personal456")
 	}, TIMEOUT)
 
-	test("dev command prompts for identity when multiple keys match", () => {
+	test("dev command requires --identity in non-interactive mode when multiple keys match", () => {
 		// Add the same SSH key under a second name
-		runCli(home, workspace, ["key", "add", "alice-deploy", "--from-ssh", path.join(home, ".ssh", "id_ed25519")])
+		runCli(home, workspace, [
+			"key",
+			"add",
+			"alice-deploy",
+			"--from-ssh",
+			path.join(home, ".ssh", "id_ed25519"),
+		])
 		// Create personal environment for alice-deploy
 		runCli(home, workspace, ["env", "create", "alice-deploy", "alice-deploy"])
 
-		// Send newline to select the first option (alice)
-		const result = runCliWithStdin(home, workspace, ["dev", "--", "sh", "-c", "echo $SHARED_SECRET"], "\n")
+		const missingIdentity = runCli(home, workspace, [
+			"dev",
+			"--",
+			"sh",
+			"-c",
+			"echo $SHARED_SECRET",
+		])
+		expect(missingIdentity.exitCode).toBe(1)
+		expect(missingIdentity.stderr).toContain("--identity")
+
+		const result = runCli(home, workspace, [
+			"dev",
+			"--identity",
+			"alice",
+			"--",
+			"sh",
+			"-c",
+			"echo $SHARED_SECRET",
+		])
+		expect(result.exitCode).toBe(0)
 		expect(result.stdout).toContain("shared123")
 	}, TIMEOUT)
 })

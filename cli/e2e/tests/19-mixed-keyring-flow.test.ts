@@ -7,7 +7,6 @@ import {
 	generateEd25519Key,
 	generateRsaKey,
 	runCli,
-	runCliWithStdin,
 } from "../helpers/cli"
 
 const TIMEOUT = 30_000
@@ -38,8 +37,13 @@ describe("Mixed keyring init/dev/run flow", () => {
 	})
 
 	test("init succeeds and creates development + personal envs with supported identity", () => {
-		// Non-interactive prompt input: accept first selectable key
-		const initResult = runCliWithStdin(home, workspace, ["init", "--name", "alice"], "\n")
+		const initResult = runCli(home, workspace, [
+			"init",
+			"--name",
+			"alice",
+			"--private-key",
+			"id_ed25519",
+		])
 		expect(initResult.exitCode).toBe(0)
 		expect(initResult.stdout).toContain("Initialization complete")
 

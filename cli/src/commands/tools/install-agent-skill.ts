@@ -1,15 +1,19 @@
 import { spawn } from "node:child_process"
 import chalk from "chalk"
-import inquirer from "inquirer"
+import { logger } from "../../ui/logger"
+import { NonInteractivePromptError, promptSelect } from "../../ui/prompts"
 
 type Options = {
 	force?: boolean
+	scope?: Scope
 }
 
 type Scope = "local" | "global"
 
 const SKILL_SOURCE = "ivanfilhoz/dotenc"
 const SKILL_NAME = "dotenc"
+const NON_INTERACTIVE_SCOPE_FALLBACK =
+	"Install scope prompt is unavailable in non-interactive mode."
 
 export const _runNpx = (args: string[], spawnImpl: typeof spawn = spawn) =>
 	new Promise<number>((resolve, reject) => {
@@ -23,17 +27,29 @@ export const _runNpx = (args: string[], spawnImpl: typeof spawn = spawn) =>
 	})
 
 export const installAgentSkillCommand = async (options: Options) => {
-	const { scope } = (await inquirer.prompt([
-		{
-			type: "list",
-			name: "scope",
-			message: "Install locally or globally?",
-			choices: [
-				{ name: "Locally (this project)", value: "local" },
-				{ name: "Globally (all projects)", value: "global" },
-			],
-		},
-	])) as { scope: Scope }
+	let scope = options.scope
+
+	if (!scope) {
+		try {
+			scope = await promptSelect<Scope>("Install locally or globally?", {
+				options: [
+					{ label: "Locally (this project)", value: "local" },
+					{ label: "Globally (all projects)", value: "global" },
+				],
+				initial: "local",
+				nonInteractiveError: NON_INTERACTIVE_SCOPE_FALLBACK,
+			})
+		} catch (error) {
+			if (!(error instanceof NonInteractivePromptError)) {
+				throw error
+			}
+
+			scope = "local"
+			logger.info(
+				`No ${chalk.gray("--scope")} provided in non-interactive mode. Defaulting to ${chalk.cyan("local")}.`,
+			)
+		}
+	}
 
 	const args = ["skills", "add", SKILL_SOURCE, "--skill", SKILL_NAME]
 

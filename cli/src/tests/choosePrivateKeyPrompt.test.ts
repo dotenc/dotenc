@@ -60,7 +60,8 @@ const makeDeps = (
 					unsupportedKeys: [],
 				}) as never,
 		) as never,
-		prompt: mock(async (_questions: unknown) => ({ key: "" })) as never,
+		promptConfirm: mock(async () => false) as never,
+		promptSelect: mock(async () => "") as never,
 		createEd25519SshKey: mock(async () => "/tmp/new-key") as never,
 		createPasswordlessSshKeyCopy: mock(
 			async () =>
@@ -78,7 +79,7 @@ const makeDeps = (
 }
 
 describe("choosePrivateKeyPrompt", () => {
-	test("shows passphrase keys as selectable and unsupported keys as disabled", async () => {
+	test("shows passphrase keys as selectable and logs unsupported keys", async () => {
 		const selectedKey = createPrivateKeyEntry("id_ed25519", "ed25519")
 
 		const getPrivateKeys = mock(
@@ -92,39 +93,37 @@ describe("choosePrivateKeyPrompt", () => {
 					],
 				}) as never,
 		)
-		const prompt = mock(async (_questions: unknown) => ({
-			key: "id_ed25519",
-		}))
+		const promptSelect = mock(async () => "id_ed25519")
+		const logWarn = mock((_message: string) => {})
 
 		const selected = await _runChoosePrivateKeyPrompt(
 			"Pick key",
 			makeDeps({
 				getPrivateKeys: getPrivateKeys as never,
-				prompt: prompt as never,
+				logWarn,
+				promptSelect: promptSelect as never,
 			}),
 		)
 
 		expect(selected).toBe(selectedKey)
-		expect(prompt).toHaveBeenCalledTimes(1)
-		const [question] = prompt.mock.calls[0][0] as Array<{
-			type: string
-			choices: Array<{ name: string; value: string; disabled?: boolean }>
-		}>
-		expect(question.type).toBe("list")
+		expect(promptSelect).toHaveBeenCalledTimes(1)
+		const [_message, options] = promptSelect.mock.calls[0] as unknown as [
+			string,
+			{ options: Array<{ label: string; value: string; hint?: string }> },
+		]
 
-		const passphraseChoice = question.choices.find((choice) =>
-			choice.name.includes("id_locked"),
+		const passphraseChoice = options.options.find(
+			(choice) => choice.label === "id_locked",
 		)
 		expect(passphraseChoice).toBeDefined()
-		expect(passphraseChoice?.disabled).toBeUndefined()
+		expect(passphraseChoice?.hint).toBe("passphrase-protected")
 
-		const unsupportedChoice = question.choices.find((choice) =>
-			choice.name.includes("id_ecdsa"),
-		)
-		expect(unsupportedChoice).toBeDefined()
-		expect(unsupportedChoice?.disabled).toBe(true)
+		expect(
+			options.options.some((choice) => choice.label.includes("id_ecdsa")),
+		).toBe(false)
+		expect(logWarn).toHaveBeenCalledWith(expect.stringContaining("id_ecdsa"))
 
-		expect(question.choices[question.choices.length - 1].value).toBe(
+		expect(options.options[options.options.length - 1].value).toBe(
 			CREATE_NEW_PRIVATE_KEY_CHOICE,
 		)
 	})
@@ -142,12 +141,11 @@ describe("choosePrivateKeyPrompt", () => {
 		)
 
 		let promptCall = 0
-		const prompt = mock(async (_questions: unknown) => {
+		const promptSelect = mock(async () => {
 			promptCall += 1
-			if (promptCall === 1) {
-				return { key: CREATE_NEW_PRIVATE_KEY_CHOICE }
-			}
-			return { key: "id_ed25519_dotenc" }
+			return promptCall === 1
+				? CREATE_NEW_PRIVATE_KEY_CHOICE
+				: "id_ed25519_dotenc"
 		})
 
 		const createEd25519SshKey = mock(async () => "/tmp/id_ed25519_dotenc")
@@ -158,7 +156,7 @@ describe("choosePrivateKeyPrompt", () => {
 			"Pick key",
 			makeDeps({
 				getPrivateKeys: getPrivateKeys as never,
-				prompt: prompt as never,
+				promptSelect: promptSelect as never,
 				createEd25519SshKey: createEd25519SshKey as never,
 				logInfo,
 				logWarn,
@@ -167,7 +165,7 @@ describe("choosePrivateKeyPrompt", () => {
 
 		expect(selected).toBe(createdKey)
 		expect(createEd25519SshKey).toHaveBeenCalledTimes(1)
-		expect(prompt).toHaveBeenCalledTimes(2)
+		expect(promptSelect).toHaveBeenCalledTimes(2)
 		expect(getPrivateKeys).toHaveBeenCalledTimes(2)
 		expect(logInfo).toHaveBeenCalled()
 		expect(logWarn).not.toHaveBeenCalled()
@@ -190,21 +188,10 @@ describe("choosePrivateKeyPrompt", () => {
 				}) as never,
 		)
 
-		const prompt = mock(async (questions: unknown) => {
-			const [question] = questions as Array<{
-				type: string
-				choices?: Array<{ value: string; name: string }>
-			}>
-
-			if (question.type === "list") {
-				const passphraseChoice = question.choices?.find((choice) =>
-					choice.name.includes("id_ed25519"),
-				)
-				return { key: passphraseChoice?.value ?? "" }
-			}
-
-			return { shouldCreatePasswordlessCopy: true }
-		})
+		const promptSelect = mock(
+			async () => "__dotenc_passphrase_protected_key__:id_ed25519",
+		)
+		const promptConfirm = mock(async () => true)
 
 		const createPasswordlessSshKeyCopy = mock(
 			async () =>
@@ -218,7 +205,8 @@ describe("choosePrivateKeyPrompt", () => {
 			"Pick key",
 			makeDeps({
 				getPrivateKeys: getPrivateKeys as never,
-				prompt: prompt as never,
+				promptConfirm: promptConfirm as never,
+				promptSelect: promptSelect as never,
 				createPasswordlessSshKeyCopy: createPasswordlessSshKeyCopy as never,
 			}),
 		)
@@ -227,33 +215,23 @@ describe("choosePrivateKeyPrompt", () => {
 		expect(createPasswordlessSshKeyCopy).toHaveBeenCalledWith(
 			"/home/tester/.ssh/id_ed25519",
 		)
-		expect(prompt).toHaveBeenCalledTimes(2)
+		expect(promptSelect).toHaveBeenCalledTimes(1)
+		expect(promptConfirm).toHaveBeenCalledTimes(1)
 		expect(getPrivateKeys).toHaveBeenCalledTimes(2)
 	})
 
 	test("re-prompts when user declines passwordless copy creation", async () => {
 		const supportedKey = createPrivateKeyEntry("id_ed25519", "ed25519")
 		let promptCall = 0
-		const prompt = mock(async (questions: unknown) => {
-			const [question] = questions as Array<{
-				type: string
-				choices?: Array<{ value: string; name: string }>
-			}>
-
-			if (question.type === "confirm") {
-				return { shouldCreatePasswordlessCopy: false }
-			}
-
+		const promptSelect = mock(async () => {
 			promptCall += 1
 			if (promptCall === 1) {
-				const passphraseChoice = question.choices?.find((choice) =>
-					choice.name.includes("id_locked"),
-				)
-				return { key: passphraseChoice?.value ?? "" }
+				return "__dotenc_passphrase_protected_key__:id_locked"
 			}
 
-			return { key: "id_ed25519" }
+			return "id_ed25519"
 		})
+		const promptConfirm = mock(async () => false)
 
 		const selected = await _runChoosePrivateKeyPrompt(
 			"Pick key",
@@ -268,7 +246,8 @@ describe("choosePrivateKeyPrompt", () => {
 							],
 						}) as never,
 				) as never,
-				prompt: prompt as never,
+				promptConfirm: promptConfirm as never,
+				promptSelect: promptSelect as never,
 			}),
 		)
 
@@ -278,26 +257,15 @@ describe("choosePrivateKeyPrompt", () => {
 	test("warns and re-prompts when passwordless copy creation fails", async () => {
 		const supportedKey = createPrivateKeyEntry("id_ed25519", "ed25519")
 		let promptCall = 0
-		const prompt = mock(async (questions: unknown) => {
-			const [question] = questions as Array<{
-				type: string
-				choices?: Array<{ value: string; name: string }>
-			}>
-
-			if (question.type === "confirm") {
-				return { shouldCreatePasswordlessCopy: true }
-			}
-
+		const promptSelect = mock(async () => {
 			promptCall += 1
 			if (promptCall === 1) {
-				const passphraseChoice = question.choices?.find((choice) =>
-					choice.name.includes("id_locked"),
-				)
-				return { key: passphraseChoice?.value ?? "" }
+				return "__dotenc_passphrase_protected_key__:id_locked"
 			}
 
-			return { key: "id_ed25519" }
+			return "id_ed25519"
 		})
+		const promptConfirm = mock(async () => true)
 
 		const logWarn = mock((_message: string) => {})
 		const selected = await _runChoosePrivateKeyPrompt(
@@ -313,7 +281,8 @@ describe("choosePrivateKeyPrompt", () => {
 							],
 						}) as never,
 				) as never,
-				prompt: prompt as never,
+				promptConfirm: promptConfirm as never,
+				promptSelect: promptSelect as never,
 				createPasswordlessSshKeyCopy: mock(async () => {
 					throw new Error("bad passphrase")
 				}) as never,
@@ -337,21 +306,19 @@ describe("choosePrivateKeyPrompt", () => {
 					],
 				}) as never,
 		)
-		const prompt = mock(async (_questions: unknown) => ({
-			key: "id_ed25519",
-		}))
+		const promptSelect = mock(async () => "id_ed25519")
 
 		const selected = await _runChoosePrivateKeyPrompt(
 			"Pick key",
 			makeDeps({
 				getPrivateKeys: getPrivateKeys as never,
-				prompt: prompt as never,
+				promptSelect: promptSelect as never,
 				isInteractive: () => false,
 			}),
 		)
 
 		expect(selected).toBe(selectedKey)
-		expect(prompt).not.toHaveBeenCalled()
+		expect(promptSelect).not.toHaveBeenCalled()
 	})
 
 	test("ignores weak RSA keys and picks a valid key in non-interactive mode", async () => {
@@ -377,6 +344,83 @@ describe("choosePrivateKeyPrompt", () => {
 		expect(selected).toBe(strongEd25519)
 	})
 
+	test("requires an explicit key choice in non-interactive mode when multiple supported keys exist", async () => {
+		const firstKey = createPrivateKeyEntry("id_ed25519", "ed25519")
+		const secondKey = createPrivateKeyEntry("id_ed25519_alt", "ed25519")
+
+		await expect(
+			_runChoosePrivateKeyPrompt(
+				"Pick key",
+				makeDeps({
+					getPrivateKeys: mock(
+						async () =>
+							({
+								keys: [firstKey, secondKey],
+								passphraseProtectedKeys: [],
+								unsupportedKeys: [],
+							}) as never,
+					) as never,
+					isInteractive: () => false,
+				}),
+				{
+					nonInteractiveHint: "--private-key <name>",
+				},
+			),
+		).rejects.toThrow("Pass --private-key <name>")
+	})
+
+	test("selects a preferred supported key without prompting", async () => {
+		const firstKey = createPrivateKeyEntry("id_ed25519", "ed25519")
+		const secondKey = createPrivateKeyEntry("id_ed25519_alt", "ed25519")
+		const promptSelect = mock(async () => "id_ed25519")
+
+		const selected = await _runChoosePrivateKeyPrompt(
+			"Pick key",
+			makeDeps({
+				getPrivateKeys: mock(
+					async () =>
+						({
+							keys: [firstKey, secondKey],
+							passphraseProtectedKeys: [],
+							unsupportedKeys: [],
+						}) as never,
+				) as never,
+				promptSelect: promptSelect as never,
+				isInteractive: () => false,
+			}),
+			{
+				preferredKeyName: "id_ed25519_alt",
+			},
+		)
+
+		expect(selected).toBe(secondKey)
+		expect(promptSelect).not.toHaveBeenCalled()
+	})
+
+	test("rejects an explicit passphrase-protected key in non-interactive mode", async () => {
+		await expect(
+			_runChoosePrivateKeyPrompt(
+				"Pick key",
+				makeDeps({
+					getPrivateKeys: mock(
+						async () =>
+							({
+								keys: [],
+								passphraseProtectedKeys: ["id_locked"],
+								unsupportedKeys: [
+									{ name: "id_locked", reason: "passphrase-protected" },
+								],
+							}) as never,
+					) as never,
+					isInteractive: () => false,
+				}),
+				{
+					preferredKeyName: "id_locked",
+				},
+			),
+		).rejects.toThrow("passphrase-protected")
+	})
+
 	test("shows weak RSA keys as unsupported in interactive mode", async () => {
 		const weakRsa = createWeakRsaPrivateKeyEntry("id_rsa")
 		const strongEd25519 = createPrivateKeyEntry("id_ed25519_alt", "ed25519")
@@ -388,26 +432,21 @@ describe("choosePrivateKeyPrompt", () => {
 					unsupportedKeys: [],
 				}) as never,
 		)
-		const prompt = mock(async (_questions: unknown) => ({
-			key: "id_ed25519_alt",
-		}))
+		const promptSelect = mock(async () => "id_ed25519_alt")
+		const logWarn = mock((_message: string) => {})
 
 		await _runChoosePrivateKeyPrompt(
 			"Pick key",
 			makeDeps({
 				getPrivateKeys: getPrivateKeys as never,
-				prompt: prompt as never,
+				logWarn,
+				promptSelect: promptSelect as never,
 			}),
 		)
 
-		const [question] = prompt.mock.calls[0][0] as Array<{
-			choices: Array<{ name: string }>
-		}>
-		expect(
-			question.choices.some((choice) =>
-				choice.name.includes("RSA key is 1024 bits"),
-			),
-		).toBe(true)
+		expect(logWarn).toHaveBeenCalledWith(
+			expect.stringContaining("RSA key is 1024 bits"),
+		)
 	})
 
 	test("throws passphrase guidance in non-interactive mode when no usable keys exist", async () => {

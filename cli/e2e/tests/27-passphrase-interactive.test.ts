@@ -10,8 +10,14 @@ import {
 } from "../helpers/cli"
 
 const TIMEOUT = 60_000
+const HAS_PARENT_TTY = Boolean(process.stdin.isTTY && process.stdout.isTTY)
 
 describe("Interactive passphrase-protected key conversion", () => {
+	if (!HAS_PARENT_TTY) {
+		test.skip("requires a real parent TTY", () => {})
+		return
+	}
+
 	let passphraseHome: string
 	let workspace: string
 
@@ -30,6 +36,8 @@ describe("Interactive passphrase-protected key conversion", () => {
 		const originalKeyPath = path.join(passphraseHome, ".ssh", "id_ed25519")
 		const originalContentBefore = readFileSync(originalKeyPath, "utf-8")
 
+		// runCliWithExpect keeps Expect log_user disabled by default, so captured
+		// stdout does not include PTY-rendered success lines from the CLI.
 		const initResult = runCliWithExpect(
 			passphraseHome,
 			workspace,
@@ -38,11 +46,10 @@ describe("Interactive passphrase-protected key conversion", () => {
 					{ expect: "Which SSH key would you like to use\\?", send: "\r" },
 					{ expect: "Create a passwordless copy of this key now\\?", send: "\r" },
 					{ expect: "Enter old passphrase:", send: "secret\r" },
-				],
-			)
+			],
+		)
 
 		expect(initResult.exitCode).toBe(0)
-		expect(initResult.stdout).toContain("Initialization complete")
 
 		const passwordlessCopyPath = path.join(
 			passphraseHome,
@@ -88,7 +95,6 @@ describe("Interactive passphrase-protected key conversion", () => {
 				)
 
 			expect(keyAddResult.exitCode).toBe(0)
-			expect(keyAddResult.stdout).toContain("added successfully")
 
 			const publicKeyPath = path.join(
 				keyAddWorkspace,

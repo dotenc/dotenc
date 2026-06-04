@@ -1,5 +1,7 @@
 import chalk from "chalk"
+import { box } from "consola/utils"
 import pkg from "../../package.json"
+import { logger } from "../ui/logger"
 import { getHomeConfig, setHomeConfig } from "./homeConfig"
 import { fetchLatestVersion, isVersionNewer } from "./update"
 
@@ -15,63 +17,35 @@ type UpdateNotifierDeps = {
 }
 
 const UPDATE_BOX_TITLE = "UPDATE AVAILABLE"
-const BOX_PADDING = 3
-const ANSI_PATTERN = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g")
-
-type UpdateNoticeLine = {
-	visible: string
-	colored: string
-}
 
 export const formatUpdateNotice = (
 	currentVersion: string,
 	latestVersion: string,
-): string => {
-	const lines: UpdateNoticeLine[] = [
-		{ visible: "", colored: "" },
+): string =>
+	box(
+		[
+			`Update available: ${chalk.gray(currentVersion)} -> ${chalk.cyan(latestVersion)}`,
+			"",
+			`Run ${chalk.gray("dotenc update")} to update`,
+		].join("\n"),
 		{
-			visible: `Update available: ${currentVersion} -> ${latestVersion}`,
-			colored: `Update available: ${chalk.gray(currentVersion)} -> ${chalk.cyan(latestVersion)}`,
+			title: UPDATE_BOX_TITLE,
+			style: {
+				borderColor: "yellow",
+				padding: 2,
+				marginTop: 0,
+				marginBottom: 0,
+				marginLeft: 0,
+			},
 		},
-		{ visible: "", colored: "" },
-		{
-			visible: "Run dotenc update to update",
-			colored: `Run ${chalk.gray("dotenc update")} to update`,
-		},
-		{ visible: "", colored: "" },
-	]
-
-	const contentWidth = Math.max(
-		...lines.map((line) => line.visible.length + BOX_PADDING * 2),
 	)
-	const titleWithSpacing = ` ${UPDATE_BOX_TITLE} `
-	const innerWidth = Math.max(contentWidth, titleWithSpacing.length + 2)
-
-	const leftBorderWidth = Math.floor((innerWidth - titleWithSpacing.length) / 2)
-	const rightBorderWidth =
-		innerWidth - titleWithSpacing.length - leftBorderWidth
-	const topBorder = `╭${"─".repeat(leftBorderWidth)}${titleWithSpacing}${"─".repeat(rightBorderWidth)}╮`
-	const bottomBorder = `╰${"─".repeat(innerWidth)}╯`
-	const body = lines.map((line) => {
-		const padding = " ".repeat(BOX_PADDING)
-		const visibleLength = line.colored.replace(ANSI_PATTERN, "").length
-		const trailingPadding = " ".repeat(
-			innerWidth - BOX_PADDING * 2 - visibleLength,
-		)
-		return `${chalk.yellow("│")}${padding}${line.colored}${padding}${trailingPadding}${chalk.yellow("│")}`
-	})
-
-	return [chalk.yellow(topBorder), ...body, chalk.yellow(bottomBorder)].join(
-		"\n",
-	)
-}
 
 const defaultDeps: UpdateNotifierDeps = {
 	getHomeConfig,
 	setHomeConfig,
 	fetchLatestVersion,
 	currentVersion: pkg.version,
-	log: console.log,
+	log: (message) => logger.log(message),
 	args: process.argv.slice(2),
 }
 

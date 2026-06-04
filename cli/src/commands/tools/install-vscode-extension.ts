@@ -4,7 +4,8 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import { promisify } from "node:util"
 import chalk from "chalk"
-import inquirer from "inquirer"
+import { promptConfirm } from "../../ui/prompts"
+import { isInteractive } from "../../ui/tty"
 
 const execFileAsync = promisify(execFile)
 const execAsync = promisify(exec)
@@ -132,7 +133,12 @@ async function openUrl(url: string): Promise<void> {
 export async function _runInstallVscodeExtension(
 	getEditors: () => Promise<string[]> = detectEditors,
 	_openUrl: (url: string) => Promise<void> = openUrl,
+	options: InstallVscodeExtensionOptions = {},
 ) {
+	if (options.open && options.manual) {
+		throw new Error("Options --open and --manual are mutually exclusive.")
+	}
+
 	const editors = await getEditors()
 
 	await addToExtensionsJson()
@@ -148,15 +154,17 @@ export async function _runInstallVscodeExtension(
 		const editor = editors[0]
 		const url = EDITOR_PROTOCOL_URLS[editor]
 		const name = EDITOR_NAMES[editor]
+		const shouldOpen = options.manual ? false : options.open
 
-		const { open } = await inquirer.prompt([
-			{
-				type: "confirm",
-				name: "open",
-				message: `Open extension page in ${name} now?`,
-				default: true,
-			},
-		])
+		const open =
+			shouldOpen ??
+			(isInteractive()
+				? await promptConfirm(`Open extension page in ${name} now?`, {
+						initial: true,
+						nonInteractiveError:
+							"Opening the extension page requires an interactive terminal. Pass --open to force it or --manual to print the URL.",
+					})
+				: false)
 
 		if (open) {
 			try {
@@ -179,6 +187,12 @@ export async function _runInstallVscodeExtension(
 	}
 }
 
-export async function installVscodeExtensionCommand() {
-	await _runInstallVscodeExtension()
+export async function installVscodeExtensionCommand(
+	options: InstallVscodeExtensionOptions = {},
+) {
+	await _runInstallVscodeExtension(detectEditors, openUrl, options)
+}
+type InstallVscodeExtensionOptions = {
+	manual?: boolean
+	open?: boolean
 }

@@ -13,10 +13,11 @@ import { validatePublicKey } from "../../helpers/validatePublicKey"
 import { choosePrivateKeyPrompt } from "../../prompts/choosePrivateKey"
 import { inputKeyPrompt } from "../../prompts/inputKey"
 import { inputNamePrompt } from "../../prompts/inputName"
-import { prompt } from "../../prompts/prompt"
+import { promptSelect } from "../../ui/prompts"
 
 type Options = {
 	fromSsh?: string
+	fromPrivateKey?: string
 	fromFile?: string
 	fromString?: string
 }
@@ -223,19 +224,41 @@ export const keyAddCommand = async (nameArg?: string, options?: Options) => {
 		}
 	}
 
-	if (!publicKey) {
-		const modePrompt = await prompt({
-			type: "list",
-			name: "mode",
-			message:
-				"Would you like to add one of your SSH keys or paste a public key?",
-			choices: [
-				{ name: "Choose or create an SSH key", value: "choose" },
-				{ name: "Paste a public key (PEM format)", value: "paste" },
-			],
-		})
+	if (options?.fromPrivateKey) {
+		let selectedKey: Awaited<ReturnType<typeof choosePrivateKeyPrompt>>
+		try {
+			selectedKey = await choosePrivateKeyPrompt(
+				"Which SSH key do you want to add?",
+				{
+					nonInteractiveHint: "--from-private-key <name>",
+					preferredKeyName: options.fromPrivateKey,
+				},
+			)
+		} catch (error) {
+			console.error(error instanceof Error ? error.message : String(error))
+			process.exit(1)
+		}
 
-		if (modePrompt.mode === "paste") {
+		publicKey = crypto.createPublicKey(selectedKey.privateKey)
+		if (!nameArg) {
+			nameArg = selectedKey.name
+		}
+	}
+
+	if (!publicKey) {
+		const mode = await promptSelect<"choose" | "paste">(
+			"Would you like to add one of your SSH keys or paste a public key?",
+			{
+				options: [
+					{ label: "Choose or create an SSH key", value: "choose" },
+					{ label: "Paste a public key (PEM format)", value: "paste" },
+				],
+				nonInteractiveError:
+					"No key source was provided in non-interactive mode. Use --from-private-key, --from-ssh, --from-file, or --from-string instead.",
+			},
+		)
+
+		if (mode === "paste") {
 			const publicKeyInput = await inputKeyPrompt(
 				"Please paste your public key (PEM format):",
 			)
@@ -261,6 +284,9 @@ export const keyAddCommand = async (nameArg?: string, options?: Options) => {
 			try {
 				selectedKey = await choosePrivateKeyPrompt(
 					"Which SSH key do you want to add?",
+					{
+						nonInteractiveHint: "--from-private-key <name>",
+					},
 				)
 			} catch (error) {
 				console.error(error instanceof Error ? error.message : String(error))
