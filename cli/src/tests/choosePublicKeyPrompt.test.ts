@@ -20,8 +20,6 @@ describe("choosePublicKeyPrompt", () => {
 		expect(promptSelect).toHaveBeenCalledTimes(1)
 		expect(promptSelect).toHaveBeenCalledWith("Pick a key", {
 			options: ["ivan", "alice"],
-			nonInteractiveError:
-				"An interactive terminal is required to choose a public key. Pass the public key name explicitly instead.",
 		})
 	})
 
@@ -58,8 +56,6 @@ describe("choosePublicKeyPrompt", () => {
 		expect(promptMultiSelect).toHaveBeenCalledWith("Pick keys", {
 			options: ["ivan", "alice"],
 			required: true,
-			nonInteractiveError:
-				"An interactive terminal is required to choose multiple public keys. Pass one or more --public-key values instead.",
 		})
 	})
 

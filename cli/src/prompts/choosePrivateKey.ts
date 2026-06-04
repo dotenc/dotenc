@@ -247,8 +247,6 @@ export const _runChoosePrivateKeyPrompt = async (
 
 		const selected = await deps.promptSelect<string>(message, {
 			options: buildPromptOptions(supportedKeys, passphraseProtectedKeys),
-			nonInteractiveError:
-				"An interactive terminal is required to choose an SSH key. Pass an explicit key name instead.",
 		})
 
 		if (selected === CREATE_NEW_PRIVATE_KEY_CHOICE) {
@@ -278,8 +276,6 @@ export const _runChoosePrivateKeyPrompt = async (
 				"Create a passwordless copy of this key now? (optional if DOTENC_PRIVATE_KEY_PASSPHRASE is set)",
 				{
 					initial: true,
-					nonInteractiveError:
-						"An interactive terminal is required to create a passwordless key copy.",
 				},
 			)
 

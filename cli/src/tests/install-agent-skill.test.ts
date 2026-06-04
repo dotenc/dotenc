@@ -6,9 +6,13 @@ const spawnMock = mock(() => {
 	throw new Error("spawn not expected")
 })
 const promptSelectMock = mock(async () => "local" as "local" | "global")
+class MockNonInteractivePromptError extends Error {}
 
 mock.module("node:child_process", () => ({ spawn: spawnMock }))
-mock.module("../ui/prompts", () => ({ promptSelect: promptSelectMock }))
+mock.module("../ui/prompts", () => ({
+	NonInteractivePromptError: MockNonInteractivePromptError,
+	promptSelect: promptSelectMock,
+}))
 
 const { installAgentSkillCommand, _runNpx } = await import(
 	"../commands/tools/install-agent-skill"
@@ -78,7 +82,7 @@ describe("installAgentSkillCommand", () => {
 
 	test("defaults to local scope in non-interactive mode", async () => {
 		promptSelectMock.mockImplementation(async () => {
-			throw new Error(
+			throw new MockNonInteractivePromptError(
 				"Install scope prompt is unavailable in non-interactive mode.",
 			)
 		})
@@ -101,6 +105,19 @@ describe("installAgentSkillCommand", () => {
 		)
 		infoSpy.mockRestore()
 		logSpy.mockRestore()
+	})
+
+	test("rethrows prompt errors instead of matching non-interactive text", async () => {
+		promptSelectMock.mockImplementation(async () => {
+			throw new Error(
+				"Install scope prompt is unavailable in non-interactive mode.",
+			)
+		})
+
+		await expect(installAgentSkillCommand({})).rejects.toThrow(
+			"Install scope prompt is unavailable in non-interactive mode.",
+		)
+		expect(spawnMock).not.toHaveBeenCalled()
 	})
 
 	test("exits with updater exit code when npx returns non-zero", async () => {

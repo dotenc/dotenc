@@ -43,8 +43,6 @@ export const _runChooseEnvironmentPrompt = async (
 
 	return deps.promptSelect<string>(message, {
 		options: environments,
-		nonInteractiveError:
-			"An interactive terminal is required to choose an environment. Pass the environment name explicitly instead.",
 	})
 }
 

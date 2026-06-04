@@ -59,8 +59,6 @@ export async function _runChoosePublicKeyPrompt(
 
 		return deps.promptSelect(message, {
 			options: publicKeys,
-			nonInteractiveError:
-				"An interactive terminal is required to choose a public key. Pass the public key name explicitly instead.",
 		})
 	}
 
@@ -73,8 +71,6 @@ export async function _runChoosePublicKeyPrompt(
 	return deps.promptMultiSelect(message, {
 		options: publicKeys,
 		required: true,
-		nonInteractiveError:
-			"An interactive terminal is required to choose multiple public keys. Pass one or more --public-key values instead.",
 	})
 }
 

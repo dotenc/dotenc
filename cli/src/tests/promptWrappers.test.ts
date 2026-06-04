@@ -4,6 +4,7 @@ import { _runChooseEnvironmentPrompt } from "../prompts/chooseEnvironment"
 import { createEnvironmentPrompt } from "../prompts/createEnvironment"
 import { _runInputKeyPrompt } from "../prompts/inputKey"
 import { inputNamePrompt } from "../prompts/inputName"
+import { NonInteractivePromptError, promptText } from "../ui/prompts"
 
 describe("prompt wrappers", () => {
 	const stdinTty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY")
@@ -45,6 +46,34 @@ describe("prompt wrappers", () => {
 			type: "text",
 		})
 		promptSpy.mockRestore()
+	})
+
+	test("prompt wrappers throw a typed error in non-interactive mode", async () => {
+		await expect(
+			promptText(
+				"Your name?",
+				{
+					nonInteractiveError: "Custom non-interactive guidance",
+				},
+				{
+					isInteractive: () => false,
+					prompt: (async () => "") as typeof consola.prompt,
+				},
+			),
+		).rejects.toBeInstanceOf(NonInteractivePromptError)
+
+		await expect(
+			promptText(
+				"Your name?",
+				{
+					nonInteractiveError: "Custom non-interactive guidance",
+				},
+				{
+					isInteractive: () => false,
+					prompt: (async () => "") as typeof consola.prompt,
+				},
+			),
+		).rejects.toThrow("Custom non-interactive guidance")
 	})
 
 	test("inputKeyPrompt uses the shared text prompt", async () => {

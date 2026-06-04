@@ -1,8 +1,7 @@
 import { spawn } from "node:child_process"
 import chalk from "chalk"
-import { getErrorMessage } from "../../ui/errors"
 import { logger } from "../../ui/logger"
-import { promptSelect } from "../../ui/prompts"
+import { NonInteractivePromptError, promptSelect } from "../../ui/prompts"
 
 type Options = {
 	force?: boolean
@@ -41,7 +40,7 @@ export const installAgentSkillCommand = async (options: Options) => {
 				nonInteractiveError: NON_INTERACTIVE_SCOPE_FALLBACK,
 			})
 		} catch (error) {
-			if (getErrorMessage(error) !== NON_INTERACTIVE_SCOPE_FALLBACK) {
+			if (!(error instanceof NonInteractivePromptError)) {
 				throw error
 			}
 

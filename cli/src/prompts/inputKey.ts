@@ -5,6 +5,8 @@ export const _runInputKeyPrompt = async (
 	defaultValue?: string,
 	promptImpl: typeof promptText = promptText,
 ) => {
+	// This prompt is only used for pasting a public key PEM; private key inputs
+	// should use --from-ssh, --from-file, --from-string, or --from-private-key.
 	return promptImpl(message, {
 		default: defaultValue,
 		nonInteractiveError:

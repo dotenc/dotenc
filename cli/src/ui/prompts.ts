@@ -17,6 +17,16 @@ const defaultDeps: PromptDeps = {
 	prompt: (...args) => consola.prompt(...args),
 }
 
+const DEFAULT_NON_INTERACTIVE_PROMPT_ERROR =
+	"An interactive terminal is required. Pass explicit arguments instead."
+
+export class NonInteractivePromptError extends Error {
+	constructor(message = DEFAULT_NON_INTERACTIVE_PROMPT_ERROR) {
+		super(message)
+		this.name = "NonInteractivePromptError"
+	}
+}
+
 const isCancelledPromptError = (error: unknown) =>
 	error instanceof Error && error.name === "ConsolaPromptCancelledError"
 
@@ -27,11 +37,11 @@ const runPrompt = async <T>(
 		| ConfirmPromptOptions
 		| SelectPromptOptions
 		| MultiSelectOptions,
-	nonInteractiveError: string,
+	nonInteractiveError?: string,
 	deps: PromptDeps = defaultDeps,
 ): Promise<T> => {
 	if (!deps.isInteractive()) {
-		throw new Error(nonInteractiveError)
+		throw new NonInteractivePromptError(nonInteractiveError)
 	}
 
 	try {
@@ -51,7 +61,7 @@ const runPrompt = async <T>(
 export const promptText = async (
 	message: string,
 	options: Omit<TextPromptOptions, "type" | "cancel"> & {
-		nonInteractiveError: string
+		nonInteractiveError?: string
 	},
 	deps?: PromptDeps,
 ) =>
@@ -70,7 +80,7 @@ export const promptText = async (
 export const promptConfirm = async (
 	message: string,
 	options: Omit<ConfirmPromptOptions, "type" | "cancel"> & {
-		nonInteractiveError: string
+		nonInteractiveError?: string
 	},
 	deps?: PromptDeps,
 ) =>
@@ -87,7 +97,7 @@ export const promptConfirm = async (
 export const promptSelect = async <T extends string>(
 	message: string,
 	options: Omit<SelectPromptOptions, "type" | "cancel"> & {
-		nonInteractiveError: string
+		nonInteractiveError?: string
 	},
 	deps?: PromptDeps,
 ) =>
@@ -105,7 +115,7 @@ export const promptSelect = async <T extends string>(
 export const promptMultiSelect = async <T extends string>(
 	message: string,
 	options: Omit<MultiSelectOptions, "type" | "cancel"> & {
-		nonInteractiveError: string
+		nonInteractiveError?: string
 	},
 	deps?: PromptDeps,
 ) =>

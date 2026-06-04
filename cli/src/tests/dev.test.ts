@@ -70,8 +70,6 @@ describe("devCommand", () => {
 					{ label: "alice", value: "alice" },
 					{ label: "alice-deploy", value: "alice-deploy" },
 				],
-				nonInteractiveError:
-					"Multiple identities found in non-interactive mode. Pass --identity <name> instead.",
 			},
 		)
 		expect(runCommandMock).toHaveBeenCalledTimes(1)

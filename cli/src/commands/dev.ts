@@ -42,8 +42,6 @@ export const devCommand = async (
 			"Multiple identities found. Which one do you want to use?",
 			{
 				options: keyNames.map((name) => ({ label: name, value: name })),
-				nonInteractiveError:
-					"Multiple identities found in non-interactive mode. Pass --identity <name> instead.",
 			},
 		)
 	}
