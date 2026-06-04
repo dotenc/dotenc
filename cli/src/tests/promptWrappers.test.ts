@@ -47,19 +47,16 @@ describe("prompt wrappers", () => {
 		promptSpy.mockRestore()
 	})
 
-	test("inputKeyPrompt uses password prompt with mask", async () => {
-		const promptSpy = async (questions: unknown) => {
-			expect(questions).toEqual([
-				{
-					type: "password",
-					name: "key",
-					mask: "*",
-					message: "Paste key",
-					default: "default-key",
-				},
-			])
+	test("inputKeyPrompt uses the shared text prompt", async () => {
+		const promptSpy = async (message: string, options: unknown) => {
+			expect(message).toBe("Paste key")
+			expect(options).toEqual({
+				default: "default-key",
+				nonInteractiveError:
+					"No key content was provided in non-interactive mode. Pass --from-string, --from-file, or --from-ssh instead.",
+			})
 
-			return { key: "secret" }
+			return "secret"
 		}
 
 		const key = await _runInputKeyPrompt("Paste key", "default-key", promptSpy)

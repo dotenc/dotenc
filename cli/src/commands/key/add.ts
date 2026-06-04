@@ -13,7 +13,7 @@ import { validatePublicKey } from "../../helpers/validatePublicKey"
 import { choosePrivateKeyPrompt } from "../../prompts/choosePrivateKey"
 import { inputKeyPrompt } from "../../prompts/inputKey"
 import { inputNamePrompt } from "../../prompts/inputName"
-import { prompt } from "../../prompts/prompt"
+import { promptSelect } from "../../ui/prompts"
 
 type Options = {
 	fromSsh?: string
@@ -246,21 +246,19 @@ export const keyAddCommand = async (nameArg?: string, options?: Options) => {
 	}
 
 	if (!publicKey) {
-		const modePrompt = await prompt(
+		const mode = await promptSelect<"choose" | "paste">(
+			"Would you like to add one of your SSH keys or paste a public key?",
 			{
-				type: "list",
-				name: "mode",
-				message:
-					"Would you like to add one of your SSH keys or paste a public key?",
-				choices: [
-					{ name: "Choose or create an SSH key", value: "choose" },
-					{ name: "Paste a public key (PEM format)", value: "paste" },
+				options: [
+					{ label: "Choose or create an SSH key", value: "choose" },
+					{ label: "Paste a public key (PEM format)", value: "paste" },
 				],
+				nonInteractiveError:
+					"No key source was provided in non-interactive mode. Use --from-private-key, --from-ssh, --from-file, or --from-string instead.",
 			},
-			"No key source was provided in non-interactive mode. Use --from-private-key, --from-ssh, --from-file, or --from-string instead.",
 		)
 
-		if (modePrompt.mode === "paste") {
+		if (mode === "paste") {
 			const publicKeyInput = await inputKeyPrompt(
 				"Please paste your public key (PEM format):",
 			)

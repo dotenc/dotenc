@@ -12,22 +12,23 @@ import {
 } from "../helpers/getPrivateKeys"
 import { validatePublicKey } from "../helpers/validatePublicKey"
 import { logger } from "../ui/logger"
+import { promptConfirm, promptSelect } from "../ui/prompts"
 import { isInteractive } from "../ui/tty"
-import { type GuardedPrompt, prompt } from "./prompt"
 
 export const CREATE_NEW_PRIVATE_KEY_CHOICE = "__dotenc_create_new_private_key__"
 const PASSPHRASE_PROTECTED_KEY_CHOICE_PREFIX =
 	"__dotenc_passphrase_protected_key__:"
 
-type PromptChoice = {
-	name: string
+type PromptOption = {
+	hint?: string
+	label: string
 	value: string
-	disabled?: boolean
 }
 
 type ChoosePrivateKeyPromptDeps = {
 	getPrivateKeys: typeof getPrivateKeys
-	prompt: GuardedPrompt
+	promptConfirm: typeof promptConfirm
+	promptSelect: typeof promptSelect
 	createEd25519SshKey: typeof createEd25519SshKey
 	createPasswordlessSshKeyCopy: typeof createPasswordlessSshKeyCopy
 	homedir: typeof os.homedir
@@ -43,7 +44,8 @@ type ChoosePrivateKeyPromptOptions = {
 
 const defaultChoosePrivateKeyPromptDeps: ChoosePrivateKeyPromptDeps = {
 	getPrivateKeys,
-	prompt,
+	promptConfirm,
+	promptSelect,
 	createEd25519SshKey,
 	createPasswordlessSshKeyCopy,
 	homedir: os.homedir,
@@ -52,92 +54,49 @@ const defaultChoosePrivateKeyPromptDeps: ChoosePrivateKeyPromptDeps = {
 	isInteractive,
 }
 
-function toSupportedChoice(key: PrivateKeyEntry): PromptChoice {
+function toSupportedOption(key: PrivateKeyEntry): PromptOption {
 	return {
-		name: `${key.name} (${key.algorithm})`,
+		hint: key.algorithm,
+		label: key.name,
 		value: key.name,
 	}
 }
 
-function toUnsupportedChoice(
-	key: UnsupportedPrivateKeyEntry,
-	index: number,
-): PromptChoice {
+function toPassphraseOption(name: string): PromptOption {
 	return {
-		name: `${chalk.gray(key.name)} (${chalk.yellow(key.reason)})`,
-		value: `__unsupported_${index}__`,
-		disabled: true,
-	}
-}
-
-function toPassphraseChoice(name: string): PromptChoice {
-	return {
-		name: `${chalk.yellow(name)} (${chalk.yellow("passphrase-protected")})`,
+		hint: "passphrase-protected",
+		label: name,
 		value: `${PASSPHRASE_PROTECTED_KEY_CHOICE_PREFIX}${name}`,
 	}
 }
 
-const buildPromptChoices = (
+const buildPromptOptions = (
 	keys: PrivateKeyEntry[],
 	passphraseProtectedKeys: string[],
-	unsupportedKeys: UnsupportedPrivateKeyEntry[],
-): PromptChoice[] => {
-	const choices: PromptChoice[] = keys.map(toSupportedChoice)
-
-	if (passphraseProtectedKeys.length > 0 || unsupportedKeys.length > 0) {
-		if (choices.length > 0) {
-			choices.push({
-				name: chalk.gray("────────"),
-				value: "__separator_supported_unsupported__",
-				disabled: true,
-			})
-		}
-
-		if (passphraseProtectedKeys.length > 0) {
-			choices.push({
-				name: chalk.gray(
-					"Passphrase-protected keys (set DOTENC_PRIVATE_KEY_PASSPHRASE or create a passwordless copy)",
-				),
-				value: "__passphrase_protected_header__",
-				disabled: true,
-			})
-
-			choices.push(...passphraseProtectedKeys.map(toPassphraseChoice))
-		}
-
-		if (unsupportedKeys.length > 0) {
-			if (passphraseProtectedKeys.length > 0) {
-				choices.push({
-					name: chalk.gray("────────"),
-					value: "__separator_passphrase_unsupported__",
-					disabled: true,
-				})
-			}
-
-			choices.push({
-				name: chalk.gray("Unsupported keys (ignored)"),
-				value: "__unsupported_header__",
-				disabled: true,
-			})
-
-			choices.push(...unsupportedKeys.map(toUnsupportedChoice))
-		}
-	}
-
-	if (choices.length > 0) {
-		choices.push({
-			name: chalk.gray("────────"),
-			value: "__separator_create__",
-			disabled: true,
-		})
-	}
-
-	choices.push({
-		name: "Create a new SSH key (ed25519, recommended)",
+): PromptOption[] => [
+	...keys.map(toSupportedOption),
+	...passphraseProtectedKeys.map(toPassphraseOption),
+	{
+		hint: "ed25519, recommended",
+		label: "Create a new SSH key",
 		value: CREATE_NEW_PRIVATE_KEY_CHOICE,
-	})
+	},
+]
 
-	return choices
+const formatUnsupportedKeys = (keys: UnsupportedPrivateKeyEntry[]) =>
+	keys.map((key) => `  - ${key.name}: ${key.reason}`).join("\n")
+
+const logUnsupportedKeys = (
+	keys: UnsupportedPrivateKeyEntry[],
+	logWarn: (message: string) => void,
+) => {
+	if (keys.length === 0) {
+		return
+	}
+
+	logWarn(
+		`${chalk.yellow("Warning:")} unsupported SSH keys will be ignored:\n${formatUnsupportedKeys(keys)}`,
+	)
 }
 
 function classifySupportedKeys(keys: PrivateKeyEntry[]): {
@@ -274,11 +233,8 @@ export const _runChoosePrivateKeyPrompt = async (
 			}
 
 			if (allUnsupportedKeys.length > 0) {
-				const unsupportedList = allUnsupportedKeys
-					.map((key) => `  - ${key.name}: ${key.reason}`)
-					.join("\n")
 				throw new Error(
-					`No supported SSH keys found.\n\nUnsupported keys:\n${unsupportedList}\n\nGenerate a new key with:\n  ssh-keygen -t ed25519 -N ""`,
+					`No supported SSH keys found.\n\nUnsupported keys:\n${formatUnsupportedKeys(allUnsupportedKeys)}\n\nGenerate a new key with:\n  ssh-keygen -t ed25519 -N ""`,
 				)
 			}
 
@@ -287,20 +243,13 @@ export const _runChoosePrivateKeyPrompt = async (
 			)
 		}
 
-		const result = await deps.prompt([
-			{
-				type: "list",
-				name: "key",
-				message,
-				choices: buildPromptChoices(
-					supportedKeys,
-					passphraseProtectedKeys,
-					promptUnsupportedKeys,
-				),
-			},
-		])
+		logUnsupportedKeys(promptUnsupportedKeys, deps.logWarn)
 
-		const selected = String(result.key || "")
+		const selected = await deps.promptSelect<string>(message, {
+			options: buildPromptOptions(supportedKeys, passphraseProtectedKeys),
+			nonInteractiveError:
+				"An interactive terminal is required to choose an SSH key. Pass an explicit key name instead.",
+		})
 
 		if (selected === CREATE_NEW_PRIVATE_KEY_CHOICE) {
 			try {
@@ -325,17 +274,16 @@ export const _runChoosePrivateKeyPrompt = async (
 				`${chalk.yellow("Info:")} ${chalk.cyan(selectedPassphraseKey)} is passphrase-protected. You can set ${chalk.gray("DOTENC_PRIVATE_KEY_PASSPHRASE")} to use it directly, or create a passwordless copy.`,
 			)
 
-			const confirmation = await deps.prompt([
+			const shouldCreatePasswordlessCopy = await deps.promptConfirm(
+				"Create a passwordless copy of this key now? (optional if DOTENC_PRIVATE_KEY_PASSPHRASE is set)",
 				{
-					type: "confirm",
-					name: "shouldCreatePasswordlessCopy",
-					message:
-						"Create a passwordless copy of this key now? (optional if DOTENC_PRIVATE_KEY_PASSPHRASE is set)",
-					default: true,
+					initial: true,
+					nonInteractiveError:
+						"An interactive terminal is required to create a passwordless key copy.",
 				},
-			])
+			)
 
-			if (!confirmation.shouldCreatePasswordlessCopy) {
+			if (!shouldCreatePasswordlessCopy) {
 				continue
 			}
 
