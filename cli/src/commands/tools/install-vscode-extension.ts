@@ -135,6 +135,10 @@ export async function _runInstallVscodeExtension(
 	_openUrl: (url: string) => Promise<void> = openUrl,
 	options: InstallVscodeExtensionOptions = {},
 ) {
+	if (options.open && options.manual) {
+		throw new Error("Options --open and --manual are mutually exclusive.")
+	}
+
 	const editors = await getEditors()
 
 	await addToExtensionsJson()

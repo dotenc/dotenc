@@ -125,6 +125,22 @@ describe("installVscodeExtensionCommand", () => {
 
 	// Editor detection + URL handling
 
+	test("rejects conflicting --open and --manual options", async () => {
+		const fakeOpen = mock(async (_url: string) => {})
+
+		await expect(
+			_runInstallVscodeExtension(async () => ["vscode"], fakeOpen, {
+				manual: true,
+				open: true,
+			}),
+		).rejects.toThrow("Options --open and --manual are mutually exclusive.")
+
+		expect(fakeOpen).not.toHaveBeenCalled()
+		expect(existsSync(path.join(tmpDir, ".vscode", "extensions.json"))).toBe(
+			false,
+		)
+	})
+
 	test("prints VS Code fallback URL when no editors detected", async () => {
 		await _runInstallVscodeExtension(async () => [])
 

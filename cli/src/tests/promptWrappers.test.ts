@@ -24,9 +24,13 @@ describe("prompt wrappers", () => {
 	afterEach(() => {
 		if (stdinTty) {
 			Object.defineProperty(process.stdin, "isTTY", stdinTty)
+		} else {
+			delete (process.stdin as { isTTY?: boolean }).isTTY
 		}
 		if (stdoutTty) {
 			Object.defineProperty(process.stdout, "isTTY", stdoutTty)
+		} else {
+			delete (process.stdout as { isTTY?: boolean }).isTTY
 		}
 	})
 
