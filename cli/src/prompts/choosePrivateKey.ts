@@ -2,7 +2,6 @@ import crypto from "node:crypto"
 import os from "node:os"
 import path from "node:path"
 import chalk from "chalk"
-import type inquirer from "inquirer"
 import { createEd25519SshKey } from "../helpers/createEd25519SshKey"
 import { createPasswordlessSshKeyCopy } from "../helpers/createPasswordlessSshKeyCopy"
 import { passphraseProtectedKeyError } from "../helpers/errors"
@@ -12,7 +11,9 @@ import {
 	type UnsupportedPrivateKeyEntry,
 } from "../helpers/getPrivateKeys"
 import { validatePublicKey } from "../helpers/validatePublicKey"
-import { prompt } from "./prompt"
+import { logger } from "../ui/logger"
+import { isInteractive } from "../ui/tty"
+import { type GuardedPrompt, prompt } from "./prompt"
 
 export const CREATE_NEW_PRIVATE_KEY_CHOICE = "__dotenc_create_new_private_key__"
 const PASSPHRASE_PROTECTED_KEY_CHOICE_PREFIX =
@@ -26,7 +27,7 @@ type PromptChoice = {
 
 type ChoosePrivateKeyPromptDeps = {
 	getPrivateKeys: typeof getPrivateKeys
-	prompt: typeof inquirer.prompt
+	prompt: GuardedPrompt
 	createEd25519SshKey: typeof createEd25519SshKey
 	createPasswordlessSshKeyCopy: typeof createPasswordlessSshKeyCopy
 	homedir: typeof os.homedir
@@ -35,15 +36,20 @@ type ChoosePrivateKeyPromptDeps = {
 	isInteractive: () => boolean
 }
 
+type ChoosePrivateKeyPromptOptions = {
+	nonInteractiveHint?: string
+	preferredKeyName?: string
+}
+
 const defaultChoosePrivateKeyPromptDeps: ChoosePrivateKeyPromptDeps = {
 	getPrivateKeys,
 	prompt,
 	createEd25519SshKey,
 	createPasswordlessSshKeyCopy,
 	homedir: os.homedir,
-	logInfo: console.log,
-	logWarn: console.warn,
-	isInteractive: () => Boolean(process.stdin.isTTY && process.stdout.isTTY),
+	logInfo: (message) => logger.info(message),
+	logWarn: (message) => logger.warn(message),
+	isInteractive,
 }
 
 function toSupportedChoice(key: PrivateKeyEntry): PromptChoice {
@@ -166,9 +172,51 @@ function classifySupportedKeys(keys: PrivateKeyEntry[]): {
 	return { supportedKeys, policyUnsupportedKeys }
 }
 
+const describeNonInteractivePrivateKeySelectionError = (
+	supportedKeys: PrivateKeyEntry[],
+	hint: string,
+) =>
+	`Multiple supported SSH keys found: ${supportedKeys.map((key) => key.name).join(", ")}\n\nPass ${hint} to choose which key to use.`
+
+const selectPreferredPrivateKey = (
+	preferredKeyName: string,
+	supportedKeys: PrivateKeyEntry[],
+	passphraseProtectedKeys: string[],
+	unsupportedKeys: UnsupportedPrivateKeyEntry[],
+): PrivateKeyEntry => {
+	const supportedKey = supportedKeys.find(
+		(key) => key.name === preferredKeyName,
+	)
+
+	if (supportedKey) {
+		return supportedKey
+	}
+
+	if (passphraseProtectedKeys.includes(preferredKeyName)) {
+		throw new Error(passphraseProtectedKeyError([preferredKeyName]))
+	}
+
+	const unsupportedKey = unsupportedKeys.find(
+		(key) => key.name === preferredKeyName,
+	)
+	if (unsupportedKey) {
+		throw new Error(
+			`SSH key ${chalk.cyan(preferredKeyName)} is not supported: ${unsupportedKey.reason}.`,
+		)
+	}
+
+	const availableKeys = supportedKeys.map((key) => key.name)
+	throw new Error(
+		availableKeys.length > 0
+			? `SSH key ${chalk.cyan(preferredKeyName)} was not found. Available keys: ${availableKeys.join(", ")}`
+			: `SSH key ${chalk.cyan(preferredKeyName)} was not found.`,
+	)
+}
+
 export const _runChoosePrivateKeyPrompt = async (
 	message: string,
 	deps: ChoosePrivateKeyPromptDeps = defaultChoosePrivateKeyPromptDeps,
+	options: ChoosePrivateKeyPromptOptions = {},
 ): Promise<PrivateKeyEntry> => {
 	let autoSelectKeyName: string | undefined
 
@@ -186,6 +234,15 @@ export const _runChoosePrivateKeyPrompt = async (
 		)
 		const privateKeyMap = new Map(supportedKeys.map((key) => [key.name, key]))
 
+		if (options.preferredKeyName) {
+			return selectPreferredPrivateKey(
+				options.preferredKeyName,
+				supportedKeys,
+				passphraseProtectedKeys,
+				allUnsupportedKeys,
+			)
+		}
+
 		if (autoSelectKeyName) {
 			const autoSelectedKey = privateKeyMap.get(autoSelectKeyName)
 			if (autoSelectedKey) {
@@ -199,8 +256,17 @@ export const _runChoosePrivateKeyPrompt = async (
 		}
 
 		if (!deps.isInteractive()) {
-			if (supportedKeys.length > 0) {
+			if (supportedKeys.length === 1) {
 				return supportedKeys[0]
+			}
+
+			if (supportedKeys.length > 1) {
+				throw new Error(
+					describeNonInteractivePrivateKeySelectionError(
+						supportedKeys,
+						options.nonInteractiveHint ?? "--private-key <name>",
+					),
+				)
 			}
 
 			if (passphraseProtectedKeys.length > 0) {
@@ -302,5 +368,12 @@ export const _runChoosePrivateKeyPrompt = async (
 	}
 }
 
-export const choosePrivateKeyPrompt = async (message: string) =>
-	_runChoosePrivateKeyPrompt(message)
+export const choosePrivateKeyPrompt = async (
+	message: string,
+	options: ChoosePrivateKeyPromptOptions = {},
+) =>
+	_runChoosePrivateKeyPrompt(
+		message,
+		defaultChoosePrivateKeyPromptDeps,
+		options,
+	)

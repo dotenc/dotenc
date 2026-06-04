@@ -17,28 +17,35 @@ import {
 } from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import inquirer from "inquirer"
-import { _runInstallVscodeExtension } from "../commands/tools/install-vscode-extension"
+
+const promptConfirmMock = mock(async () => false)
+const isInteractiveMock = mock(() => true)
+
+mock.module("../ui/prompts", () => ({ promptConfirm: promptConfirmMock }))
+mock.module("../ui/tty", () => ({ isInteractive: isInteractiveMock }))
+
+const { _runInstallVscodeExtension } = await import(
+	"../commands/tools/install-vscode-extension"
+)
 
 describe("installVscodeExtensionCommand", () => {
 	let tmpDir: string
 	let cwdSpy: ReturnType<typeof spyOn>
 	let logSpy: ReturnType<typeof spyOn>
-	let promptSpy: ReturnType<typeof spyOn>
 
 	beforeEach(() => {
 		tmpDir = mkdtempSync(path.join(os.tmpdir(), "test-vscode-ext-"))
 		cwdSpy = spyOn(process, "cwd").mockReturnValue(tmpDir)
 		logSpy = spyOn(console, "log").mockImplementation(() => {})
-		promptSpy = spyOn(inquirer, "prompt").mockResolvedValue({
-			open: false,
-		} as never)
+		promptConfirmMock.mockClear()
+		promptConfirmMock.mockImplementation(async () => false)
+		isInteractiveMock.mockClear()
+		isInteractiveMock.mockImplementation(() => true)
 	})
 
 	afterEach(() => {
 		cwdSpy.mockRestore()
 		logSpy.mockRestore()
-		promptSpy.mockRestore()
 		rmSync(tmpDir, { recursive: true, force: true })
 	})
 
@@ -130,13 +137,18 @@ describe("installVscodeExtensionCommand", () => {
 	test("prompts to open when exactly one editor detected", async () => {
 		await _runInstallVscodeExtension(async () => ["cursor"])
 
-		expect(promptSpy).toHaveBeenCalledWith(
-			expect.arrayContaining([expect.objectContaining({ name: "open" })]),
+		expect(promptConfirmMock).toHaveBeenCalledWith(
+			"Open extension page in Cursor now?",
+			{
+				initial: true,
+				nonInteractiveError:
+					"Opening the extension page requires an interactive terminal. Pass --open to force it or --manual to print the URL.",
+			},
 		)
 	})
 
 	test("prints install URL when user declines to open", async () => {
-		promptSpy.mockResolvedValue({ open: false } as never)
+		promptConfirmMock.mockImplementation(async () => false)
 
 		await _runInstallVscodeExtension(async () => ["cursor"])
 
@@ -147,7 +159,7 @@ describe("installVscodeExtensionCommand", () => {
 	})
 
 	test("calls openUrl when user confirms open", async () => {
-		promptSpy.mockResolvedValue({ open: true } as never)
+		promptConfirmMock.mockImplementation(async () => true)
 		const fakeOpen = mock(async (_url: string) => {})
 
 		await _runInstallVscodeExtension(async () => ["vscode"], fakeOpen)
@@ -156,7 +168,7 @@ describe("installVscodeExtensionCommand", () => {
 	})
 
 	test("falls back to print URL if openUrl throws", async () => {
-		promptSpy.mockResolvedValue({ open: true } as never)
+		promptConfirmMock.mockImplementation(async () => true)
 		const failingOpen = mock(async (_url: string) => {
 			throw new Error("open failed")
 		})
@@ -170,6 +182,18 @@ describe("installVscodeExtensionCommand", () => {
 		expect(allLogs).toContain("Open manually")
 	})
 
+	test("prints manual URL in non-interactive mode without prompting", async () => {
+		isInteractiveMock.mockImplementation(() => false)
+
+		await _runInstallVscodeExtension(async () => ["vscode"])
+
+		const allLogs = logSpy.mock.calls
+			.map((c: unknown[]) => String(c[0]))
+			.join("\n")
+		expect(promptConfirmMock).not.toHaveBeenCalled()
+		expect(allLogs).toContain("Install manually")
+	})
+
 	test("prints all editor URLs when multiple editors detected", async () => {
 		await _runInstallVscodeExtension(async () => ["vscode", "cursor"])
 
@@ -178,7 +202,7 @@ describe("installVscodeExtensionCommand", () => {
 			.join("\n")
 		expect(allLogs).toContain("vscode:extension/dotenc.dotenc")
 		expect(allLogs).toContain("cursor:extension/dotenc.dotenc")
-		expect(promptSpy).not.toHaveBeenCalled()
+		expect(promptConfirmMock).not.toHaveBeenCalled()
 	})
 
 	test("uses editor key as name fallback for unknown editors", async () => {

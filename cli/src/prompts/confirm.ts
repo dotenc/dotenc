@@ -1,13 +1,8 @@
-import { prompt } from "./prompt"
+import { promptConfirm } from "../ui/prompts"
 
 export const confirmPrompt = async (message: string) => {
-	const result = await prompt([
-		{
-			type: "confirm",
-			name: "confirm",
-			message,
-		},
-	])
-
-	return result.confirm as boolean
+	return promptConfirm(message, {
+		nonInteractiveError:
+			"Confirmation is required in non-interactive mode. Re-run with --yes to continue.",
+	})
 }

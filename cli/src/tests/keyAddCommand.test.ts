@@ -60,7 +60,7 @@ const choosePrivateKeyPromptMock = mock(async (_message: string) => {
 })
 const inputKeyPromptMock = mock(async (_message: string) => "")
 const inputNamePromptMock = mock(async (_message: string) => "alice")
-const inquirerPromptMock = mock(async (_questions: unknown) => ({
+const promptMock = mock(async (_questions: unknown) => ({
 	mode: "paste",
 }))
 
@@ -99,7 +99,7 @@ mock.module("../prompts/inputKey", () => ({
 mock.module("../prompts/inputName", () => ({
 	inputNamePrompt: inputNamePromptMock,
 }))
-mock.module("inquirer", () => ({ default: { prompt: inquirerPromptMock } }))
+mock.module("../prompts/prompt", () => ({ prompt: promptMock }))
 
 const { keyAddCommand } = await import("../commands/key/add")
 
@@ -152,7 +152,7 @@ beforeEach(() => {
 	})
 	inputKeyPromptMock.mockImplementation(async () => "")
 	inputNamePromptMock.mockImplementation(async () => "alice")
-	inquirerPromptMock.mockImplementation(async () => ({ mode: "paste" }))
+	promptMock.mockImplementation(async () => ({ mode: "paste" }))
 
 	delete process.env.DOTENC_PRIVATE_KEY_PASSPHRASE
 })
@@ -555,7 +555,7 @@ describe("keyAddCommand", () => {
 	})
 
 	test("interactive paste mode rejects empty input", async () => {
-		inquirerPromptMock.mockImplementation(async () => ({ mode: "paste" }))
+		promptMock.mockImplementation(async () => ({ mode: "paste" }))
 		inputKeyPromptMock.mockImplementation(async () => "")
 
 		const errSpy = spyOn(console, "error").mockImplementation(() => {})
@@ -569,7 +569,7 @@ describe("keyAddCommand", () => {
 	})
 
 	test("interactive choose mode handles prompt errors", async () => {
-		inquirerPromptMock.mockImplementation(async () => ({ mode: "choose" }))
+		promptMock.mockImplementation(async () => ({ mode: "choose" }))
 		choosePrivateKeyPromptMock.mockImplementation(async () => {
 			throw new Error("No private keys found")
 		})
@@ -587,7 +587,7 @@ describe("keyAddCommand", () => {
 	test("interactive choose mode uses selected key name when CLI name is missing", async () => {
 		const { privateKey } = crypto.generateKeyPairSync("ed25519")
 
-		inquirerPromptMock.mockImplementation(async () => ({ mode: "choose" }))
+		promptMock.mockImplementation(async () => ({ mode: "choose" }))
 		choosePrivateKeyPromptMock.mockImplementation(async () => ({
 			name: "selected_name",
 			privateKey,

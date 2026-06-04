@@ -1,15 +1,19 @@
-import type inquirer from "inquirer"
 import { getPublicKeys } from "../helpers/getPublicKeys"
-import { prompt } from "./prompt"
+import { promptMultiSelect, promptSelect } from "../ui/prompts"
+import { isInteractive } from "../ui/tty"
 
 type ChoosePublicKeyPromptDeps = {
-	prompt: typeof inquirer.prompt
 	getPublicKeys: typeof getPublicKeys
+	isInteractive: typeof isInteractive
+	promptSelect: typeof promptSelect
+	promptMultiSelect: typeof promptMultiSelect
 }
 
 const defaultDeps: ChoosePublicKeyPromptDeps = {
-	prompt,
 	getPublicKeys,
+	isInteractive,
+	promptSelect,
+	promptMultiSelect,
 }
 
 export async function _runChoosePublicKeyPrompt(
@@ -32,43 +36,46 @@ export async function _runChoosePublicKeyPrompt(
 		...depsOverrides,
 	}
 
-	const publicKeys = await deps.getPublicKeys()
+	const publicKeys = (await deps.getPublicKeys()).map((key) =>
+		key.name.replace(".pub", ""),
+	)
 
-	const prompt = deps.prompt as unknown as (
-		questions: unknown,
-	) => Promise<unknown>
-
-	const result = (await prompt([
-		{
-			type: multiple ? "checkbox" : "list",
-			name: "key",
-			message,
-			choices: publicKeys.map((key) => key.name.replace(".pub", "")),
-			validate: (input: unknown) => {
-				if (!multiple) {
-					return true
-				}
-
-				if (Array.isArray(input) && input.length > 0) {
-					return true
-				}
-
-				return "Select at least one public key."
-			},
-		},
-	])) as {
-		key: string | string[]
+	if (publicKeys.length === 0) {
+		throw new Error(
+			'No public keys found. Add one with "dotenc key add" before continuing.',
+		)
 	}
 
-	if (multiple) {
-		return Array.isArray(result.key) ? result.key : [result.key]
+	if (!multiple) {
+		if (publicKeys.length === 1) {
+			return publicKeys[0]
+		}
+
+		if (!deps.isInteractive()) {
+			throw new Error(
+				`Multiple public keys found. Pass the public key name explicitly. Available public keys: ${publicKeys.join(", ")}`,
+			)
+		}
+
+		return deps.promptSelect(message, {
+			options: publicKeys,
+			nonInteractiveError:
+				"An interactive terminal is required to choose a public key. Pass the public key name explicitly instead.",
+		})
 	}
 
-	if (Array.isArray(result.key)) {
-		return result.key[0] ?? ""
+	if (!deps.isInteractive()) {
+		throw new Error(
+			`Multiple public key selection is not available in non-interactive mode. Pass one or more --public-key values instead. Available public keys: ${publicKeys.join(", ")}`,
+		)
 	}
 
-	return result.key
+	return deps.promptMultiSelect(message, {
+		options: publicKeys,
+		required: true,
+		nonInteractiveError:
+			"An interactive terminal is required to choose multiple public keys. Pass one or more --public-key values instead.",
+	})
 }
 
 export async function choosePublicKeyPrompt(

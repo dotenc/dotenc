@@ -153,8 +153,9 @@ export function runCliWithExpect(
 	const scriptLines = [
 		"set timeout 60",
 		"match_max 100000",
-		"log_user 1",
+		"log_user 0",
 		`spawn -noecho ${invocation.map((part) => quoteTcl(part)).join(" ")}`,
+		"stty rows 40 columns 200",
 	]
 
 	for (const interaction of interactions) {
@@ -171,7 +172,9 @@ export function runCliWithExpect(
 		cwd: workspace,
 		env: {
 			...process.env,
+			COLUMNS: "200",
 			HOME: homeDir,
+			LINES: "40",
 			TERM: "xterm",
 			DOTENC_SKIP_UPDATE_CHECK: "1",
 			...extraEnv,

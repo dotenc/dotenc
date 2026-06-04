@@ -1,17 +1,12 @@
-import { prompt } from "./prompt"
+import { promptText } from "../ui/prompts"
 
 export const createEnvironmentPrompt = async (
 	message: string,
 	defaultValue?: string,
 ) => {
-	const result = await prompt([
-		{
-			type: "input",
-			name: "environment",
-			message,
-			default: defaultValue,
-		},
-	])
-
-	return result.environment
+	return promptText(message, {
+		default: defaultValue,
+		nonInteractiveError:
+			"No environment was provided in non-interactive mode. Pass the environment name explicitly.",
+	})
 }

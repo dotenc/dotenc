@@ -377,6 +377,85 @@ describe("choosePrivateKeyPrompt", () => {
 		expect(selected).toBe(strongEd25519)
 	})
 
+	test("requires an explicit key choice in non-interactive mode when multiple supported keys exist", async () => {
+		const firstKey = createPrivateKeyEntry("id_ed25519", "ed25519")
+		const secondKey = createPrivateKeyEntry("id_ed25519_alt", "ed25519")
+
+		await expect(
+			_runChoosePrivateKeyPrompt(
+				"Pick key",
+				makeDeps({
+					getPrivateKeys: mock(
+						async () =>
+							({
+								keys: [firstKey, secondKey],
+								passphraseProtectedKeys: [],
+								unsupportedKeys: [],
+							}) as never,
+					) as never,
+					isInteractive: () => false,
+				}),
+				{
+					nonInteractiveHint: "--private-key <name>",
+				},
+			),
+		).rejects.toThrow("Pass --private-key <name>")
+	})
+
+	test("selects a preferred supported key without prompting", async () => {
+		const firstKey = createPrivateKeyEntry("id_ed25519", "ed25519")
+		const secondKey = createPrivateKeyEntry("id_ed25519_alt", "ed25519")
+		const prompt = mock(async (_questions: unknown) => ({
+			key: "id_ed25519",
+		}))
+
+		const selected = await _runChoosePrivateKeyPrompt(
+			"Pick key",
+			makeDeps({
+				getPrivateKeys: mock(
+					async () =>
+						({
+							keys: [firstKey, secondKey],
+							passphraseProtectedKeys: [],
+							unsupportedKeys: [],
+						}) as never,
+				) as never,
+				prompt: prompt as never,
+				isInteractive: () => false,
+			}),
+			{
+				preferredKeyName: "id_ed25519_alt",
+			},
+		)
+
+		expect(selected).toBe(secondKey)
+		expect(prompt).not.toHaveBeenCalled()
+	})
+
+	test("rejects an explicit passphrase-protected key in non-interactive mode", async () => {
+		await expect(
+			_runChoosePrivateKeyPrompt(
+				"Pick key",
+				makeDeps({
+					getPrivateKeys: mock(
+						async () =>
+							({
+								keys: [],
+								passphraseProtectedKeys: ["id_locked"],
+								unsupportedKeys: [
+									{ name: "id_locked", reason: "passphrase-protected" },
+								],
+							}) as never,
+					) as never,
+					isInteractive: () => false,
+				}),
+				{
+					preferredKeyName: "id_locked",
+				},
+			),
+		).rejects.toThrow("passphrase-protected")
+	})
+
 	test("shows weak RSA keys as unsupported in interactive mode", async () => {
 		const weakRsa = createWeakRsaPrivateKeyEntry("id_rsa")
 		const strongEd25519 = createPrivateKeyEntry("id_ed25519_alt", "ed25519")

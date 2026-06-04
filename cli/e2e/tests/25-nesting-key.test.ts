@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { generateEd25519Key, runCli, runCliWithStdin } from "../helpers/cli"
+import { generateEd25519Key, runCli } from "../helpers/cli"
 
 const TIMEOUT = 30_000
 
@@ -61,13 +61,7 @@ describe("hierarchical key operations", () => {
 	}, TIMEOUT)
 
 	test("key remove from subdir removes from root .dotenc", () => {
-		// Confirm removal via stdin
-		const result = runCliWithStdin(
-			aliceHome,
-			subdir,
-			["key", "remove", "bob"],
-			"y\n",
-		)
+		const result = runCli(aliceHome, subdir, ["key", "remove", "bob", "--yes"])
 		expect(result.exitCode).toBe(0)
 		expect(existsSync(path.join(workspace, ".dotenc", "bob.pub"))).toBe(false)
 	}, TIMEOUT)

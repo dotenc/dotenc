@@ -17,6 +17,7 @@ import { prompt } from "../../prompts/prompt"
 
 type Options = {
 	fromSsh?: string
+	fromPrivateKey?: string
 	fromFile?: string
 	fromString?: string
 }
@@ -223,17 +224,41 @@ export const keyAddCommand = async (nameArg?: string, options?: Options) => {
 		}
 	}
 
+	if (options?.fromPrivateKey) {
+		let selectedKey: Awaited<ReturnType<typeof choosePrivateKeyPrompt>>
+		try {
+			selectedKey = await choosePrivateKeyPrompt(
+				"Which SSH key do you want to add?",
+				{
+					nonInteractiveHint: "--from-private-key <name>",
+					preferredKeyName: options.fromPrivateKey,
+				},
+			)
+		} catch (error) {
+			console.error(error instanceof Error ? error.message : String(error))
+			process.exit(1)
+		}
+
+		publicKey = crypto.createPublicKey(selectedKey.privateKey)
+		if (!nameArg) {
+			nameArg = selectedKey.name
+		}
+	}
+
 	if (!publicKey) {
-		const modePrompt = await prompt({
-			type: "list",
-			name: "mode",
-			message:
-				"Would you like to add one of your SSH keys or paste a public key?",
-			choices: [
-				{ name: "Choose or create an SSH key", value: "choose" },
-				{ name: "Paste a public key (PEM format)", value: "paste" },
-			],
-		})
+		const modePrompt = await prompt(
+			{
+				type: "list",
+				name: "mode",
+				message:
+					"Would you like to add one of your SSH keys or paste a public key?",
+				choices: [
+					{ name: "Choose or create an SSH key", value: "choose" },
+					{ name: "Paste a public key (PEM format)", value: "paste" },
+				],
+			},
+			"No key source was provided in non-interactive mode. Use --from-private-key, --from-ssh, --from-file, or --from-string instead.",
+		)
 
 		if (modePrompt.mode === "paste") {
 			const publicKeyInput = await inputKeyPrompt(
@@ -261,6 +286,9 @@ export const keyAddCommand = async (nameArg?: string, options?: Options) => {
 			try {
 				selectedKey = await choosePrivateKeyPrompt(
 					"Which SSH key do you want to add?",
+					{
+						nonInteractiveHint: "--from-private-key <name>",
+					},
 				)
 			} catch (error) {
 				console.error(error instanceof Error ? error.message : String(error))

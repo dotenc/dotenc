@@ -37,7 +37,7 @@ export const _normalizePublicKeyNamesForCreate = (
 
 export const createCommand = async (
 	environmentNameArg: string,
-	publicKeyNameArg: string,
+	publicKeyNameArg: string | string[] | undefined,
 	initialContent?: string,
 ) => {
 	const invocationDir = process.cwd()

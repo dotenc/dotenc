@@ -1,15 +1,16 @@
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
 import { EventEmitter } from "node:events"
+import { logger } from "../ui/logger"
 
-const inquirerPromptMock = mock(async () => ({
-	scope: "local" as "local" | "global",
-}))
 const spawnMock = mock(() => {
 	throw new Error("spawn not expected")
 })
+const promptSelectMock = mock(async () => "local" as "local" | "global")
+const isInteractiveMock = mock(() => true)
 
-mock.module("inquirer", () => ({ default: { prompt: inquirerPromptMock } }))
 mock.module("node:child_process", () => ({ spawn: spawnMock }))
+mock.module("../ui/prompts", () => ({ promptSelect: promptSelectMock }))
+mock.module("../ui/tty", () => ({ isInteractive: isInteractiveMock }))
 
 const { installAgentSkillCommand, _runNpx } = await import(
 	"../commands/tools/install-agent-skill"
@@ -22,9 +23,11 @@ const makeSpawn = (exitCode: number) => {
 }
 
 beforeEach(() => {
-	inquirerPromptMock.mockClear()
 	spawnMock.mockClear()
-	inquirerPromptMock.mockImplementation(async () => ({ scope: "local" }))
+	promptSelectMock.mockClear()
+	isInteractiveMock.mockClear()
+	promptSelectMock.mockImplementation(async () => "local")
+	isInteractiveMock.mockImplementation(() => true)
 	spawnMock.mockImplementation(() => {
 		throw new Error("spawn not expected")
 	})
@@ -49,7 +52,7 @@ describe("installAgentSkillCommand", () => {
 	})
 
 	test("adds -g for global installation", async () => {
-		inquirerPromptMock.mockImplementation(async () => ({ scope: "global" }))
+		promptSelectMock.mockImplementation(async () => "global")
 		spawnMock.mockImplementation(() => makeSpawn(0))
 
 		const logSpy = spyOn(console, "log").mockImplementation(() => {})
@@ -74,6 +77,29 @@ describe("installAgentSkillCommand", () => {
 			["skills", "add", "ivanfilhoz/dotenc", "--skill", "dotenc", "-y"],
 			expect.any(Object),
 		)
+		logSpy.mockRestore()
+	})
+
+	test("defaults to local scope in non-interactive mode", async () => {
+		isInteractiveMock.mockImplementation(() => false)
+		spawnMock.mockImplementation(() => makeSpawn(0))
+
+		const logSpy = spyOn(console, "log").mockImplementation(() => {})
+		const infoSpy = spyOn(logger, "info").mockImplementation(
+			(() => {}) as never,
+		)
+		await installAgentSkillCommand({})
+
+		expect(promptSelectMock).not.toHaveBeenCalled()
+		expect(spawnMock).toHaveBeenCalledWith(
+			"npx",
+			["skills", "add", "ivanfilhoz/dotenc", "--skill", "dotenc"],
+			expect.any(Object),
+		)
+		expect(infoSpy).toHaveBeenCalledWith(
+			expect.stringContaining("Defaulting to"),
+		)
+		infoSpy.mockRestore()
 		logSpy.mockRestore()
 	})
 

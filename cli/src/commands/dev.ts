@@ -1,12 +1,13 @@
 import chalk from "chalk"
-import inquirer from "inquirer"
 import { getCurrentKeyName } from "../helpers/getCurrentKeyName"
+import { promptSelect } from "../ui/prompts"
+import { isInteractive } from "../ui/tty"
 import { runCommand } from "./run"
 
 export const devCommand = async (
 	command: string,
 	args: string[],
-	options: { localOnly?: boolean } = {},
+	options: { localOnly?: boolean; identity?: string } = {},
 ) => {
 	const keyNames = await getCurrentKeyName()
 
@@ -19,18 +20,32 @@ export const devCommand = async (
 
 	let keyName: string
 
-	if (keyNames.length === 1) {
+	if (options.identity) {
+		if (!keyNames.includes(options.identity)) {
+			console.error(
+				`${chalk.red("Error:")} identity ${chalk.cyan(options.identity)} was not found. Available identities: ${keyNames.join(", ")}`,
+			)
+			process.exit(1)
+		}
+		keyName = options.identity
+	} else if (keyNames.length === 1) {
 		keyName = keyNames[0]
 	} else {
-		const { selected } = await inquirer.prompt([
+		if (!isInteractive()) {
+			console.error(
+				`${chalk.red("Error:")} multiple identities found. Pass ${chalk.gray("--identity <name>")} to choose one. Available identities: ${keyNames.join(", ")}`,
+			)
+			process.exit(1)
+		}
+
+		keyName = await promptSelect(
+			"Multiple identities found. Which one do you want to use?",
 			{
-				type: "list",
-				name: "selected",
-				message: "Multiple identities found. Which one do you want to use?",
-				choices: keyNames.map((name) => ({ name, value: name })),
+				options: keyNames.map((name) => ({ label: name, value: name })),
+				nonInteractiveError:
+					"Multiple identities found in non-interactive mode. Pass --identity <name> instead.",
 			},
-		])
-		keyName = selected as string
+		)
 	}
 
 	await runCommand(command, args, {
