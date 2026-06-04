@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process"
 import chalk from "chalk"
+import { getErrorMessage } from "../../ui/errors"
 import { logger } from "../../ui/logger"
 import { promptSelect } from "../../ui/prompts"
-import { isInteractive } from "../../ui/tty"
 
 type Options = {
 	force?: boolean
@@ -13,6 +13,8 @@ type Scope = "local" | "global"
 
 const SKILL_SOURCE = "ivanfilhoz/dotenc"
 const SKILL_NAME = "dotenc"
+const NON_INTERACTIVE_SCOPE_FALLBACK =
+	"Install scope prompt is unavailable in non-interactive mode."
 
 export const _runNpx = (args: string[], spawnImpl: typeof spawn = spawn) =>
 	new Promise<number>((resolve, reject) => {
@@ -26,25 +28,28 @@ export const _runNpx = (args: string[], spawnImpl: typeof spawn = spawn) =>
 	})
 
 export const installAgentSkillCommand = async (options: Options) => {
-	const interactive = isInteractive()
-	const scope =
-		options.scope ??
-		(interactive
-			? await promptSelect<Scope>("Install locally or globally?", {
-					options: [
-						{ label: "Locally (this project)", value: "local" },
-						{ label: "Globally (all projects)", value: "global" },
-					],
-					initial: "local",
-					nonInteractiveError:
-						"Install scope must be provided in non-interactive mode. Pass --scope local or --scope global.",
-				})
-			: "local")
+	let scope = options.scope
 
-	if (!options.scope && !interactive) {
-		logger.info(
-			`No ${chalk.gray("--scope")} provided in non-interactive mode. Defaulting to ${chalk.cyan("local")}.`,
-		)
+	if (!scope) {
+		try {
+			scope = await promptSelect<Scope>("Install locally or globally?", {
+				options: [
+					{ label: "Locally (this project)", value: "local" },
+					{ label: "Globally (all projects)", value: "global" },
+				],
+				initial: "local",
+				nonInteractiveError: NON_INTERACTIVE_SCOPE_FALLBACK,
+			})
+		} catch (error) {
+			if (getErrorMessage(error) !== NON_INTERACTIVE_SCOPE_FALLBACK) {
+				throw error
+			}
+
+			scope = "local"
+			logger.info(
+				`No ${chalk.gray("--scope")} provided in non-interactive mode. Defaulting to ${chalk.cyan("local")}.`,
+			)
+		}
 	}
 
 	const args = ["skills", "add", SKILL_SOURCE, "--skill", SKILL_NAME]

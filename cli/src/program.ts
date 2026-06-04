@@ -6,7 +6,10 @@ import { authPurgeCommand } from "./commands/auth/purge"
 import { revokeCommand } from "./commands/auth/revoke"
 import { configCommand } from "./commands/config"
 import { devCommand } from "./commands/dev"
-import { createCommand } from "./commands/env/create"
+import {
+	_resolvePublicKeySelectionForCreate,
+	createCommand,
+} from "./commands/env/create"
 import { decryptCommand } from "./commands/env/decrypt"
 import { envDeleteCommand } from "./commands/env/delete"
 import { editCommand } from "./commands/env/edit"
@@ -64,7 +67,10 @@ env
 	)
 	.description("create a new environment")
 	.action((env, pubKey, options) =>
-		createCommand(env, options.publicKey?.length ? options.publicKey : pubKey),
+		createCommand(
+			env,
+			_resolvePublicKeySelectionForCreate(pubKey, options.publicKey),
+		),
 	)
 
 env

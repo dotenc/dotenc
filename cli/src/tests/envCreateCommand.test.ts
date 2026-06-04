@@ -33,9 +33,11 @@ mock.module("node:fs/promises", () => ({
 	default: { ...realFsPromises, writeFile: fsWriteFile },
 }))
 
-const { _normalizePublicKeyNamesForCreate, createCommand } = await import(
-	"../commands/env/create"
-)
+const {
+	_normalizePublicKeyNamesForCreate,
+	_resolvePublicKeySelectionForCreate,
+	createCommand,
+} = await import("../commands/env/create")
 
 describe("createCommand key selection normalization", () => {
 	test("normalizes a single selected key string into an array", () => {
@@ -53,6 +55,26 @@ describe("createCommand key selection normalization", () => {
 		expect(_normalizePublicKeyNamesForCreate(undefined)).toEqual([])
 		expect(_normalizePublicKeyNamesForCreate("")).toEqual([])
 		expect(_normalizePublicKeyNamesForCreate("   ")).toEqual([])
+	})
+})
+
+describe("createCommand public key selection resolution", () => {
+	test("uses repeatable --public-key values when provided", () => {
+		expect(
+			_resolvePublicKeySelectionForCreate(undefined, ["alice", "bob"]),
+		).toEqual(["alice", "bob"])
+	})
+
+	test("uses positional public key when no --public-key values are provided", () => {
+		expect(_resolvePublicKeySelectionForCreate("alice", undefined)).toBe(
+			"alice",
+		)
+	})
+
+	test("rejects mixing positional public key and --public-key values", () => {
+		expect(() => _resolvePublicKeySelectionForCreate("alice", ["bob"])).toThrow(
+			"[publicKey]",
+		)
 	})
 })
 

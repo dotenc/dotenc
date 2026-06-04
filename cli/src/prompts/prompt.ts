@@ -91,6 +91,45 @@ const formatSelectOption = (
 	}
 }
 
+const findInitialSelectCursor = (
+	options: SelectOption[],
+	initialValue?: string,
+) => {
+	if (initialValue) {
+		const initialCursor = options.findIndex(
+			(option) => option.value === initialValue && !option.disabled,
+		)
+		if (initialCursor !== -1) {
+			return initialCursor
+		}
+	}
+
+	const firstSelectable = options.findIndex((option) => !option.disabled)
+	return firstSelectable === -1 ? 0 : firstSelectable
+}
+
+const renderSelectPrompt = (
+	state: Prompt["state"],
+	message: string,
+	options: SelectOption[],
+	cursor: number,
+) => {
+	const header = `${VERTICAL}\n${getStatusSymbol(state)}  ${message}\n`
+
+	switch (state) {
+		case "submit":
+			return `${header}${VERTICAL}  ${formatSelectOption(options[cursor], "selected")}`
+		case "cancel":
+			return `${header}${VERTICAL}  ${formatSelectOption(options[cursor], "cancelled")}\n${VERTICAL}`
+		default:
+			return `${header}${ACTIVE_VERTICAL}  ${options
+				.map((option, index) =>
+					formatSelectOption(option, index === cursor ? "active" : "inactive"),
+				)
+				.join(`\n${ACTIVE_VERTICAL}  `)}\n${ACTIVE_END}\n`
+	}
+}
+
 class SelectPromptWithDisabled extends Prompt {
 	options: SelectOption[]
 	cursor: number
@@ -104,34 +143,28 @@ class SelectPromptWithDisabled extends Prompt {
 		message: string
 		options: SelectOption[]
 	}) {
+		const renderState = {
+			cursor: findInitialSelectCursor(options, initialValue),
+			options,
+		}
+
 		super(
 			{
 				initialValue,
-				render(this: Omit<SelectPromptWithDisabled, "prompt">) {
-					const header = `${VERTICAL}\n${getStatusSymbol(this.state)}  ${message}\n`
-
-					switch (this.state) {
-						case "submit":
-							return `${header}${VERTICAL}  ${formatSelectOption(this.options[this.cursor], "selected")}`
-						case "cancel":
-							return `${header}${VERTICAL}  ${formatSelectOption(this.options[this.cursor], "cancelled")}\n${VERTICAL}`
-						default:
-							return `${header}${ACTIVE_VERTICAL}  ${this.options
-								.map((option: SelectOption, index: number) =>
-									formatSelectOption(
-										option,
-										index === this.cursor ? "active" : "inactive",
-									),
-								)
-								.join(`\n${ACTIVE_VERTICAL}  `)}\n${ACTIVE_END}\n`
-					}
+				render() {
+					return renderSelectPrompt(
+						this.state,
+						message,
+						renderState.options,
+						renderState.cursor,
+					)
 				},
-			} as never,
+			},
 			false,
 		)
 
 		this.options = options
-		this.cursor = this.findInitialCursor(initialValue)
+		this.cursor = renderState.cursor
 		this.updateValue()
 
 		this.on("cursor", (key) => {
@@ -146,22 +179,9 @@ class SelectPromptWithDisabled extends Prompt {
 					break
 			}
 
+			renderState.cursor = this.cursor
 			this.updateValue()
 		})
-	}
-
-	private findInitialCursor(initialValue?: string) {
-		if (initialValue) {
-			const initialCursor = this.options.findIndex(
-				(option) => option.value === initialValue && !option.disabled,
-			)
-			if (initialCursor !== -1) {
-				return initialCursor
-			}
-		}
-
-		const firstSelectable = this.options.findIndex((option) => !option.disabled)
-		return firstSelectable === -1 ? 0 : firstSelectable
 	}
 
 	private hasSelectableOptions() {

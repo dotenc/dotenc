@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
-import { PasswordPrompt } from "@clack/core"
 import { consola } from "consola"
 import { _runChooseEnvironmentPrompt } from "../prompts/chooseEnvironment"
 import { createEnvironmentPrompt } from "../prompts/createEnvironment"
-import { inputKeyPrompt } from "../prompts/inputKey"
+import { _runInputKeyPrompt } from "../prompts/inputKey"
 import { inputNamePrompt } from "../prompts/inputName"
 
 describe("prompt wrappers", () => {
@@ -49,15 +48,22 @@ describe("prompt wrappers", () => {
 	})
 
 	test("inputKeyPrompt uses password prompt with mask", async () => {
-		const promptSpy = spyOn(
-			PasswordPrompt.prototype,
-			"prompt",
-		).mockResolvedValue("secret" as never)
+		const promptSpy = async (questions: unknown) => {
+			expect(questions).toEqual([
+				{
+					type: "password",
+					name: "key",
+					mask: "*",
+					message: "Paste key",
+					default: "default-key",
+				},
+			])
 
-		const key = await inputKeyPrompt("Paste key", "default-key")
+			return { key: "secret" }
+		}
+
+		const key = await _runInputKeyPrompt("Paste key", "default-key", promptSpy)
 		expect(key).toBe("secret")
-		expect(promptSpy).toHaveBeenCalledTimes(1)
-		promptSpy.mockRestore()
 	})
 
 	test("createEnvironmentPrompt returns selected environment", async () => {

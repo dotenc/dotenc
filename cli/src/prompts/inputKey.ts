@@ -1,10 +1,11 @@
-import { prompt } from "./prompt"
+import { type GuardedPrompt, prompt } from "./prompt"
 
-export const inputKeyPrompt = async (
+export const _runInputKeyPrompt = async (
 	message: string,
 	defaultValue?: string,
+	promptImpl: GuardedPrompt = prompt,
 ) => {
-	const result = await prompt(
+	const result = await promptImpl(
 		[
 			{
 				type: "password",
@@ -19,3 +20,6 @@ export const inputKeyPrompt = async (
 
 	return result.key as string
 }
+
+export const inputKeyPrompt = async (message: string, defaultValue?: string) =>
+	_runInputKeyPrompt(message, defaultValue)
