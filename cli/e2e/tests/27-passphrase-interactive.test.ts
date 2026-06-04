@@ -36,6 +36,8 @@ describe("Interactive passphrase-protected key conversion", () => {
 		const originalKeyPath = path.join(passphraseHome, ".ssh", "id_ed25519")
 		const originalContentBefore = readFileSync(originalKeyPath, "utf-8")
 
+		// runCliWithExpect keeps Expect log_user disabled by default, so captured
+		// stdout does not include PTY-rendered success lines from the CLI.
 		const initResult = runCliWithExpect(
 			passphraseHome,
 			workspace,
