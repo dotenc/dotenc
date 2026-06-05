@@ -1,0 +1,27 @@
+name: Setup dotenc
+description: Install the dotenc CLI for later GitHub Actions steps.
+inputs:
+  version:
+    description: Version of @dotenc/cli to install.
+    required: false
+    default: latest
+  check:
+    description: Run dotenc --version after installation.
+    required: false
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - name: Install dotenc
+      shell: bash
+      env:
+        DOTENC_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+
+        npm install --global "@dotenc/cli@${DOTENC_VERSION}"
+
+    - name: Check dotenc
+      if: ${{ inputs.check == 'true' }}
+      shell: bash
+      run: dotenc --version

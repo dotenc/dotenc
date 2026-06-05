@@ -1,0 +1,68 @@
+name: Write dotenc variable to file
+description: Write one decrypted dotenc variable to a file with restricted permissions.
+inputs:
+  environment:
+    description: Dotenc environment name, or a comma-separated list of names.
+    required: true
+  name:
+    description: Decrypted variable name to write.
+    required: true
+  path:
+    description: File path to write.
+    required: true
+  working-directory:
+    description: Directory where dotenc should resolve project and environment files.
+    required: false
+    default: .
+  strict:
+    description: Fail when any selected environment is missing or cannot decrypt.
+    required: false
+    default: "true"
+  local-only:
+    description: Load only environment files in working-directory, skipping ancestors.
+    required: false
+    default: "false"
+  mode:
+    description: Octal file mode applied to the written file.
+    required: false
+    default: "600"
+  required:
+    description: Fail if the variable is missing.
+    required: false
+    default: "true"
+  mask:
+    description: Register the file contents with GitHub log masking.
+    required: false
+    default: "true"
+  overwrite:
+    description: Replace an existing file at path.
+    required: false
+    default: "true"
+  create-directories:
+    description: Create parent directories for path.
+    required: false
+    default: "true"
+outputs:
+  path:
+    description: File path written by the action.
+    value: ${{ steps.write.outputs.path }}
+runs:
+  using: composite
+  steps:
+    - name: Write decrypted variable to file
+      id: write
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        DOTENC_ENVIRONMENT: ${{ inputs.environment }}
+        DOTENC_VARIABLE: ${{ inputs.name }}
+        DOTENC_PATH: ${{ inputs.path }}
+        DOTENC_STRICT: ${{ inputs.strict }}
+        DOTENC_LOCAL_ONLY: ${{ inputs.local-only }}
+        DOTENC_FILE_MODE: ${{ inputs.mode }}
+        DOTENC_REQUIRED: ${{ inputs.required }}
+        DOTENC_MASK: ${{ inputs.mask }}
+        DOTENC_OVERWRITE: ${{ inputs.overwrite }}
+        DOTENC_CREATE_DIRECTORIES: ${{ inputs.create-directories }}
+      run: |
+        bash "$GITHUB_ACTION_PATH/../_lib/write-file.sh"

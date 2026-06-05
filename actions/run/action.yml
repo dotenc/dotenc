@@ -1,0 +1,34 @@
+name: Run with dotenc
+description: Run a command with variables decrypted from a dotenc environment.
+inputs:
+  environment:
+    description: Dotenc environment name, or a comma-separated list of names.
+    required: true
+  command:
+    description: Shell command to run with the decrypted variables.
+    required: true
+  working-directory:
+    description: Directory where dotenc should resolve project and environment files.
+    required: false
+    default: .
+  strict:
+    description: Fail when any selected environment is missing or cannot decrypt.
+    required: false
+    default: "true"
+  local-only:
+    description: Load only environment files in working-directory, skipping ancestors.
+    required: false
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Run command with dotenc
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        DOTENC_ENVIRONMENT: ${{ inputs.environment }}
+        DOTENC_COMMAND: ${{ inputs.command }}
+        DOTENC_STRICT: ${{ inputs.strict }}
+        DOTENC_LOCAL_ONLY: ${{ inputs.local-only }}
+      run: |
+        bash "$GITHUB_ACTION_PATH/../_lib/run-command.sh"

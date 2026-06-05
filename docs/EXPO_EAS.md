@@ -415,22 +415,97 @@ For local submission after a successful cloud build:
 eas submit --platform android --profile production --latest --non-interactive
 ```
 
-For GitHub Actions submission, store the service account JSON as a base64 secret
-such as `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON_BASE64`, recreate the file in the job,
-then run `eas submit`:
+For GitHub Actions submission, prefer a dedicated GitHub Actions dotenc key.
+Store only that provider key as the GitHub secret `DOTENC_PRIVATE_KEY`; keep
+`EXPO_TOKEN` and the Google Play service account JSON in an encrypted dotenc
+environment such as `github-actions`:
 
 ```yaml
-- name: Write Google Play service account
-  run: |
-    printf '%s' "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON_BASE64" | base64 -d > google-play-service-account.json
-    chmod 600 google-play-service-account.json
+- uses: actions/checkout@v6
+- uses: actions/setup-node@v6
+  with:
+    node-version: 24
+- uses: dotenc/setup-action@v1
+
+- uses: dotenc/export-action@v1
+  with:
+    environment: github-actions
+    names: EXPO_TOKEN
   env:
-    GOOGLE_PLAY_SERVICE_ACCOUNT_JSON_BASE64: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON_BASE64 }}
+    DOTENC_PRIVATE_KEY: ${{ secrets.DOTENC_PRIVATE_KEY }}
+
+- uses: dotenc/write-file-action@v1
+  with:
+    environment: github-actions
+    name: GOOGLE_PLAY_SERVICE_ACCOUNT_JSON
+    path: google-play-service-account.json
+  env:
+    DOTENC_PRIVATE_KEY: ${{ secrets.DOTENC_PRIVATE_KEY }}
 
 - name: Submit Android build
-  run: npx eas-cli@latest submit --platform android --profile production --latest --non-interactive
-  env:
-    EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+  run: npx eas-cli@latest submit --platform android --profile production --latest --non-interactive --wait --verbose
+```
+
+If you are not using the dotenc GitHub Actions, recreate
+`google-play-service-account.json` in the job from a CI secret store, keep it
+out of git, and set `EXPO_TOKEN` only for the submit command.
+
+For EAS Workflows submission, store the Google Play service account JSON in
+the EAS environment that runs the submit job. Use an EAS file secret rather
+than a string secret:
+
+```bash
+eas env:create production \
+  --scope project \
+  --type file \
+  --visibility secret \
+  --name GOOGLE_PLAY_SERVICE_ACCOUNT_JSON \
+  --value google-play-service-account.json \
+  --force
+```
+
+When EAS exposes a file secret to a custom job, the environment variable value
+is a path to a temporary file. Copy that file to the `serviceAccountKeyPath`
+declared in `eas.json` before running `eas submit`. Submit by the build ID from
+the upstream build job instead of using `--latest`, so the workflow cannot
+accidentally submit an older AAB:
+
+```yaml
+jobs:
+  build_android:
+    name: Build Android
+    type: build
+    params:
+      platform: android
+      profile: production
+
+  submit_android:
+    name: Submit to Google Play
+    type: custom
+    needs: [build_android]
+    environment: production
+    runs_on: linux-medium
+    steps:
+      - uses: eas/checkout
+      - uses: eas/install_node_modules
+      - name: Write Google Play service account
+        run: |
+          if [ -z "${GOOGLE_PLAY_SERVICE_ACCOUNT_JSON:-}" ]; then
+            echo "Missing GOOGLE_PLAY_SERVICE_ACCOUNT_JSON EAS file env variable."
+            echo "Create it as a production file secret containing the Google Play service account JSON."
+            exit 1
+          fi
+
+          cp "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON" google-play-service-account.json
+      - name: Submit Android build to Google Play
+        run: |
+          npx eas-cli@latest submit \
+            --platform android \
+            --profile production \
+            --id "${{ needs.build_android.outputs.build_id }}" \
+            --non-interactive \
+            --wait \
+            --verbose
 ```
 
 If the same workflow starts the build and submits later, make sure the submitted
@@ -458,27 +533,35 @@ When GitHub Actions triggers `eas build`, GitHub secrets are not automatically
 available on EAS builders. `DOTENC_PRIVATE_KEY` must exist on EAS servers as an
 EAS environment variable for cloud builds.
 
-A GitHub workflow can still trigger the build:
+The GitHub job also needs `EXPO_TOKEN` to call EAS. Prefer storing that token in
+a GitHub-specific dotenc environment and exporting only `EXPO_TOKEN` for the
+trigger step:
 
 ```yaml
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
-          node-version: 22
-      - run: npm install -g eas-cli
-      - run: eas build --platform android --profile production --non-interactive
+          node-version: 24
+      - uses: dotenc/setup-action@v1
+      - uses: dotenc/export-action@v1
+        with:
+          environment: github-actions
+          names: EXPO_TOKEN
         env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          DOTENC_PRIVATE_KEY: ${{ secrets.DOTENC_PRIVATE_KEY }}
+      - run: npx eas-cli@latest build --platform android --profile production --non-interactive
 ```
 
 But the dotenc private key belongs in the EAS project/account environment, not
 only in GitHub. Google Play service account JSON is different: it is needed by
-the job that runs `eas submit`, so store it in GitHub only when GitHub Actions
-is responsible for submitting to Google Play.
+the job that runs `eas submit`, so store it in the GitHub-specific dotenc
+environment only when GitHub Actions is responsible for submitting to Google
+Play. If an EAS Workflow custom job is responsible for submission, store the
+JSON as an EAS file secret in the same environment selected by that job.
 
 ## Troubleshooting
 
@@ -502,9 +585,15 @@ is responsible for submitting to Google Play.
 - The EAS build is successful but Play Store submission uses the wrong artifact:
   submit by checking the latest build ID, app version, and version code. Do not
   reuse an AAB from a failed submission.
+- `Google Service Account Keys cannot be set up in --non-interactive mode`:
+  the submit runner does not have a usable Google Play service account file.
+  Configure `serviceAccountKeyPath` in `eas.json`, then create that file in the
+  same job that runs `eas submit`. For EAS Workflows, store the JSON as an EAS
+  file secret and copy `$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` to that path.
 - `serviceAccountKeyPath` works locally but fails in GitHub Actions: recreate
-  the JSON file from a base64 GitHub secret before running `eas submit`, and
-  ensure the path matches `eas.json`.
+  the JSON file before running `eas submit`, either with the dotenc
+  `actions/write-file` action or from the CI secret store, and ensure the path
+  matches `eas.json`.
 - RevenueCat or Play integrations report that the service account cannot create
   a Google Cloud Pub/Sub topic: grant the service account the required Pub/Sub
   permissions or create the RTDN topic manually. Credential status in external
@@ -518,3 +607,6 @@ is responsible for submitting to Google Play.
 - [Expo: Using environment variables in EAS](https://docs.expo.dev/eas/environment-variables/usage/)
 - [Expo: Custom build configuration schema](https://docs.expo.dev/custom-builds/schema/)
 - [Expo: EAS Workflows introduction](https://docs.expo.dev/eas/workflows/introduction/)
+- [Expo: EAS Submit](https://docs.expo.dev/submit/introduction/)
+- [Expo: Submit to the Google Play Store](https://docs.expo.dev/submit/android/)
+- [Expo: Configure EAS Submit with eas.json](https://docs.expo.dev/submit/eas-json/)

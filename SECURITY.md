@@ -17,6 +17,7 @@ This document describes the security model, cryptographic design, and operationa
 - [Access Control Model](#access-control-model)
 - [Operational Flow](#operational-flow)
 - [Installation Script Trust Model](#installation-script-trust-model)
+- [GitHub Actions Trust Model](#github-actions-trust-model)
 - [Known Limitations](#known-limitations)
 - [Vulnerability Reporting](#vulnerability-reporting)
 
@@ -220,6 +221,31 @@ sh install.sh
 ```
 
 Alternatively, install via Homebrew, Scoop, npm, or a standalone binary from the [GitHub Releases](https://github.com/ivanfilhoz/dotenc/releases) page — none of these methods use the install script.
+
+---
+
+## GitHub Actions Trust Model
+
+The reusable GitHub Actions exposed as `dotenc/*-action@v1` delegate to the
+implementation actions in `actions/`, which are thin wrappers around the dotenc
+CLI:
+
+- `actions/setup` installs `@dotenc/cli` through npm. Pin the action ref and
+  CLI version when workflows need fully reproducible installs.
+- `actions/run` writes the requested command to a temporary script and executes
+  it through `dotenc run --strict` by default. The CLI still strips
+  `DOTENC_PRIVATE_KEY` before launching the child command, and the action
+  wrapper unsets `DOTENC_PRIVATE_KEY_PASSPHRASE` before running user commands.
+- `actions/export` decrypts an environment through `dotenc run`, then writes
+  only explicitly allowlisted variable names to `$GITHUB_ENV`. Values are
+  registered with GitHub log masking before export.
+- `actions/write-file` decrypts one named variable and writes it to a file with
+  mode `0600` by default. This is intended for file-shaped credentials such as
+  service account JSON.
+
+These actions intentionally do not provide a "decrypt everything" mode. Values
+exported through `$GITHUB_ENV` remain available to later steps in the same job,
+so grant CI keys narrowly and keep allowlists short.
 
 ---
 

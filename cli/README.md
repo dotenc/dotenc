@@ -61,6 +61,8 @@ Done.
   - [3. Set the private key in your CI provider](#3-set-the-private-key-in-your-ci-provider)
   - [4. Use dotenc in your CI pipeline](#4-use-dotenc-in-your-ci-pipeline)
   - [GitHub Actions example](#github-actions-example)
+  - [Reusable GitHub Actions](#reusable-github-actions)
+  - [Provider runbooks](#provider-runbooks)
 - [Key Management](#key-management)
   - [Supported Key Types](#supported-key-types)
   - [Adding a public key](#adding-a-public-key)
@@ -461,6 +463,33 @@ jobs:
           DOTENC_PRIVATE_KEY: ${{ secrets.DOTENC_PRIVATE_KEY }}
           DOTENC_PRIVATE_KEY_PASSPHRASE: ${{ secrets.DOTENC_PRIVATE_KEY_PASSPHRASE }}
 ```
+
+### Reusable GitHub Actions
+
+dotenc also ships reusable GitHub Actions for common CI patterns:
+
+- `dotenc/setup-action@v1` installs the CLI.
+- `dotenc/run-action@v1` runs one command under `dotenc run --strict`.
+- `dotenc/export-action@v1` exports an explicit allowlist to later
+  steps through `$GITHUB_ENV`.
+- `dotenc/write-file-action@v1` writes one decrypted value to a
+  `0600` file for file-shaped credentials.
+
+This lets GitHub keep only `DOTENC_PRIVATE_KEY` as a GitHub secret while
+provider tokens such as `EXPO_TOKEN` live in an encrypted dotenc environment.
+See [docs/GITHUB_ACTIONS.md](/docs/GITHUB_ACTIONS.md) for examples.
+
+### Provider runbooks
+
+Some CI/CD providers need extra setup because build steps, environment
+resolution, or secret storage work differently from a generic shell pipeline.
+
+- [GitHub Actions](/docs/GITHUB_ACTIONS.md) — use a dedicated GitHub Actions
+  key, then run commands, export allowlisted variables, or write file-shaped
+  credentials from encrypted dotenc environments.
+- [Expo / EAS Build and Workflows](/docs/EXPO_EAS.md) — use a dedicated EAS
+  key, store `DOTENC_PRIVATE_KEY` on EAS, and export allowlisted values before
+  Expo config/native build steps run.
 
 ## Key Management
 

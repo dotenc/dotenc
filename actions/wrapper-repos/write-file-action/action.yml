@@ -1,0 +1,65 @@
+name: Write dotenc variable to file
+description: Write one decrypted dotenc variable to a file with restricted permissions.
+inputs:
+  environment:
+    description: Dotenc environment name, or a comma-separated list of names.
+    required: true
+  name:
+    description: Decrypted variable name to write.
+    required: true
+  path:
+    description: File path to write.
+    required: true
+  working-directory:
+    description: Directory where dotenc should resolve project and environment files.
+    required: false
+    default: .
+  strict:
+    description: Fail when any selected environment is missing or cannot decrypt.
+    required: false
+    default: "true"
+  local-only:
+    description: Load only environment files in working-directory, skipping ancestors.
+    required: false
+    default: "false"
+  mode:
+    description: Octal file mode applied to the written file.
+    required: false
+    default: "600"
+  required:
+    description: Fail if the variable is missing.
+    required: false
+    default: "true"
+  mask:
+    description: Register the file contents with GitHub log masking.
+    required: false
+    default: "true"
+  overwrite:
+    description: Replace an existing file at path.
+    required: false
+    default: "true"
+  create-directories:
+    description: Create parent directories for path.
+    required: false
+    default: "true"
+outputs:
+  path:
+    description: File path written by the action.
+    value: ${{ steps.write.outputs.path }}
+runs:
+  using: composite
+  steps:
+    - id: write
+      uses: ivanfilhoz/dotenc/actions/write-file@v1
+      with:
+        environment: ${{ inputs.environment }}
+        name: ${{ inputs.name }}
+        path: ${{ inputs.path }}
+        working-directory: ${{ inputs.working-directory }}
+        strict: ${{ inputs.strict }}
+        local-only: ${{ inputs.local-only }}
+        mode: ${{ inputs.mode }}
+        required: ${{ inputs.required }}
+        mask: ${{ inputs.mask }}
+        overwrite: ${{ inputs.overwrite }}
+        create-directories: ${{ inputs.create-directories }}

@@ -1,0 +1,41 @@
+name: Export dotenc variables
+description: Export allowlisted dotenc variables to later GitHub Actions steps.
+inputs:
+  environment:
+    description: Dotenc environment name, or a comma-separated list of names.
+    required: true
+  names:
+    description: Newline, comma, or space separated list of variable names to export.
+    required: true
+  working-directory:
+    description: Directory where dotenc should resolve project and environment files.
+    required: false
+    default: .
+  strict:
+    description: Fail when any selected environment is missing or cannot decrypt.
+    required: false
+    default: "true"
+  local-only:
+    description: Load only environment files in working-directory, skipping ancestors.
+    required: false
+    default: "false"
+  required:
+    description: Fail if any listed variable is missing.
+    required: false
+    default: "true"
+  mask:
+    description: Register exported values with GitHub log masking.
+    required: false
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - uses: ivanfilhoz/dotenc/actions/export@v1
+      with:
+        environment: ${{ inputs.environment }}
+        names: ${{ inputs.names }}
+        working-directory: ${{ inputs.working-directory }}
+        strict: ${{ inputs.strict }}
+        local-only: ${{ inputs.local-only }}
+        required: ${{ inputs.required }}
+        mask: ${{ inputs.mask }}

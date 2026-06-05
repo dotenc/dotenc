@@ -1,0 +1,31 @@
+name: Run with dotenc
+description: Run a command with variables decrypted from a dotenc environment.
+inputs:
+  environment:
+    description: Dotenc environment name, or a comma-separated list of names.
+    required: true
+  command:
+    description: Shell command to run with the decrypted variables.
+    required: true
+  working-directory:
+    description: Directory where dotenc should resolve project and environment files.
+    required: false
+    default: .
+  strict:
+    description: Fail when any selected environment is missing or cannot decrypt.
+    required: false
+    default: "true"
+  local-only:
+    description: Load only environment files in working-directory, skipping ancestors.
+    required: false
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - uses: ivanfilhoz/dotenc/actions/run@v1
+      with:
+        environment: ${{ inputs.environment }}
+        command: ${{ inputs.command }}
+        working-directory: ${{ inputs.working-directory }}
+        strict: ${{ inputs.strict }}
+        local-only: ${{ inputs.local-only }}

@@ -209,6 +209,70 @@ dotenc key add ci --from-file /path/to/ci.pub
 dotenc auth grant production ci
 ```
 
+CI/CD runners use `DOTENC_PRIVATE_KEY` automatically. Store the full private key
+text, including line breaks and `BEGIN` / `END` lines, in the provider secret.
+No `~/.ssh` directory is required on the runner.
+
+For passphrase-protected CI keys, also set:
+
+```bash
+DOTENC_PRIVATE_KEY_PASSPHRASE=<passphrase>
+```
+
+Prefer `dotenc run --strict -e <environment> <command> [args...]` in CI so a
+missing or undecryptable environment fails before the build proceeds.
+
+#### GitHub Actions notes
+
+For GitHub Actions, prefer the reusable `dotenc/*-action@v1` wrappers when
+available:
+
+- `dotenc/setup-action@v1` installs dotenc.
+- `dotenc/run-action@v1` runs one command under `dotenc run --strict`.
+- `dotenc/export-action@v1` writes only explicitly allowlisted values to
+  `$GITHUB_ENV`.
+- `dotenc/write-file-action@v1` writes one decrypted variable to a restricted
+  file.
+
+Use a dedicated GitHub Actions key and store only that provider key as the
+GitHub secret `DOTENC_PRIVATE_KEY`. Other provider credentials, such as
+`EXPO_TOKEN` or Google Play service account JSON, can live inside an encrypted
+dotenc environment that the GitHub Actions key is granted to.
+
+Never advise exporting a whole decrypted environment in GitHub Actions. Keep
+exports and file writes allowlisted.
+
+#### Expo / EAS CI notes
+
+For Expo apps built on EAS, check the runbook before giving setup instructions:
+
+- `README.md` links provider runbooks in the CI/CD section.
+- Expo / EAS details live in `docs/EXPO_EAS.md`.
+
+Key points to apply directly:
+
+- Store `DOTENC_PRIVATE_KEY` on EAS servers, not only in GitHub Actions or the
+  system that triggers `eas build`.
+- EAS Custom Build is the right fit when `app.config.js`, prebuild, or native
+  store builds need decrypted values.
+- Install dotenc in the EAS job, then use `dotenc run --strict -e production`
+  to make decrypted values available to build logic.
+- Custom EAS Build steps run in separate shells. When later EAS steps need
+  decrypted variables, run a small allowlisted command under `dotenc run` that
+  calls EAS `set-env` for only the variables the native build should receive.
+- If a provider exposes an uploaded private key as a file path instead of key
+  contents, convert it before running dotenc:
+
+```bash
+if [ -n "${DOTENC_PRIVATE_KEY:-}" ] && [ -f "$DOTENC_PRIVATE_KEY" ]; then
+  export DOTENC_PRIVATE_KEY="$(cat "$DOTENC_PRIVATE_KEY")"
+fi
+```
+
+Do not tell users to paste decrypted `.env` values into EAS. The intended model
+is one EAS secret (`DOTENC_PRIVATE_KEY`) plus encrypted `.env.*.enc` files in
+Git.
+
 ### Install integrations
 
 These commands may write local config, open editor URLs, or download packages. Ask for explicit approval first and describe what will run.
