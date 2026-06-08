@@ -155,6 +155,8 @@ await fs.writeFile(tempFilePath, Buffer.alloc(stat.size, 0))
 
 **Child command execution** (`dotenc run`, `dotenc dev`) uses `spawn()` with the command and arguments as separate values, never concatenated into a shell string.
 
+**Decrypted environment content** is parsed with Node's built-in `node:util.parseEnv` parser before variables are passed to child processes.
+
 ---
 
 ## Access Control Model

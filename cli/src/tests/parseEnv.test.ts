@@ -24,7 +24,7 @@ BAZ=123
 
 HELLO = WORLD
 DOTENC_HELLO = "Hello, world!"
-WITH_QUOTES = "Test with "quotes""
+WITH_QUOTES = 'Test with "quotes"'
 `)
 
 		expect(env.FOO).toBe("\nbar")
