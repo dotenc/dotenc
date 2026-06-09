@@ -385,7 +385,9 @@ CI runners and build servers need their own identity to decrypt environments. Th
 
 ### 1. Generate a dedicated CI key
 
-Create an Ed25519 key pair for your CI environment. Do **not** set a passphrase:
+Create an Ed25519 key pair for your CI environment. This example creates a
+passwordless key; if you choose a passphrase-protected key, also set
+`DOTENC_PRIVATE_KEY_PASSPHRASE` in your CI provider:
 
 ```bash
 ssh-keygen -t ed25519 -f ci_key -N "" -C "ci"
@@ -475,8 +477,10 @@ dotenc also ships reusable GitHub Actions for common CI patterns:
 - `dotenc/write-file-action@v1` writes one decrypted value to a
   `0600` file for file-shaped credentials.
 
-This lets GitHub keep only `DOTENC_PRIVATE_KEY` as a GitHub secret while
-provider tokens such as `EXPO_TOKEN` live in an encrypted dotenc environment.
+This lets GitHub keep only the dotenc bootstrap secret(s) in GitHub while
+provider tokens live in an encrypted dotenc environment for jobs that actually
+run on GitHub. If the bootstrap key is encrypted, also store
+`DOTENC_PRIVATE_KEY_PASSPHRASE`.
 See [docs/GITHUB_ACTIONS.md](/docs/GITHUB_ACTIONS.md) for examples.
 
 ### Provider runbooks
@@ -487,9 +491,8 @@ resolution, or secret storage work differently from a generic shell pipeline.
 - [GitHub Actions](/docs/GITHUB_ACTIONS.md) — use a dedicated GitHub Actions
   key, then run commands, export allowlisted variables, or write file-shaped
   credentials from encrypted dotenc environments.
-- [Expo / EAS Build and Workflows](/docs/EXPO_EAS.md) — use a dedicated EAS
-  key, store `DOTENC_PRIVATE_KEY` on EAS, and export allowlisted values before
-  Expo config/native build steps run.
+- [Expo / EAS](/docs/EXPO_EAS.md) — choose one lean path: EAS cloud builds with
+  an EAS dotenc identity, or GitHub local builds with a GitHub dotenc identity.
 
 ## Key Management
 

@@ -249,6 +249,11 @@ These actions intentionally do not provide a "decrypt everything" mode. Values
 exported through `$GITHUB_ENV` remain available to later steps in the same job,
 so grant CI keys narrowly and keep allowlists short.
 
+For provider pipelines, the dotenc identity belongs to the runner that actually
+needs decrypted values. Use the reusable GitHub Actions only when GitHub
+Actions runs the command that needs those values; otherwise, follow the
+provider-specific runbook for that provider's own runner.
+
 ---
 
 ## Known Limitations

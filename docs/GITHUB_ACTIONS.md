@@ -1,16 +1,17 @@
 # GitHub Actions runbook
 
-This runbook shows how to use dotenc as the bootstrap secret for GitHub Actions.
+This runbook shows how to use dotenc as the bootstrap secret source for GitHub
+Actions.
 
-The intended model is one GitHub secret, `DOTENC_PRIVATE_KEY`, plus encrypted
-`.env.*.enc` files in the repository. Provider tokens such as `EXPO_TOKEN` can
-live inside a dotenc environment and be decrypted only in the jobs that need
-them.
+The intended model is one GitHub bootstrap key, `DOTENC_PRIVATE_KEY`, plus
+encrypted `.env.*.enc` files in the repository. If the key is encrypted, also
+store `DOTENC_PRIVATE_KEY_PASSPHRASE`. Provider tokens can live inside a dotenc
+environment and be decrypted only in the jobs that need them.
 
 ## Provider-specific identity
 
 Create a dedicated key for GitHub Actions instead of reusing a developer key or
-an EAS key:
+another provider key:
 
 ```bash
 ssh-keygen -t ed25519 -f github_actions_key -N "" -C "github-actions"
@@ -20,12 +21,20 @@ git add .dotenc .env.github-actions.enc
 git commit -m "Grant GitHub Actions access to CI environment"
 ```
 
-Store the full private key text in GitHub as `DOTENC_PRIVATE_KEY`, including
-the `BEGIN` and `END` lines. Delete the temporary private key after storing it.
+These examples use `github-actions` as a narrow CI-only environment. For a job
+that actually runs production release commands on GitHub, it is also valid to
+grant the GitHub Actions key to `production` and use
+`environment: production`, so release-only authentication values and submission
+credentials live with the production release environment.
 
-Keep other providers separate. For example, an EAS Build worker should have its
-own key stored on EAS as `DOTENC_PRIVATE_KEY`, and GitHub Actions should have a
-different key stored in GitHub secrets.
+Store the full private key text in GitHub as `DOTENC_PRIVATE_KEY`, including
+the `BEGIN` and `END` lines. If the key is encrypted, also store
+`DOTENC_PRIVATE_KEY_PASSPHRASE`. Delete the temporary private key after storing
+it.
+
+Keep provider identities separate. Give GitHub Actions a dotenc identity only
+for jobs that actually run on GitHub, and grant that key only to the encrypted
+environments those jobs need.
 
 ## Actions
 
@@ -61,6 +70,7 @@ Use `run` when decrypted values are needed by a single command:
     command: npm test
   env:
     DOTENC_PRIVATE_KEY: ${{ secrets.DOTENC_PRIVATE_KEY }}
+    DOTENC_PRIVATE_KEY_PASSPHRASE: ${{ secrets.DOTENC_PRIVATE_KEY_PASSPHRASE }}
 ```
 
 The action runs with strict mode by default. If any selected environment is
@@ -75,12 +85,13 @@ Use `export` only when later steps need decrypted values:
   with:
     environment: github-actions
     names: |
-      EXPO_TOKEN
       NPM_TOKEN
+      SENTRY_AUTH_TOKEN
   env:
     DOTENC_PRIVATE_KEY: ${{ secrets.DOTENC_PRIVATE_KEY }}
+    DOTENC_PRIVATE_KEY_PASSPHRASE: ${{ secrets.DOTENC_PRIVATE_KEY_PASSPHRASE }}
 
-- run: npx eas-cli@latest build --platform android --profile production --non-interactive
+- run: npm publish
 ```
 
 The action refuses to export the entire environment. Every variable must be
@@ -88,48 +99,23 @@ named explicitly, and exported values are registered with GitHub log masking.
 
 ### Write a variable to a file
 
-Use `write-file` for file-shaped credentials such as Google Play service
-account JSON:
+Use `write-file` for file-shaped credentials such as service account JSON:
 
 ```yaml
 - uses: dotenc/write-file-action@v1
   with:
     environment: github-actions
-    name: GOOGLE_PLAY_SERVICE_ACCOUNT_JSON
-    path: google-play-service-account.json
+    name: SERVICE_ACCOUNT_JSON
+    path: service-account.json
   env:
     DOTENC_PRIVATE_KEY: ${{ secrets.DOTENC_PRIVATE_KEY }}
+    DOTENC_PRIVATE_KEY_PASSPHRASE: ${{ secrets.DOTENC_PRIVATE_KEY_PASSPHRASE }}
 
-- run: npx eas-cli@latest submit --platform android --profile production --latest --non-interactive --wait --verbose
+- run: node scripts/deploy.js --credentials service-account.json
 ```
 
 The file is written with mode `0600` by default. Keep generated credential files
 out of git.
-
-## EAS build trigger example
-
-In this pattern, GitHub Actions uses its own dotenc key to decrypt `EXPO_TOKEN`
-and trigger EAS. EAS Build uses a separate dotenc key stored on EAS to decrypt
-the app build environment.
-
-```yaml
-jobs:
-  build_android:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-      - uses: dotenc/setup-action@v1
-      - uses: dotenc/export-action@v1
-        with:
-          environment: github-actions
-          names: EXPO_TOKEN
-        env:
-          DOTENC_PRIVATE_KEY: ${{ secrets.DOTENC_PRIVATE_KEY }}
-      - run: npx eas-cli@latest build --platform android --profile production --non-interactive
-```
 
 ## Security notes
 
@@ -138,29 +124,9 @@ jobs:
 - Prefer `run` for one command; use `export` only when values must persist to
   later steps.
 - Keep `export` and `write-file` allowlists short and explicit.
+- Put provider-specific deployment guidance in the provider runbook, not in the
+  generic GitHub Actions bootstrap.
 - Do not print decrypted values, run `env`, or enable shell tracing with
   `set -x`.
 - Rotate the dotenc key and the external provider token if a CI runner or
   secret store is suspected to be compromised.
-
-## Publishing wrapper repos
-
-The public names (`dotenc/export-action@v1`, etc.) are tiny wrapper repositories
-in the `dotenc` org. Their templates live in `actions/wrapper-repos/`.
-
-After creating and checking out the wrapper repositories under one parent
-directory, sync them from this repo:
-
-```bash
-bun run actions:sync-wrappers -- --target-dir ../dotenc-action-wrappers
-```
-
-Then review, commit, push, and tag each wrapper repo:
-
-```bash
-git tag v1
-git push origin v1
-```
-
-The implementation repo must also have a `v1` ref containing the implementation
-actions in `actions/`, because the wrapper repos delegate to that ref.

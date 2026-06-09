@@ -234,10 +234,11 @@ available:
 - `dotenc/write-file-action@v1` writes one decrypted variable to a restricted
   file.
 
-Use a dedicated GitHub Actions key and store only that provider key as the
-GitHub secret `DOTENC_PRIVATE_KEY`. Other provider credentials, such as
-`EXPO_TOKEN` or Google Play service account JSON, can live inside an encrypted
-dotenc environment that the GitHub Actions key is granted to.
+Use a dedicated GitHub Actions key and store only the dotenc bootstrap secret(s)
+in GitHub: `DOTENC_PRIVATE_KEY`, plus `DOTENC_PRIVATE_KEY_PASSPHRASE` when the
+key is encrypted. Other provider credentials, such as provider auth tokens or
+Google Play service account JSON, can live inside an encrypted dotenc
+environment that the GitHub Actions key is granted to.
 
 Never advise exporting a whole decrypted environment in GitHub Actions. Keep
 exports and file writes allowlisted.
@@ -251,15 +252,26 @@ For Expo apps built on EAS, check the runbook before giving setup instructions:
 
 Key points to apply directly:
 
-- Store `DOTENC_PRIVATE_KEY` on EAS servers, not only in GitHub Actions or the
-  system that triggers `eas build`.
-- EAS Custom Build is the right fit when `app.config.js`, prebuild, or native
-  store builds need decrypted values.
-- Install dotenc in the EAS job, then use `dotenc run --strict -e production`
-  to make decrypted values available to build logic.
-- Custom EAS Build steps run in separate shells. When later EAS steps need
-  decrypted variables, run a small allowlisted command under `dotenc run` that
-  calls EAS `set-env` for only the variables the native build should receive.
+- Pick one lean release path.
+- Cloud build: EAS cloud workers run the build and EAS Workflows run CD. Store
+  `DOTENC_PRIVATE_KEY` on EAS, plus `DOTENC_PRIVATE_KEY_PASSPHRASE` when the
+  key is encrypted. Use the EAS GitHub integration for GitHub event triggers,
+  and do not use dotenc GitHub Actions for that path.
+- Local build: GitHub Actions runs `eas build --local`. Store
+  `DOTENC_PRIVATE_KEY` in GitHub, plus `DOTENC_PRIVATE_KEY_PASSPHRASE` when the
+  key is encrypted. Keep `EXPO_TOKEN` in the encrypted dotenc environment and
+  export it before EAS CLI commands. Use the reusable dotenc actions there, and
+  do not give EAS a dotenc identity for that same release path.
+- EAS Custom Build is the right fit in the cloud path when `app.config.js`,
+  prebuild, or native store builds need decrypted values.
+- In EAS jobs, install dotenc, then use `dotenc run --strict -e production` to
+  make decrypted values available to build logic.
+- `dotenc run` only provides decrypted variables to the command it wraps.
+  Custom EAS Build steps run in separate shells, so later EAS steps will not see
+  those variables automatically. When later steps need decrypted variables, run
+  a small allowlisted script under `dotenc run` that calls EAS `set-env` for
+  only the variables the native build should receive. Use the example in
+  `docs/EXPO_EAS.md`.
 - If a provider exposes an uploaded private key as a file path instead of key
   contents, convert it before running dotenc:
 
@@ -269,9 +281,10 @@ if [ -n "${DOTENC_PRIVATE_KEY:-}" ] && [ -f "$DOTENC_PRIVATE_KEY" ]; then
 fi
 ```
 
-Do not tell users to paste decrypted `.env` values into EAS. The intended model
-is one EAS secret (`DOTENC_PRIVATE_KEY`) plus encrypted `.env.*.enc` files in
-Git.
+Do not tell users to paste decrypted `.env` values into EAS. In cloud mode, the
+intended model is EAS bootstrap secret(s) (`DOTENC_PRIVATE_KEY`, plus optional
+`DOTENC_PRIVATE_KEY_PASSPHRASE`) and encrypted `.env.*.enc` files in Git. In
+local mode, the same bootstrap secret(s) belong to GitHub instead.
 
 ### Install integrations
 
