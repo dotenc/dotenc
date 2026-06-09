@@ -31,7 +31,7 @@ export const decryptEnvironmentData = async (
 			throw new Error(passphraseProtectedKeyError(passphraseProtectedKeys))
 		}
 		throw new Error(
-			"No private keys found. Please ensure you have SSH keys in ~/.ssh/ or set the DOTENC_PRIVATE_KEY environment variable.",
+			"No private keys found. Please ensure you have SSH keys in ~/.ssh/ or set DOTENC_PRIVATE_KEY_BASE64.",
 		)
 	}
 

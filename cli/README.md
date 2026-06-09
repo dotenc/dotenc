@@ -410,19 +410,16 @@ git push
 
 ### 3. Set the private key in your CI provider
 
-Copy the **entire** contents of the private key file and store it as a secret environment variable named `DOTENC_PRIVATE_KEY` in your CI provider (GitHub Actions, GitLab CI, CircleCI, etc.):
+Base64-encode the private key file and store the result as a secret environment
+variable named `DOTENC_PRIVATE_KEY_BASE64` in your CI provider:
 
 ```bash
-cat ci_key
+base64 < ci_key | tr -d '\n'
 ```
 
-```plaintext
------BEGIN OPENSSH PRIVATE KEY-----
-b3BlbnNzaC1rZXktdjEAAAAABG5vbm...
------END OPENSSH PRIVATE KEY-----
-```
-
-Paste the full output — including the `BEGIN` and `END` lines — as the value of `DOTENC_PRIVATE_KEY`.
+`DOTENC_PRIVATE_KEY` with the raw private key text is still supported for
+backwards compatibility, but new provider setup should use
+`DOTENC_PRIVATE_KEY_BASE64`.
 
 If this private key is passphrase-protected, also set:
 
@@ -440,7 +437,9 @@ The public key (`ci_key.pub`) can also be deleted — it's already tracked insid
 
 ### 4. Use dotenc in your CI pipeline
 
-With `DOTENC_PRIVATE_KEY` set (and `DOTENC_PRIVATE_KEY_PASSPHRASE` when using an encrypted key), dotenc will automatically pick up the key. No `~/.ssh` directory required:
+With `DOTENC_PRIVATE_KEY_BASE64` set (and `DOTENC_PRIVATE_KEY_PASSPHRASE` when
+using an encrypted key), dotenc will automatically pick up the key. No `~/.ssh`
+directory required:
 
 ```bash
 dotenc run -e test npm test
@@ -462,7 +461,7 @@ jobs:
       - run: npm install -g @dotenc/cli
       - run: dotenc run -e test npm test
         env:
-          DOTENC_PRIVATE_KEY: ${{ secrets.DOTENC_PRIVATE_KEY }}
+          DOTENC_PRIVATE_KEY_BASE64: ${{ secrets.DOTENC_PRIVATE_KEY_BASE64 }}
           DOTENC_PRIVATE_KEY_PASSPHRASE: ${{ secrets.DOTENC_PRIVATE_KEY_PASSPHRASE }}
 ```
 
@@ -479,8 +478,8 @@ dotenc also ships reusable GitHub Actions for common CI patterns:
 
 This lets GitHub keep only the dotenc bootstrap secret(s) in GitHub while
 provider tokens live in an encrypted dotenc environment for jobs that actually
-run on GitHub. If the bootstrap key is encrypted, also store
-`DOTENC_PRIVATE_KEY_PASSPHRASE`.
+run on GitHub. Store the bootstrap key as `DOTENC_PRIVATE_KEY_BASE64`. If the
+bootstrap key is encrypted, also store `DOTENC_PRIVATE_KEY_PASSPHRASE`.
 See [docs/GITHUB_ACTIONS.md](/docs/GITHUB_ACTIONS.md) for examples.
 
 ### Provider runbooks
@@ -493,6 +492,12 @@ resolution, or secret storage work differently from a generic shell pipeline.
   credentials from encrypted dotenc environments.
 - [Expo / EAS](/docs/EXPO_EAS.md) — choose one lean path: EAS cloud builds with
   an EAS dotenc identity, or GitHub local builds with a GitHub dotenc identity.
+- [Vercel](/docs/VERCEL.md) — use a dedicated Vercel dotenc identity for
+  Vercel-owned cloud builds, then wrap the Vercel build command.
+- [Netlify](/docs/NETLIFY.md) — use a dedicated Netlify dotenc identity for
+  Netlify-owned cloud builds, then wrap the Netlify build command.
+- [Provider helpers roadmap](/docs/PROVIDER_HELPERS_ROADMAP.md) — track planned
+  Docker images, Railpack/Nixpacks presets, provider plugins, and provider CLIs.
 
 ## Key Management
 

@@ -125,7 +125,11 @@ export const runCommand = async (
 		return { ...acc, ...env }
 	}, {})
 
-	const { DOTENC_PRIVATE_KEY: _privateKey, ...baseEnv } = process.env
+	const {
+		DOTENC_PRIVATE_KEY_BASE64: _privateKeyBase64,
+		DOTENC_PRIVATE_KEY: _privateKey,
+		...baseEnv
+	} = process.env
 	const mergedEnv = { ...baseEnv, ...decryptedEnv }
 
 	const child = spawn(command, args, {

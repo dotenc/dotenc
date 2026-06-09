@@ -240,9 +240,11 @@ describe("runCommand", () => {
 		exitSpy.mockRestore()
 	})
 
-	test("does not pass DOTENC_PRIVATE_KEY to child process", async () => {
+	test("does not pass dotenc bootstrap keys to child process", async () => {
+		const originalBase64Key = process.env.DOTENC_PRIVATE_KEY_BASE64
 		const originalKey = process.env.DOTENC_PRIVATE_KEY
 		try {
+			process.env.DOTENC_PRIVATE_KEY_BASE64 = "super-secret-base64-key"
 			process.env.DOTENC_PRIVATE_KEY = "super-secret-key"
 
 			const exitSpy = spyOn(process, "exit").mockImplementation(
@@ -267,10 +269,14 @@ describe("runCommand", () => {
 			await runCommand("node", ["app.js"], { env: "production" })
 
 			expect(capturedEnv).toBeDefined()
+			expect(capturedEnv?.DOTENC_PRIVATE_KEY_BASE64).toBeUndefined()
 			expect(capturedEnv?.DOTENC_PRIVATE_KEY).toBeUndefined()
 			expect(capturedEnv?.KEY).toBe("value")
 			exitSpy.mockRestore()
 		} finally {
+			if (originalBase64Key === undefined)
+				delete process.env.DOTENC_PRIVATE_KEY_BASE64
+			else process.env.DOTENC_PRIVATE_KEY_BASE64 = originalBase64Key
 			if (originalKey === undefined) delete process.env.DOTENC_PRIVATE_KEY
 			else process.env.DOTENC_PRIVATE_KEY = originalKey
 		}

@@ -22,6 +22,18 @@ export type UnsupportedPrivateKeyEntry = {
 }
 
 const SSH_KEY_FILES = ["id_ed25519", "id_rsa", "id_ecdsa", "id_dsa"]
+const DOTENC_PRIVATE_KEY_BASE64_ENV = "DOTENC_PRIVATE_KEY_BASE64"
+const DOTENC_PRIVATE_KEY_ENV = "DOTENC_PRIVATE_KEY"
+
+type EnvironmentPrivateKey =
+	| {
+			name: typeof DOTENC_PRIVATE_KEY_BASE64_ENV | typeof DOTENC_PRIVATE_KEY_ENV
+			content: string
+	  }
+	| {
+			name: typeof DOTENC_PRIVATE_KEY_BASE64_ENV
+			error: "invalid-base64"
+	  }
 
 function extractEd25519RawKeys(privateKey: crypto.KeyObject): {
 	rawPublicKey: Buffer
@@ -49,6 +61,51 @@ function tryParsePrivateKey(keyContent: string): crypto.KeyObject | null {
 		// Fallback: parse OpenSSH format that Node/OpenSSL can't handle natively
 		return parseOpenSSHPrivateKey(keyContent)
 	}
+}
+
+function decodePrivateKeyBase64(value: string): string | null {
+	const normalized = value.replace(/\s/g, "")
+	if (!normalized) return null
+	if (!/^[A-Za-z0-9+/]*={0,2}$/.test(normalized)) return null
+	if (normalized.length % 4 === 1) return null
+
+	const decoded = Buffer.from(normalized, "base64").toString("utf-8")
+	const normalizedInput = normalized.replace(/=+$/, "")
+	const normalizedRoundTrip = Buffer.from(decoded, "utf-8")
+		.toString("base64")
+		.replace(/=+$/, "")
+
+	if (normalizedInput !== normalizedRoundTrip) return null
+
+	return decoded
+}
+
+function getEnvironmentPrivateKey(): EnvironmentPrivateKey | null {
+	const base64PrivateKey = process.env[DOTENC_PRIVATE_KEY_BASE64_ENV]
+	if (base64PrivateKey) {
+		const content = decodePrivateKeyBase64(base64PrivateKey)
+		if (!content) {
+			return {
+				name: DOTENC_PRIVATE_KEY_BASE64_ENV,
+				error: "invalid-base64",
+			}
+		}
+
+		return {
+			name: DOTENC_PRIVATE_KEY_BASE64_ENV,
+			content,
+		}
+	}
+
+	const rawPrivateKey = process.env[DOTENC_PRIVATE_KEY_ENV]
+	if (rawPrivateKey) {
+		return {
+			name: DOTENC_PRIVATE_KEY_ENV,
+			content: rawPrivateKey,
+		}
+	}
+
+	return null
 }
 
 function describeUnsupportedAlgorithm(
@@ -144,68 +201,81 @@ export const getPrivateKeys = async (): Promise<GetPrivateKeysResult> => {
 	const unsupportedKeys: UnsupportedPrivateKeyEntry[] = []
 	const privateKeyPassphrase = process.env.DOTENC_PRIVATE_KEY_PASSPHRASE
 
-	// Check DOTENC_PRIVATE_KEY env var first
-	if (process.env.DOTENC_PRIVATE_KEY) {
-		const dotencPrivateKey = process.env.DOTENC_PRIVATE_KEY
-		const dotencPrivateKeyPassphraseProtected =
-			isPassphraseProtected(dotencPrivateKey)
+	// Check environment-provided bootstrap keys before scanning ~/.ssh.
+	const environmentPrivateKey = getEnvironmentPrivateKey()
+	if (environmentPrivateKey) {
+		const envName = environmentPrivateKey.name
+		const entryName = `env.${envName}`
 
-		const privateKey: crypto.KeyObject | null =
-			dotencPrivateKeyPassphraseProtected
-				? privateKeyPassphrase !== undefined
-					? await parsePassphraseProtectedPrivateKey(
-							dotencPrivateKey,
-							privateKeyPassphrase,
-						)
-					: null
-				: tryParsePrivateKey(dotencPrivateKey)
-
-		if (privateKey) {
-			const algorithm = detectAlgorithm(privateKey)
-
-			if (algorithm) {
-				const entry: PrivateKeyEntry = {
-					name: "env.DOTENC_PRIVATE_KEY",
-					privateKey,
-					fingerprint: getKeyFingerprint(privateKey),
-					algorithm,
-				}
-
-				if (algorithm === "ed25519") {
-					const { rawPublicKey } = extractEd25519RawKeys(privateKey)
-					entry.rawPublicKey = rawPublicKey
-				}
-
-				privateKeys.push(entry)
-			} else {
-				unsupportedKeys.push({
-					name: "env.DOTENC_PRIVATE_KEY",
-					reason: describeUnsupportedAlgorithm(privateKey.asymmetricKeyType),
-				})
-				console.error(
-					`Unsupported key type in DOTENC_PRIVATE_KEY: ${privateKey.asymmetricKeyType}. Only RSA and Ed25519 are supported.`,
-				)
-			}
+		if ("error" in environmentPrivateKey) {
+			console.error(
+				`Invalid ${envName} value. Please provide base64-encoded private key content.`,
+			)
+			unsupportedKeys.push({
+				name: entryName,
+				reason: "invalid base64 private key",
+			})
 		} else {
-			if (dotencPrivateKeyPassphraseProtected) {
+			const dotencPrivateKey = environmentPrivateKey.content
+			const dotencPrivateKeyPassphraseProtected =
+				isPassphraseProtected(dotencPrivateKey)
+
+			const privateKey: crypto.KeyObject | null =
+				dotencPrivateKeyPassphraseProtected
+					? privateKeyPassphrase !== undefined
+						? await parsePassphraseProtectedPrivateKey(
+								dotencPrivateKey,
+								privateKeyPassphrase,
+							)
+						: null
+					: tryParsePrivateKey(dotencPrivateKey)
+
+			if (privateKey) {
+				const algorithm = detectAlgorithm(privateKey)
+
+				if (algorithm) {
+					const entry: PrivateKeyEntry = {
+						name: entryName,
+						privateKey,
+						fingerprint: getKeyFingerprint(privateKey),
+						algorithm,
+					}
+
+					if (algorithm === "ed25519") {
+						const { rawPublicKey } = extractEd25519RawKeys(privateKey)
+						entry.rawPublicKey = rawPublicKey
+					}
+
+					privateKeys.push(entry)
+				} else {
+					unsupportedKeys.push({
+						name: entryName,
+						reason: describeUnsupportedAlgorithm(privateKey.asymmetricKeyType),
+					})
+					console.error(
+						`Unsupported key type in ${envName}: ${privateKey.asymmetricKeyType}. Only RSA and Ed25519 are supported.`,
+					)
+				}
+			} else if (dotencPrivateKeyPassphraseProtected) {
 				if (privateKeyPassphrase !== undefined) {
 					console.error(
-						"Error: failed to decrypt the key in DOTENC_PRIVATE_KEY with DOTENC_PRIVATE_KEY_PASSPHRASE. Please verify the passphrase.",
+						`Error: failed to decrypt the key in ${envName} with DOTENC_PRIVATE_KEY_PASSPHRASE. Please verify the passphrase.`,
 					)
 					process.exit(1)
 				}
 				console.error(
-					"Error: the key in DOTENC_PRIVATE_KEY is passphrase-protected. Set DOTENC_PRIVATE_KEY_PASSPHRASE to use it, or provide a passwordless key.",
+					`Error: the key in ${envName} is passphrase-protected. Set DOTENC_PRIVATE_KEY_PASSPHRASE to use it, or provide a passwordless key.`,
 				)
 				process.exit(1)
+			} else {
+				console.error(
+					`Invalid private key format in ${envName} environment variable. Please provide a valid private key (PEM or OpenSSH format).`,
+				)
+				unsupportedKeys.push({
+					name: entryName,
+					reason: "invalid private key format",
+				})
 			}
-			console.error(
-				"Invalid private key format in DOTENC_PRIVATE_KEY environment variable. Please provide a valid private key (PEM or OpenSSH format).",
-			)
-			unsupportedKeys.push({
-				name: "env.DOTENC_PRIVATE_KEY",
-				reason: "invalid private key format",
-			})
 		}
 	}
 

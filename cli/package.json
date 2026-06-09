@@ -1,6 +1,6 @@
 {
   "name": "@dotenc/cli",
-  "version": "0.9.2",
+  "version": "0.10.0",
   "description": "🔐 Git-native encrypted environments powered by your SSH keys",
   "author": "Ivan Filho <i@ivanfilho.com>",
   "license": "MIT",

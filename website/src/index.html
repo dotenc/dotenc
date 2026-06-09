@@ -112,12 +112,13 @@
 					<div class="terminal-line"><span class="text-cyber-green">$</span> <span class="text-cyber-cyan">dotenc init</span></div>
 					<div class="terminal-line text-cyber-muted">✔ Found SSH key: ~/.ssh/id_ed25519</div>
 					<div class="terminal-line text-cyber-muted">✔ Username: alice</div>
-						<div class="terminal-line text-cyber-muted">✔ Created .dotenc/alice.pub</div>
+					<div class="terminal-line text-cyber-muted">✔ Created .dotenc/alice.pub</div>
+					<div class="terminal-line text-cyber-muted">✔ Created .env.development.enc</div>
 					<div class="terminal-line text-cyber-muted">✔ Created .env.alice.enc</div>
 					<div class="terminal-line mt-3"><span class="text-cyber-green">$</span> <span class="text-cyber-cyan">dotenc env edit alice</span></div>
 					<div class="terminal-line text-cyber-muted">✔ Decrypted → editor opened → re-encrypted</div>
 					<div class="terminal-line mt-3"><span class="text-cyber-green">$</span> <span class="text-cyber-cyan">dotenc dev npm start</span></div>
-					<div class="terminal-line text-cyber-muted">✔ Loaded 12 env vars from alice + development</div>
+					<div class="terminal-line text-cyber-muted">✔ Loaded env vars from development + alice</div>
 					<div class="terminal-line text-cyber-green">🚀 Server running on http://localhost:3000</div>
 				</div>
 			</div>
@@ -168,8 +169,8 @@
 			</div>
 			<div class="feature-card bg-cyber-surface rounded-xl p-6 fade-in-up">
 				<div class="text-3xl mb-4">&#x1F6E1;&#xFE0F;</div>
-				<h3 class="text-white font-semibold mb-2">RSA &amp; Ed25519</h3>
-				<p class="text-cyber-muted text-sm">Supports both key types. Use whatever you already have.</p>
+				<h3 class="text-white font-semibold mb-2">RSA 2048+ &amp; Ed25519</h3>
+				<p class="text-cyber-muted text-sm">Supports common SSH key types you already use.</p>
 			</div>
 		</div>
 	</section>
@@ -187,7 +188,7 @@
 			</div>
 			<div class="bg-cyber-surface border border-cyber-border rounded-xl p-6 fade-in-up">
 				<h3 class="text-cyber-cyan font-semibold mb-2">Improved Security</h3>
-				<p class="text-cyber-muted text-sm">All encryption happens locally. Private keys never leave your machine.</p>
+				<p class="text-cyber-muted text-sm">All encryption happens locally. For local runs, private keys stay on your machine.</p>
 			</div>
 			<div class="bg-cyber-surface border border-cyber-border rounded-xl p-6 fade-in-up">
 				<h3 class="text-cyber-cyan font-semibold mb-2">Zero Key Management</h3>
@@ -254,7 +255,7 @@
 			<div class="relative pl-14 fade-in-up">
 				<div class="absolute left-0 top-0 w-10 h-10 rounded-full bg-cyber-surface border-2 border-cyber-green flex items-center justify-center text-cyber-green font-bold text-sm z-10">7</div>
 				<h3 class="text-white font-semibold mb-1">Decrypt On-the-fly</h3>
-				<p class="text-cyber-muted text-sm">When running commands, variables are decrypted using your SSH private key. Keys never leave <code class="text-cyber-cyan">~/.ssh/</code>.</p>
+				<p class="text-cyber-muted text-sm">When running commands locally, variables are decrypted using your SSH private key in <code class="text-cyber-cyan">~/.ssh/</code>.</p>
 			</div>
 		</div>
 	</section>
@@ -366,7 +367,7 @@
 					<div class="terminal-body text-sm">
 						<div><span class="text-cyber-green">$</span> dotenc key add alice \</div>
 						<div class="pl-4">--from-file alice.pub</div>
-						<div class="mt-2"><span class="text-cyber-green">$</span> dotenc auth grant dev alice</div>
+						<div class="mt-2"><span class="text-cyber-green">$</span> dotenc auth grant development alice</div>
 						<div class="mt-2"><span class="text-cyber-green">$</span> dotenc auth grant test alice</div>
 						<div class="mt-2"><span class="text-cyber-green">$</span> git add . && git commit -m \</div>
 						<div class="pl-4">"Grant alice access"</div>
@@ -386,8 +387,8 @@
 						<div class="terminal-dot bg-green-500"></div>
 					</div>
 					<div class="terminal-body text-sm">
-						<div><span class="text-cyber-green">$</span> dotenc key remove john</div>
-						<div class="text-cyber-muted mt-1">✔ Removed key and re-encrypted envs</div>
+						<div><span class="text-cyber-green">$</span> dotenc auth purge john --yes</div>
+						<div class="text-cyber-muted mt-1">✔ Revoked access and re-encrypted affected envs</div>
 						<div class="mt-2"><span class="text-cyber-green">$</span> git add . && git commit -m \</div>
 						<div class="pl-4">"Revoke john's access"</div>
 						<div class="mt-3 text-cyber-muted text-xs">Tip: Rotate external secrets after offboarding.</div>
@@ -425,7 +426,8 @@
       - run: npm install -g @dotenc/cli
       - run: dotenc run -e test npm test
         <span class="text-cyber-purple">env</span>:
-          <span class="text-cyber-cyan">DOTENC_PRIVATE_KEY</span>: ${{ secrets.DOTENC_PRIVATE_KEY }}</pre>
+          <span class="text-cyber-cyan">DOTENC_PRIVATE_KEY_BASE64</span>: ${{ secrets.DOTENC_PRIVATE_KEY_BASE64 }}
+          <span class="text-cyber-cyan">DOTENC_PRIVATE_KEY_PASSPHRASE</span>: ${{ secrets.DOTENC_PRIVATE_KEY_PASSPHRASE }}</pre>
 				</div>
 			</div>
 		</div>

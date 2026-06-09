@@ -18,7 +18,7 @@ cat >"$inner_script" <<'DOTENC_EXPORT_SCRIPT'
 
 set -euo pipefail
 
-unset DOTENC_PRIVATE_KEY DOTENC_PRIVATE_KEY_PASSPHRASE
+unset DOTENC_PRIVATE_KEY_BASE64 DOTENC_PRIVATE_KEY DOTENC_PRIVATE_KEY_PASSPHRASE
 
 dotenc_error() {
 	printf 'dotenc export action error: %s\n' "$*" >&2

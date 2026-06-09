@@ -13,7 +13,7 @@ trap 'rm -f "$command_script"' EXIT
 
 chmod 700 "$command_script"
 {
-	printf 'unset DOTENC_PRIVATE_KEY DOTENC_PRIVATE_KEY_PASSPHRASE\n'
+	printf 'unset DOTENC_PRIVATE_KEY_BASE64 DOTENC_PRIVATE_KEY DOTENC_PRIVATE_KEY_PASSPHRASE\n'
 	printf '%s\n' "$DOTENC_COMMAND"
 } >"$command_script"
 

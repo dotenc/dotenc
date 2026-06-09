@@ -9,7 +9,7 @@ Write one decrypted dotenc variable to a file with restricted permissions.
     name: GOOGLE_PLAY_SERVICE_ACCOUNT_JSON
     path: google-play-service-account.json
   env:
-    DOTENC_PRIVATE_KEY: ${{ secrets.DOTENC_PRIVATE_KEY }}
+    DOTENC_PRIVATE_KEY_BASE64: ${{ secrets.DOTENC_PRIVATE_KEY_BASE64 }}
 ```
 
 Implementation is delegated to `ivanfilhoz/dotenc/actions/write-file@v1`.

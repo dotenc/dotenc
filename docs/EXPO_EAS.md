@@ -24,8 +24,8 @@ variables. Expo inlines `EXPO_PUBLIC_*` values into the client bundle.
 
 | Path | Build runner | CD runner | GitHub secrets | dotenc identity | dotenc GitHub Actions |
 | --- | --- | --- | --- | --- | --- |
-| Cloud build | EAS cloud workers | EAS Workflows | None | EAS gets `DOTENC_PRIVATE_KEY`, plus optional passphrase | No |
-| Local build | GitHub-hosted runners | GitHub Actions | `DOTENC_PRIVATE_KEY`, plus optional passphrase | GitHub gets `DOTENC_PRIVATE_KEY`, plus optional passphrase | Yes |
+| Cloud build | EAS cloud workers | EAS Workflows | None | EAS gets `DOTENC_PRIVATE_KEY_BASE64`, plus optional passphrase | No |
+| Local build | GitHub-hosted runners | GitHub Actions | `DOTENC_PRIVATE_KEY_BASE64`, plus optional passphrase | GitHub gets `DOTENC_PRIVATE_KEY_BASE64`, plus optional passphrase | Yes |
 
 Cloud build is the default recommendation when you want EAS Build and EAS
 Workflows to own production delivery through the EAS GitHub integration. Local
@@ -71,13 +71,13 @@ git commit -m "Grant EAS access to production environment"
 
 ### 2. Store the private key on EAS
 
-Create an EAS environment variable named `DOTENC_PRIVATE_KEY` in the matching
-EAS environment, usually `production`. If the private key is encrypted, also
-create `DOTENC_PRIVATE_KEY_PASSPHRASE` in the same EAS environment.
+Create an EAS environment variable named `DOTENC_PRIVATE_KEY_BASE64` in the
+matching EAS environment, usually `production`. If the private key is encrypted,
+also create `DOTENC_PRIVATE_KEY_PASSPHRASE` in the same EAS environment.
 
 Recommended settings:
 
-- Name: `DOTENC_PRIVATE_KEY`
+- Name: `DOTENC_PRIVATE_KEY_BASE64`
 - Visibility: `secret`
 - Scope: project-wide unless several projects intentionally share the same key
 - Environment: the EAS environment used by the build profile or workflow job
@@ -85,34 +85,20 @@ Recommended settings:
 For passphrase-protected keys, use the same settings for
 `DOTENC_PRIVATE_KEY_PASSPHRASE`.
 
-The value must be the full private key text, including the `BEGIN` and `END`
-lines and line breaks:
+The value must be the base64-encoded private key file:
 
 ```bash
-cat eas_key
+base64 < eas_key | tr -d '\n'
 ```
+
+`DOTENC_PRIVATE_KEY` with the raw private key text is still supported for
+backwards compatibility, but provider setup should prefer
+`DOTENC_PRIVATE_KEY_BASE64`.
 
 After the key is stored on EAS, delete the local copy:
 
 ```bash
 rm eas_key eas_key.pub
-```
-
-If the EAS dashboard or another provider path turns an uploaded file into a file
-path instead of the key contents, convert it before invoking dotenc:
-
-```bash
-if [ -n "${DOTENC_PRIVATE_KEY:-}" ] && [ -f "$DOTENC_PRIVATE_KEY" ]; then
-  export DOTENC_PRIVATE_KEY="$(cat "$DOTENC_PRIVATE_KEY")"
-fi
-```
-
-If a provider cannot preserve multiline values, prefer fixing the provider
-secret format. As a fallback, store a base64-encoded key in another variable and
-decode it into `DOTENC_PRIVATE_KEY` before running dotenc:
-
-```bash
-export DOTENC_PRIVATE_KEY="$(printf '%s' "$DOTENC_PRIVATE_KEY_B64" | base64 -d)"
 ```
 
 ### 3. Pin the EAS environment in `eas.json`
@@ -136,7 +122,7 @@ Set the EAS environment explicitly for every build profile that uses dotenc:
 ```
 
 This avoids accidental mismatches between the encrypted dotenc environment and
-the EAS environment that contains `DOTENC_PRIVATE_KEY`.
+the EAS environment that contains `DOTENC_PRIVATE_KEY_BASE64`.
 
 ### 4. Use a custom EAS Build when config needs dotenc
 
@@ -298,7 +284,7 @@ if (ready.status !== 0) process.exit(ready.status || 1);
 ### 6. Use EAS Workflows for CD
 
 Put release automation in `.eas/workflows/*.yml`. The workflow runs on EAS
-infrastructure, so it can use the same EAS `DOTENC_PRIVATE_KEY` to decrypt
+infrastructure, so it can use the same EAS `DOTENC_PRIVATE_KEY_BASE64` to decrypt
 submission credentials inside EAS custom jobs.
 
 Example Android build and submit workflow:
@@ -378,10 +364,15 @@ git add .dotenc .env.production.enc
 git commit -m "Grant GitHub Actions access to production environment"
 ```
 
-Store the full private key text in GitHub as `DOTENC_PRIVATE_KEY`, including the
-`BEGIN` and `END` lines. If the key is encrypted, also store
-`DOTENC_PRIVATE_KEY_PASSPHRASE`. Delete the temporary private key after storing
-it.
+Store the base64-encoded private key in GitHub as
+`DOTENC_PRIVATE_KEY_BASE64`:
+
+```bash
+base64 < github_actions_key | tr -d '\n'
+```
+
+If the key is encrypted, also store `DOTENC_PRIVATE_KEY_PASSPHRASE`. Delete the
+temporary private key after storing it.
 
 `EXPO_TOKEN`, `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON`, and other release values can
 live in the encrypted dotenc environment that the GitHub Actions key can
@@ -431,7 +422,7 @@ jobs:
             EXPO_PUBLIC_ADMOB_ANDROID_INTERSTITIAL_ID
             EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY
         env:
-          DOTENC_PRIVATE_KEY: ${{ secrets.DOTENC_PRIVATE_KEY }}
+          DOTENC_PRIVATE_KEY_BASE64: ${{ secrets.DOTENC_PRIVATE_KEY_BASE64 }}
           DOTENC_PRIVATE_KEY_PASSPHRASE: ${{ secrets.DOTENC_PRIVATE_KEY_PASSPHRASE }}
 
       - uses: dotenc/write-file-action@v1
@@ -440,7 +431,7 @@ jobs:
           name: GOOGLE_PLAY_SERVICE_ACCOUNT_JSON
           path: google-play-service-account.json
         env:
-          DOTENC_PRIVATE_KEY: ${{ secrets.DOTENC_PRIVATE_KEY }}
+          DOTENC_PRIVATE_KEY_BASE64: ${{ secrets.DOTENC_PRIVATE_KEY_BASE64 }}
           DOTENC_PRIVATE_KEY_PASSPHRASE: ${{ secrets.DOTENC_PRIVATE_KEY_PASSPHRASE }}
 
       - run: npx eas-cli@latest build --local --platform android --profile production --non-interactive --output ./app-release.aab
@@ -515,9 +506,9 @@ eas build --platform android --profile production
 
 ## Troubleshooting
 
-- `No private keys found`: `DOTENC_PRIVATE_KEY` is missing, malformed, or
-  exposed as a file path on the runner that is doing the decryption. In cloud
-  mode, check EAS. In local mode, check GitHub Actions.
+- `No private keys found`: `DOTENC_PRIVATE_KEY_BASE64` is missing, malformed, or
+  scoped to the wrong runner environment. In cloud mode, check EAS. In local
+  mode, check GitHub Actions.
 - `failed to decrypt`: the provider key was not granted access to the selected
   dotenc environment, or the wrong environment name was passed to `-e`.
 - `app.config.js` sees empty values: the dotenc export step ran after config

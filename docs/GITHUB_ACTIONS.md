@@ -3,10 +3,10 @@
 This runbook shows how to use dotenc as the bootstrap secret source for GitHub
 Actions.
 
-The intended model is one GitHub bootstrap key, `DOTENC_PRIVATE_KEY`, plus
-encrypted `.env.*.enc` files in the repository. If the key is encrypted, also
-store `DOTENC_PRIVATE_KEY_PASSPHRASE`. Provider tokens can live inside a dotenc
-environment and be decrypted only in the jobs that need them.
+The intended model is one GitHub bootstrap key, `DOTENC_PRIVATE_KEY_BASE64`,
+plus encrypted `.env.*.enc` files in the repository. If the key is encrypted,
+also store `DOTENC_PRIVATE_KEY_PASSPHRASE`. Provider tokens can live inside a
+dotenc environment and be decrypted only in the jobs that need them.
 
 ## Provider-specific identity
 
@@ -27,10 +27,17 @@ grant the GitHub Actions key to `production` and use
 `environment: production`, so release-only authentication values and submission
 credentials live with the production release environment.
 
-Store the full private key text in GitHub as `DOTENC_PRIVATE_KEY`, including
-the `BEGIN` and `END` lines. If the key is encrypted, also store
-`DOTENC_PRIVATE_KEY_PASSPHRASE`. Delete the temporary private key after storing
-it.
+Store the base64-encoded private key in GitHub as
+`DOTENC_PRIVATE_KEY_BASE64`:
+
+```bash
+base64 < github_actions_key | tr -d '\n'
+```
+
+If the key is encrypted, also store `DOTENC_PRIVATE_KEY_PASSPHRASE`. Delete the
+temporary private key after storing it. `DOTENC_PRIVATE_KEY` with the raw
+private key text remains supported for backwards compatibility, but new
+provider setup should use `DOTENC_PRIVATE_KEY_BASE64`.
 
 Keep provider identities separate. Give GitHub Actions a dotenc identity only
 for jobs that actually run on GitHub, and grant that key only to the encrypted
@@ -69,7 +76,7 @@ Use `run` when decrypted values are needed by a single command:
     environment: test
     command: npm test
   env:
-    DOTENC_PRIVATE_KEY: ${{ secrets.DOTENC_PRIVATE_KEY }}
+    DOTENC_PRIVATE_KEY_BASE64: ${{ secrets.DOTENC_PRIVATE_KEY_BASE64 }}
     DOTENC_PRIVATE_KEY_PASSPHRASE: ${{ secrets.DOTENC_PRIVATE_KEY_PASSPHRASE }}
 ```
 
@@ -88,7 +95,7 @@ Use `export` only when later steps need decrypted values:
       NPM_TOKEN
       SENTRY_AUTH_TOKEN
   env:
-    DOTENC_PRIVATE_KEY: ${{ secrets.DOTENC_PRIVATE_KEY }}
+    DOTENC_PRIVATE_KEY_BASE64: ${{ secrets.DOTENC_PRIVATE_KEY_BASE64 }}
     DOTENC_PRIVATE_KEY_PASSPHRASE: ${{ secrets.DOTENC_PRIVATE_KEY_PASSPHRASE }}
 
 - run: npm publish
@@ -108,7 +115,7 @@ Use `write-file` for file-shaped credentials such as service account JSON:
     name: SERVICE_ACCOUNT_JSON
     path: service-account.json
   env:
-    DOTENC_PRIVATE_KEY: ${{ secrets.DOTENC_PRIVATE_KEY }}
+    DOTENC_PRIVATE_KEY_BASE64: ${{ secrets.DOTENC_PRIVATE_KEY_BASE64 }}
     DOTENC_PRIVATE_KEY_PASSPHRASE: ${{ secrets.DOTENC_PRIVATE_KEY_PASSPHRASE }}
 
 - run: node scripts/deploy.js --credentials service-account.json

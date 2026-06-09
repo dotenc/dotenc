@@ -107,11 +107,25 @@ try {
 }
 ```
 
-**Child process isolation:** When running commands with `dotenc run` or `dotenc dev`, the `DOTENC_PRIVATE_KEY` environment variable is explicitly stripped from the child process environment before launch. Injected secrets are limited to the decrypted variables only:
+**Provider bootstrap keys:** CI and provider runners should store bootstrap
+private keys as `DOTENC_PRIVATE_KEY_BASE64`, a base64-encoded private key file.
+`DOTENC_PRIVATE_KEY` with raw private key text remains supported for backwards
+compatibility. Passphrase-protected bootstrap keys use
+`DOTENC_PRIVATE_KEY_PASSPHRASE` with either format.
+
+**Child process isolation:** When running commands with `dotenc run` or
+`dotenc dev`, the `DOTENC_PRIVATE_KEY_BASE64` and `DOTENC_PRIVATE_KEY`
+environment variables are explicitly stripped from the child process
+environment before launch. Injected secrets are limited to the decrypted
+variables only:
 
 ```typescript
 // cli/src/commands/run.ts
-const { DOTENC_PRIVATE_KEY: _privateKey, ...baseEnv } = process.env
+const {
+    DOTENC_PRIVATE_KEY_BASE64: _privateKeyBase64,
+    DOTENC_PRIVATE_KEY: _privateKey,
+    ...baseEnv
+} = process.env
 const mergedEnv = { ...baseEnv, ...decryptedEnv }
 spawn(command, args, { env: mergedEnv })
 ```
@@ -236,8 +250,10 @@ CLI:
   CLI version when workflows need fully reproducible installs.
 - `actions/run` writes the requested command to a temporary script and executes
   it through `dotenc run --strict` by default. The CLI still strips
-  `DOTENC_PRIVATE_KEY` before launching the child command, and the action
-  wrapper unsets `DOTENC_PRIVATE_KEY_PASSPHRASE` before running user commands.
+  `DOTENC_PRIVATE_KEY_BASE64` and `DOTENC_PRIVATE_KEY` before launching the
+  child command, and the action wrappers unset `DOTENC_PRIVATE_KEY_BASE64`,
+  `DOTENC_PRIVATE_KEY`, and `DOTENC_PRIVATE_KEY_PASSPHRASE` before running user
+  commands.
 - `actions/export` decrypts an environment through `dotenc run`, then writes
   only explicitly allowlisted variable names to `$GITHUB_ENV`. Values are
   registered with GitHub log masking before export.
@@ -259,7 +275,11 @@ provider-specific runbook for that provider's own runner.
 ## Known Limitations
 
 - **dotenc does not prompt for passphrases.** To use passphrase-protected SSH keys, provide `DOTENC_PRIVATE_KEY_PASSPHRASE` in the environment. In interactive key selection flows (`dotenc init`, interactive `dotenc key add`), dotenc can also create an optional passwordless copy (for example `id_ed25519_passwordless`) after explicit user confirmation.
-- **No HSM or hardware key support.** Private keys must be accessible as files in `~/.ssh/` or via the `DOTENC_PRIVATE_KEY` environment variable. Explicit key selection flags such as `--private-key` and `--from-private-key` select from those file-backed keys by name.
+- **No HSM or hardware key support.** Private keys must be accessible as files in
+  `~/.ssh/`, via the recommended `DOTENC_PRIVATE_KEY_BASE64` environment
+  variable, or via the legacy `DOTENC_PRIVATE_KEY` environment variable.
+  Explicit key selection flags such as `--private-key` and `--from-private-key`
+  select from those file-backed keys by name.
 - **Revocation is not retroactive.** See [Access Control Model](#access-control-model).
 - **No centralized policy engine.** Access control is enforced per-environment and per-repository, not across an organization.
 

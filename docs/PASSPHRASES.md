@@ -23,8 +23,8 @@ Included:
 - `dotenc key add` interactive choose mode
 - `dotenc key add --from-ssh|--from-file|--from-string` when
   `DOTENC_PRIVATE_KEY_PASSPHRASE` is set
-- `DOTENC_PRIVATE_KEY` and `~/.ssh` key discovery with
-  `DOTENC_PRIVATE_KEY_PASSPHRASE`
+- `DOTENC_PRIVATE_KEY_BASE64`, legacy `DOTENC_PRIVATE_KEY`, and `~/.ssh` key
+  discovery with `DOTENC_PRIVATE_KEY_PASSPHRASE`
 
 Not included in this phase:
 - direct interactive passphrase entry in dotenc command flows (outside the
@@ -65,7 +65,8 @@ When a passphrase-protected key is selected in interactive chooser mode:
 - `DOTENC_PRIVATE_KEY_PASSPHRASE` is used to unlock passphrase-protected
   private keys in both interactive and non-interactive flows.
 - Applies to:
-  - `DOTENC_PRIVATE_KEY`
+  - `DOTENC_PRIVATE_KEY_BASE64`
+  - legacy `DOTENC_PRIVATE_KEY`
   - `~/.ssh` key discovery
   - `dotenc key add --from-ssh|--from-file|--from-string` when input is
     passphrase-protected

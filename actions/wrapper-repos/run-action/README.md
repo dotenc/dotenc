@@ -8,7 +8,7 @@ Run one command with variables decrypted from a dotenc environment.
     environment: test
     command: npm test
   env:
-    DOTENC_PRIVATE_KEY: ${{ secrets.DOTENC_PRIVATE_KEY }}
+    DOTENC_PRIVATE_KEY_BASE64: ${{ secrets.DOTENC_PRIVATE_KEY_BASE64 }}
 ```
 
 Implementation is delegated to `ivanfilhoz/dotenc/actions/run@v1`.

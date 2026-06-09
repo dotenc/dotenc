@@ -6,7 +6,7 @@ import { generateEd25519Key, runCli, createMockEditor } from "../helpers/cli"
 
 const TIMEOUT = 30_000
 
-describe("DOTENC_PRIVATE_KEY", () => {
+describe("environment-provided private keys", () => {
 	let aliceHome: string
 	let ciHome: string
 	let workspace: string
@@ -43,6 +43,14 @@ describe("DOTENC_PRIVATE_KEY", () => {
 		const privateKey = readFileSync(path.join(aliceHome, ".ssh", "id_ed25519"), "utf-8")
 		const result = runCli(ciHome, workspace, ["run", "-e", "staging", "--", "sh", "-c", "echo $DEPLOY_TOKEN"], {
 			DOTENC_PRIVATE_KEY: privateKey,
+		})
+		expect(result.stdout).toContain("tok_abc123")
+	}, TIMEOUT)
+
+	test("CI decrypts via DOTENC_PRIVATE_KEY_BASE64 without .ssh dir", () => {
+		const privateKey = readFileSync(path.join(aliceHome, ".ssh", "id_ed25519"), "utf-8")
+		const result = runCli(ciHome, workspace, ["run", "-e", "staging", "--", "sh", "-c", "echo $DEPLOY_TOKEN"], {
+			DOTENC_PRIVATE_KEY_BASE64: Buffer.from(privateKey, "utf-8").toString("base64"),
 		})
 		expect(result.stdout).toContain("tok_abc123")
 	}, TIMEOUT)

@@ -38,6 +38,7 @@ describe("getPrivateKeys", () => {
 	let encryptedEd25519PrivateKeyPem: string
 	let rsaPrivateKeyPem: string
 	let ecdsaPrivateKeyPem: string
+	const originalDotencKeyBase64 = process.env.DOTENC_PRIVATE_KEY_BASE64
 	const originalDotencKey = process.env.DOTENC_PRIVATE_KEY
 	const originalDotencKeyPassphrase = process.env.DOTENC_PRIVATE_KEY_PASSPHRASE
 	let homeSpy: ReturnType<typeof spyOn>
@@ -88,6 +89,9 @@ describe("getPrivateKeys", () => {
 
 	afterAll(() => {
 		homeSpy.mockRestore()
+		if (originalDotencKeyBase64)
+			process.env.DOTENC_PRIVATE_KEY_BASE64 = originalDotencKeyBase64
+		else delete process.env.DOTENC_PRIVATE_KEY_BASE64
 		if (originalDotencKey) process.env.DOTENC_PRIVATE_KEY = originalDotencKey
 		else delete process.env.DOTENC_PRIVATE_KEY
 		if (originalDotencKeyPassphrase)
@@ -96,7 +100,89 @@ describe("getPrivateKeys", () => {
 		rmSync(tmpDir, { recursive: true, force: true })
 	})
 
+	const encodePrivateKey = (keyContent: string) =>
+		Buffer.from(keyContent, "utf-8").toString("base64")
+
+	test("parses Ed25519 key from DOTENC_PRIVATE_KEY_BASE64", async () => {
+		delete process.env.DOTENC_PRIVATE_KEY
+		process.env.DOTENC_PRIVATE_KEY_BASE64 =
+			encodePrivateKey(ed25519PrivateKeyPem)
+
+		const { keys } = await getPrivateKeys()
+		expect(keys.map((k) => k.name)).toContain("env.DOTENC_PRIVATE_KEY_BASE64")
+		const envKey = keys.find((k) => k.name === "env.DOTENC_PRIVATE_KEY_BASE64")
+		if (!envKey) {
+			throw new Error("Expected env.DOTENC_PRIVATE_KEY_BASE64 to be present")
+		}
+		expect(envKey.algorithm).toBe("ed25519")
+		expect(envKey.fingerprint).toBeDefined()
+
+		delete process.env.DOTENC_PRIVATE_KEY_BASE64
+	})
+
+	test("parses passphrase-protected DOTENC_PRIVATE_KEY_BASE64 when DOTENC_PRIVATE_KEY_PASSPHRASE is set", async () => {
+		delete process.env.DOTENC_PRIVATE_KEY
+		process.env.DOTENC_PRIVATE_KEY_BASE64 = encodePrivateKey(
+			encryptedEd25519PrivateKeyPem,
+		)
+		process.env.DOTENC_PRIVATE_KEY_PASSPHRASE = "secret"
+
+		const { keys } = await getPrivateKeys()
+		const envKey = keys.find((k) => k.name === "env.DOTENC_PRIVATE_KEY_BASE64")
+
+		expect(envKey).toBeDefined()
+		expect(envKey?.algorithm).toBe("ed25519")
+
+		delete process.env.DOTENC_PRIVATE_KEY_BASE64
+		delete process.env.DOTENC_PRIVATE_KEY_PASSPHRASE
+	})
+
+	test("prefers DOTENC_PRIVATE_KEY_BASE64 over legacy DOTENC_PRIVATE_KEY", async () => {
+		process.env.DOTENC_PRIVATE_KEY_BASE64 =
+			encodePrivateKey(ed25519PrivateKeyPem)
+		process.env.DOTENC_PRIVATE_KEY = rsaPrivateKeyPem
+
+		const { keys } = await getPrivateKeys()
+		const base64EnvKey = keys.find(
+			(k) => k.name === "env.DOTENC_PRIVATE_KEY_BASE64",
+		)
+		const rawEnvKey = keys.find((k) => k.name === "env.DOTENC_PRIVATE_KEY")
+
+		expect(base64EnvKey).toBeDefined()
+		expect(base64EnvKey?.algorithm).toBe("ed25519")
+		expect(rawEnvKey).toBeUndefined()
+
+		delete process.env.DOTENC_PRIVATE_KEY_BASE64
+		delete process.env.DOTENC_PRIVATE_KEY
+	})
+
+	test("does not fall back to legacy DOTENC_PRIVATE_KEY when DOTENC_PRIVATE_KEY_BASE64 is invalid", async () => {
+		const errorSpy = spyOn(console, "error").mockImplementation(() => {})
+		process.env.DOTENC_PRIVATE_KEY_BASE64 = "not base64!"
+		process.env.DOTENC_PRIVATE_KEY = ed25519PrivateKeyPem
+
+		const { keys, unsupportedKeys } = await getPrivateKeys()
+		expect(
+			keys.find((k) => k.name === "env.DOTENC_PRIVATE_KEY_BASE64"),
+		).toBeUndefined()
+		expect(
+			keys.find((k) => k.name === "env.DOTENC_PRIVATE_KEY"),
+		).toBeUndefined()
+		expect(
+			unsupportedKeys?.some(
+				(k) =>
+					k.name === "env.DOTENC_PRIVATE_KEY_BASE64" &&
+					k.reason === "invalid base64 private key",
+			),
+		).toBe(true)
+
+		delete process.env.DOTENC_PRIVATE_KEY_BASE64
+		delete process.env.DOTENC_PRIVATE_KEY
+		errorSpy.mockRestore()
+	})
+
 	test("parses Ed25519 key from DOTENC_PRIVATE_KEY", async () => {
+		delete process.env.DOTENC_PRIVATE_KEY_BASE64
 		process.env.DOTENC_PRIVATE_KEY = ed25519PrivateKeyPem
 		const { keys } = await getPrivateKeys()
 		expect(keys.map((k) => k.name)).toContain("env.DOTENC_PRIVATE_KEY")
@@ -110,6 +196,7 @@ describe("getPrivateKeys", () => {
 	})
 
 	test("parses RSA key from DOTENC_PRIVATE_KEY", async () => {
+		delete process.env.DOTENC_PRIVATE_KEY_BASE64
 		process.env.DOTENC_PRIVATE_KEY = rsaPrivateKeyPem
 		const { keys } = await getPrivateKeys()
 		expect(keys.map((k) => k.name)).toContain("env.DOTENC_PRIVATE_KEY")
@@ -124,6 +211,7 @@ describe("getPrivateKeys", () => {
 
 	test("ignores invalid DOTENC_PRIVATE_KEY", async () => {
 		const spy = spyOn(console, "error").mockImplementation(() => {})
+		delete process.env.DOTENC_PRIVATE_KEY_BASE64
 		process.env.DOTENC_PRIVATE_KEY = "not a key"
 		const { keys } = await getPrivateKeys()
 		const envKey = keys.find((k) => k.name === "env.DOTENC_PRIVATE_KEY")
@@ -133,6 +221,7 @@ describe("getPrivateKeys", () => {
 	})
 
 	test("each key entry has required fields", async () => {
+		delete process.env.DOTENC_PRIVATE_KEY_BASE64
 		process.env.DOTENC_PRIVATE_KEY = ed25519PrivateKeyPem
 		const { keys } = await getPrivateKeys()
 		for (const key of keys) {
@@ -157,6 +246,7 @@ describe("getPrivateKeys", () => {
 
 	test("ignores unsupported key types in DOTENC_PRIVATE_KEY", async () => {
 		const errorSpy = spyOn(console, "error").mockImplementation(() => {})
+		delete process.env.DOTENC_PRIVATE_KEY_BASE64
 		process.env.DOTENC_PRIVATE_KEY = ecdsaPrivateKeyPem
 
 		const { keys, unsupportedKeys } = await getPrivateKeys()
@@ -190,6 +280,7 @@ describe("getPrivateKeys", () => {
 			throw new Error("process.exit(1)")
 		})
 		const errorSpy = spyOn(console, "error").mockImplementation(() => {})
+		delete process.env.DOTENC_PRIVATE_KEY_BASE64
 		process.env.DOTENC_PRIVATE_KEY = [
 			"-----BEGIN ENCRYPTED PRIVATE KEY-----",
 			"ZmFrZQ==",
@@ -206,6 +297,7 @@ describe("getPrivateKeys", () => {
 	})
 
 	test("parses passphrase-protected DOTENC_PRIVATE_KEY when DOTENC_PRIVATE_KEY_PASSPHRASE is set", async () => {
+		delete process.env.DOTENC_PRIVATE_KEY_BASE64
 		process.env.DOTENC_PRIVATE_KEY = encryptedEd25519PrivateKeyPem
 		process.env.DOTENC_PRIVATE_KEY_PASSPHRASE = "secret"
 
