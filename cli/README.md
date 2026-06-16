@@ -458,8 +458,11 @@ jobs:
         with:
           node-version: 24
       - run: npm ci
-      - run: npm install -g @dotenc/cli
-      - run: dotenc run -e test npm test
+      - uses: dotenc/setup-action@v1
+      - uses: dotenc/run-action@v1
+        with:
+          environment: test
+          command: npm test
         env:
           DOTENC_PRIVATE_KEY_BASE64: ${{ secrets.DOTENC_PRIVATE_KEY_BASE64 }}
           DOTENC_PRIVATE_KEY_PASSPHRASE: ${{ secrets.DOTENC_PRIVATE_KEY_PASSPHRASE }}
