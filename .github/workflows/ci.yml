@@ -88,3 +88,17 @@ jobs:
 
       - name: Run e2e tests
         run: docker run --rm dotenc-e2e
+
+  cli-image:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Build CLI image
+        run: docker build -t dotenc-cli -f cli/Dockerfile .
+
+      - name: Verify CLI image
+        run: |
+          docker run --rm dotenc-cli --version
+          docker run --rm --entrypoint sh dotenc-cli -c 'command -v dotenc && command -v ssh-keygen'

@@ -6,13 +6,13 @@
 	"publisher": "dotenc",
 	"icon": "assets/logo-square.png",
 	"license": "MIT",
-	"homepage": "https://github.com/ivanfilhoz/dotenc",
+	"homepage": "https://github.com/dotenc/dotenc",
 	"bugs": {
-		"url": "https://github.com/ivanfilhoz/dotenc/issues"
+		"url": "https://github.com/dotenc/dotenc/issues"
 	},
 	"repository": {
 		"type": "git",
-		"url": "https://github.com/ivanfilhoz/dotenc.git"
+		"url": "https://github.com/dotenc/dotenc.git"
 	},
 	"engines": {
 		"vscode": "^1.96.0"

@@ -54,7 +54,7 @@ exit 0
 		expect(result.stdout).toContain("Agent skill installation completed")
 		expect(existsSync(fakeNpxLogPath)).toBe(true)
 		const log = readFileSync(fakeNpxLogPath, "utf-8")
-		expect(log).toContain("skills add ivanfilhoz/dotenc --skill dotenc")
+		expect(log).toContain("skills add dotenc/dotenc --skill dotenc")
 	}, TIMEOUT)
 
 	test("passes -y when --force is provided", () => {
@@ -69,7 +69,7 @@ exit 0
 		)
 		expect(result.exitCode).toBe(0)
 		const log = readFileSync(fakeNpxLogPath, "utf-8")
-		expect(log).toContain("skills add ivanfilhoz/dotenc --skill dotenc -y")
+		expect(log).toContain("skills add dotenc/dotenc --skill dotenc -y")
 	}, TIMEOUT)
 
 	test("exits with npx command exit code on failure", () => {

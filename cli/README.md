@@ -148,7 +148,18 @@ npm install -g @dotenc/cli
 
 ### Standalone binary
 
-Download the latest binary for your platform from the [GitHub Releases](https://github.com/ivanfilhoz/dotenc/releases) page.
+Download the latest binary for your platform from the [GitHub Releases](https://github.com/dotenc/dotenc/releases) page.
+
+### Docker / OCI image
+
+```bash
+docker run --rm ghcr.io/dotenc/cli:latest --version
+```
+
+The `ghcr.io/dotenc/cli` image contains the standalone dotenc binary plus
+minimal SSH-key runtime support. It does not include Node.js, Bun, npm, or
+provider CLIs. See the [OCI image guide](https://github.com/dotenc/dotenc/blob/main/docs/OCI_IMAGE.md)
+for CI examples, pinning, and security notes.
 
 ## Basic Usage
 
@@ -638,11 +649,11 @@ It does not aim to replace centralized secret managers like Vault or Doppler —
 
 ## License
 
-[MIT](https://github.com/ivanfilhoz/dotenc/blob/main/LICENSE)
+[MIT](https://github.com/dotenc/dotenc/blob/main/LICENSE)
 
 [npm-image]: https://img.shields.io/npm/v/@dotenc/cli.svg
-[license-image]: https://img.shields.io/github/license/ivanfilhoz/dotenc.svg
+[license-image]: https://img.shields.io/github/license/dotenc/dotenc.svg
 [downloads-image]: https://img.shields.io/npm/dm/@dotenc/cli.svg
 [npm-url]: https://npmjs.org/package/@dotenc/cli
-[codecov-image]: https://codecov.io/gh/ivanfilhoz/dotenc/graph/badge.svg?token=U2MKXVGBA0
-[codecov-url]: https://codecov.io/gh/ivanfilhoz/dotenc
+[codecov-image]: https://codecov.io/gh/dotenc/dotenc/graph/badge.svg?token=U2MKXVGBA0
+[codecov-url]: https://codecov.io/gh/dotenc/dotenc

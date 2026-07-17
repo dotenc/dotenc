@@ -41,12 +41,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ivanfilhoz/dotenc.git"
+    "url": "git+https://github.com/dotenc/dotenc.git"
   },
   "bugs": {
-    "url": "https://github.com/ivanfilhoz/dotenc/issues"
+    "url": "https://github.com/dotenc/dotenc/issues"
   },
-  "homepage": "https://github.com/ivanfilhoz/dotenc#readme",
+  "homepage": "https://github.com/dotenc/dotenc#readme",
   "keywords": [
     "dotenv",
     "env",

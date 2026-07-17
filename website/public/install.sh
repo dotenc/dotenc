@@ -73,7 +73,7 @@ case "$OS" in
 	*)
 		error "Unsupported OS: $OS. Please install manually:
   npm install -g @dotenc/cli
-  Or download a binary from: https://github.com/ivanfilhoz/dotenc/releases"
+  Or download a binary from: https://github.com/dotenc/dotenc/releases"
 		;;
 esac
 

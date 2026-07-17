@@ -11,4 +11,4 @@ Run one command with variables decrypted from a dotenc environment.
     DOTENC_PRIVATE_KEY_BASE64: ${{ secrets.DOTENC_PRIVATE_KEY_BASE64 }}
 ```
 
-Implementation is delegated to `ivanfilhoz/dotenc/actions/run@v1`.
+Implementation is delegated to `dotenc/dotenc/actions/run@v1`.

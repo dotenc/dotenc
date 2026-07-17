@@ -45,7 +45,7 @@
 				<a href="#how-it-works" class="text-sm text-cyber-muted hover:text-cyber-cyan transition-colors">How It Works</a>
 				<a href="#installation" class="text-sm text-cyber-muted hover:text-cyber-cyan transition-colors">Install</a>
 				<a href="#comparison" class="text-sm text-cyber-muted hover:text-cyber-cyan transition-colors">Compare</a>
-				<a href="https://github.com/ivanfilhoz/dotenc" target="_blank" rel="noopener" class="text-sm text-cyber-muted hover:text-cyber-cyan transition-colors flex items-center gap-1">
+				<a href="https://github.com/dotenc/dotenc" target="_blank" rel="noopener" class="text-sm text-cyber-muted hover:text-cyber-cyan transition-colors flex items-center gap-1">
 					<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
 					GitHub
 				</a>
@@ -63,7 +63,7 @@
 			<a href="#how-it-works" class="text-cyber-muted hover:text-cyber-cyan transition-colors mobile-nav-link">How It Works</a>
 			<a href="#installation" class="text-cyber-muted hover:text-cyber-cyan transition-colors mobile-nav-link">Install</a>
 			<a href="#comparison" class="text-cyber-muted hover:text-cyber-cyan transition-colors mobile-nav-link">Compare</a>
-			<a href="https://github.com/ivanfilhoz/dotenc" target="_blank" rel="noopener" class="text-cyber-muted hover:text-cyber-cyan transition-colors">GitHub</a>
+			<a href="https://github.com/dotenc/dotenc" target="_blank" rel="noopener" class="text-cyber-muted hover:text-cyber-cyan transition-colors">GitHub</a>
 		</div>
 	</nav>
 
@@ -95,7 +95,7 @@
 				<a href="#installation" class="px-8 py-3 bg-cyber-cyan text-cyber-bg font-semibold rounded-lg hover:bg-cyan-300 transition-colors">
 					Get Started
 				</a>
-				<a href="https://github.com/ivanfilhoz/dotenc" target="_blank" rel="noopener" class="px-8 py-3 border border-cyber-border text-cyber-text font-semibold rounded-lg hover:border-cyber-cyan hover:text-cyber-cyan transition-colors">
+				<a href="https://github.com/dotenc/dotenc" target="_blank" rel="noopener" class="px-8 py-3 border border-cyber-border text-cyber-text font-semibold rounded-lg hover:border-cyber-cyan hover:text-cyber-cyan transition-colors">
 					View on GitHub
 				</a>
 			</div>
@@ -284,11 +284,12 @@
 
 		<!-- Tabbed install methods -->
 		<div class="max-w-2xl mx-auto fade-in-up">
-			<div class="flex border-b border-cyber-border mb-0">
-				<button class="install-tab active px-4 py-2 text-sm font-medium border-b-2 border-transparent -mb-px" data-tab="homebrew">Homebrew</button>
-				<button class="install-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent -mb-px text-cyber-muted" data-tab="scoop">Scoop</button>
-				<button class="install-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent -mb-px text-cyber-muted" data-tab="npm">npm</button>
-				<button class="install-tab px-4 py-2 text-sm font-medium border-b-2 border-transparent -mb-px text-cyber-muted" data-tab="binary">Binary</button>
+			<div class="flex overflow-x-auto border-b border-cyber-border mb-0">
+				<button class="install-tab active shrink-0 px-4 py-2 text-sm font-medium border-b-2 border-transparent -mb-px" data-tab="homebrew">Homebrew</button>
+				<button class="install-tab shrink-0 px-4 py-2 text-sm font-medium border-b-2 border-transparent -mb-px text-cyber-muted" data-tab="scoop">Scoop</button>
+				<button class="install-tab shrink-0 px-4 py-2 text-sm font-medium border-b-2 border-transparent -mb-px text-cyber-muted" data-tab="npm">npm</button>
+				<button class="install-tab shrink-0 px-4 py-2 text-sm font-medium border-b-2 border-transparent -mb-px text-cyber-muted" data-tab="oci">Docker / OCI</button>
+				<button class="install-tab shrink-0 px-4 py-2 text-sm font-medium border-b-2 border-transparent -mb-px text-cyber-muted" data-tab="binary">Binary</button>
 			</div>
 			<div class="bg-cyber-surface border border-t-0 border-cyber-border rounded-b-xl">
 				<div id="tab-homebrew" class="install-content p-6">
@@ -336,9 +337,23 @@
 						</div>
 					</div>
 				</div>
+				<div id="tab-oci" class="install-content p-6 hidden">
+					<p class="text-cyber-muted text-sm mb-3">Linux containers (amd64 / arm64)</p>
+					<div class="bg-cyber-bg rounded-lg p-4 font-mono text-sm">
+						<div class="flex items-center justify-between gap-4">
+							<div class="min-w-0 break-all"><span class="text-cyber-green">$</span> <span class="text-cyber-text">docker run --rm ghcr.io/dotenc/cli:latest --version</span></div>
+							<button class="copy-btn shrink-0 text-cyber-muted" data-copy="docker run --rm ghcr.io/dotenc/cli:latest --version" aria-label="Copy command">
+								<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+								</svg>
+							</button>
+						</div>
+					</div>
+					<p class="text-cyber-muted text-xs mt-3">Use a numbered tag for repeatable CI builds. See the <a href="https://github.com/dotenc/dotenc/blob/main/docs/OCI_IMAGE.md" target="_blank" rel="noopener" class="text-cyber-cyan hover:underline">OCI image guide</a>.</p>
+				</div>
 				<div id="tab-binary" class="install-content p-6 hidden">
 					<p class="text-cyber-muted text-sm mb-3">Standalone binary</p>
-					<p class="text-cyber-text text-sm">Download the latest binary for your platform from the <a href="https://github.com/ivanfilhoz/dotenc/releases" target="_blank" rel="noopener" class="text-cyber-cyan hover:underline">GitHub Releases</a> page.</p>
+					<p class="text-cyber-text text-sm">Download the latest binary for your platform from the <a href="https://github.com/dotenc/dotenc/releases" target="_blank" rel="noopener" class="text-cyber-cyan hover:underline">GitHub Releases</a> page.</p>
 					<p class="text-cyber-muted text-xs mt-3">Available for macOS (arm64, x64), Linux (x64, arm64), and Windows (x64).</p>
 				</div>
 			</div>
@@ -515,9 +530,9 @@
 	<!-- ===== FOOTER ===== -->
 	<footer class="border-t border-cyber-border py-12 px-4 sm:px-6 lg:px-8">
 		<div class="max-w-7xl mx-auto flex items-center justify-end gap-6">
-			<a href="https://github.com/ivanfilhoz/dotenc" target="_blank" rel="noopener" class="text-cyber-muted hover:text-cyber-cyan transition-colors text-sm">GitHub</a>
+			<a href="https://github.com/dotenc/dotenc" target="_blank" rel="noopener" class="text-cyber-muted hover:text-cyber-cyan transition-colors text-sm">GitHub</a>
 			<a href="https://npmjs.org/package/@dotenc/cli" target="_blank" rel="noopener" class="text-cyber-muted hover:text-cyber-cyan transition-colors text-sm">npm</a>
-			<a href="https://github.com/ivanfilhoz/dotenc/blob/main/LICENSE" target="_blank" rel="noopener" class="text-cyber-muted hover:text-cyber-cyan transition-colors text-sm">License</a>
+			<a href="https://github.com/dotenc/dotenc/blob/main/LICENSE" target="_blank" rel="noopener" class="text-cyber-muted hover:text-cyber-cyan transition-colors text-sm">License</a>
 		</div>
 	</footer>
 

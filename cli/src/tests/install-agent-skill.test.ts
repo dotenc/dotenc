@@ -42,7 +42,7 @@ describe("installAgentSkillCommand", () => {
 
 		expect(spawnMock).toHaveBeenCalledWith(
 			"npx",
-			["skills", "add", "ivanfilhoz/dotenc", "--skill", "dotenc"],
+			["skills", "add", "dotenc/dotenc", "--skill", "dotenc"],
 			expect.any(Object),
 		)
 		expect(
@@ -60,7 +60,7 @@ describe("installAgentSkillCommand", () => {
 
 		expect(spawnMock).toHaveBeenCalledWith(
 			"npx",
-			["skills", "add", "ivanfilhoz/dotenc", "--skill", "dotenc", "-g"],
+			["skills", "add", "dotenc/dotenc", "--skill", "dotenc", "-g"],
 			expect.any(Object),
 		)
 		logSpy.mockRestore()
@@ -74,7 +74,7 @@ describe("installAgentSkillCommand", () => {
 
 		expect(spawnMock).toHaveBeenCalledWith(
 			"npx",
-			["skills", "add", "ivanfilhoz/dotenc", "--skill", "dotenc", "-y"],
+			["skills", "add", "dotenc/dotenc", "--skill", "dotenc", "-y"],
 			expect.any(Object),
 		)
 		logSpy.mockRestore()
@@ -97,7 +97,7 @@ describe("installAgentSkillCommand", () => {
 		expect(promptSelectMock).toHaveBeenCalledTimes(1)
 		expect(spawnMock).toHaveBeenCalledWith(
 			"npx",
-			["skills", "add", "ivanfilhoz/dotenc", "--skill", "dotenc"],
+			["skills", "add", "dotenc/dotenc", "--skill", "dotenc"],
 			expect.any(Object),
 		)
 		expect(infoSpy).toHaveBeenCalledWith(

@@ -6,4 +6,4 @@ Install the dotenc CLI in GitHub Actions.
 - uses: dotenc/setup-action@v1
 ```
 
-Implementation is delegated to `ivanfilhoz/dotenc/actions/setup@v1`.
+Implementation is delegated to `dotenc/dotenc/actions/setup@v1`.

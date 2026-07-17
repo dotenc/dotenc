@@ -12,4 +12,4 @@ Write one decrypted dotenc variable to a file with restricted permissions.
     DOTENC_PRIVATE_KEY_BASE64: ${{ secrets.DOTENC_PRIVATE_KEY_BASE64 }}
 ```
 
-Implementation is delegated to `ivanfilhoz/dotenc/actions/write-file@v1`.
+Implementation is delegated to `dotenc/dotenc/actions/write-file@v1`.

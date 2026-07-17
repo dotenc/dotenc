@@ -3,8 +3,7 @@ import { realpathSync } from "node:fs"
 export type InstallMethod = "homebrew" | "scoop" | "npm" | "binary" | "unknown"
 
 export const NPM_LATEST_URL = "https://registry.npmjs.org/@dotenc%2fcli/latest"
-export const GITHUB_RELEASES_URL =
-	"https://github.com/ivanfilhoz/dotenc/releases"
+export const GITHUB_RELEASES_URL = "https://github.com/dotenc/dotenc/releases"
 
 type DetectInstallMethodOptions = {
 	execPath?: string
