@@ -266,6 +266,9 @@ jobs:
             type=raw,value=${{ needs.check-version.outputs.version }}${{ matrix.suffix }},priority=300
             type=raw,value=v${{ needs.check-version.outputs.version }}${{ matrix.suffix }},priority=250
             type=raw,value=${{ matrix.rolling }},priority=200
+          labels: |
+            org.opencontainers.image.version=${{ needs.check-version.outputs.version }}
+            org.dotenc.image.variant=${{ matrix.variant }}
 
       - name: Build and publish CLI image (${{ matrix.variant }})
         uses: docker/build-push-action@v6
