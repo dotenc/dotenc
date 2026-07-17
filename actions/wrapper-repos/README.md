@@ -8,9 +8,8 @@ These directories are templates for the public GitHub Action repositories:
 - `dotenc/write-file-action`
 
 Each wrapper keeps the clean public name (`dotenc/export-action@v1`) while
-delegating implementation to this monorepo. For now the wrappers point at
-`ivanfilhoz/dotenc/actions/<name>@v1`. When the rest of the project migrates to
-the `dotenc` org, update the wrapper targets to `dotenc/dotenc/actions/<name>@v1`.
+delegating implementation to this monorepo at
+`dotenc/dotenc/actions/<name>@v1`.
 
 Publish flow:
 

@@ -10,7 +10,7 @@ const spawnMock = mock(() => {
 
 mock.module("../helpers/update", () => ({
 	detectInstallMethod: detectInstallMethodMock,
-	GITHUB_RELEASES_URL: "https://github.com/ivanfilhoz/dotenc/releases",
+	GITHUB_RELEASES_URL: "https://github.com/dotenc/dotenc/releases",
 }))
 mock.module("node:child_process", () => ({ spawn: spawnMock }))
 

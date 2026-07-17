@@ -17,6 +17,7 @@ This document describes the security model, cryptographic design, and operationa
 - [Access Control Model](#access-control-model)
 - [Operational Flow](#operational-flow)
 - [Installation Script Trust Model](#installation-script-trust-model)
+- [OCI Image Trust Model](#oci-image-trust-model)
 - [GitHub Actions Trust Model](#github-actions-trust-model)
 - [Known Limitations](#known-limitations)
 - [Vulnerability Reporting](#vulnerability-reporting)
@@ -236,7 +237,43 @@ curl -fsSL https://dotenc.org/install.sh -o install.sh
 sh install.sh
 ```
 
-Alternatively, install via Homebrew, Scoop, npm, or a standalone binary from the [GitHub Releases](https://github.com/ivanfilhoz/dotenc/releases) page — none of these methods use the install script.
+Alternatively, install via Homebrew, Scoop, npm, the
+`ghcr.io/dotenc/cli` OCI image, or a standalone binary from the
+[GitHub Releases](https://github.com/dotenc/dotenc/releases) page. None of
+these methods use the install script.
+
+---
+
+## OCI Image Trust Model
+
+The `ghcr.io/dotenc/cli` image packages the compiled standalone CLI for Linux
+container environments. The final image contains the `dotenc` binary,
+`ca-certificates`, and `openssh-client`; it does not include Node.js, Bun, npm,
+provider CLIs, application runtimes, private keys, decrypted `.env` files, or
+provider tokens.
+
+Security properties:
+
+- **Release-built image** — the image is built from `cli/Dockerfile` by the
+  release workflow after CLI version bumps or an authorized image-only manual
+  dispatch.
+- **Version pinning** — production CI should pin a specific image tag or digest
+  instead of relying on `latest`.
+- **Non-root default** — the image runs as the unprivileged `dotenc` user by
+  default. Use Docker's `--user` option when host-mounted files need the host
+  UID/GID.
+- **Runner-owned identity** — when `DOTENC_PRIVATE_KEY_BASE64`,
+  `DOTENC_PRIVATE_KEY`, `DOTENC_PRIVATE_KEY_PASSPHRASE`, or mounted SSH keys are
+  provided to the container, that container is the machine where decryption
+  happens. Grant that provider key narrowly.
+- **Mount discipline** — mount only the repository paths and optional SSH key
+  paths needed for the command. Prefer `DOTENC_PRIVATE_KEY_BASE64` with a
+  dedicated provider key over mounting a developer's full `~/.ssh` directory in
+  automation.
+
+The CLI image is not a builder image. Commands wrapped by `dotenc run` execute
+inside the same container, so they can only use tools present in that image or
+mounted into it.
 
 ---
 
@@ -291,7 +328,7 @@ If you discover a security vulnerability in dotenc, please report it responsibly
 
 **Do not open a public GitHub issue for security vulnerabilities.**
 
-Instead, report via [GitHub Security Advisories](https://github.com/ivanfilhoz/dotenc/security/advisories/new). You will receive a response as soon as possible. Please include:
+Instead, report via [GitHub Security Advisories](https://github.com/dotenc/dotenc/security/advisories/new). You will receive a response as soon as possible. Please include:
 
 - A description of the vulnerability and its potential impact
 - Steps to reproduce or a proof-of-concept

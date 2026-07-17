@@ -50,7 +50,7 @@ runs:
   using: composite
   steps:
     - id: write
-      uses: ivanfilhoz/dotenc/actions/write-file@v1
+      uses: dotenc/dotenc/actions/write-file@v1
       with:
         environment: ${{ inputs.environment }}
         name: ${{ inputs.name }}

@@ -1,7 +1,7 @@
 # Provider helpers, plugins, and presets roadmap
 
-This roadmap tracks provider integration ideas that are not yet shipped. Keep
-provider runbooks focused on supported paths. Do not publish step-by-step
+This roadmap tracks provider integration helpers, plugins, images, and presets.
+Keep provider runbooks focused on supported paths. Do not publish step-by-step
 external-runner guidance for Vercel or Netlify until the matching helpers,
 plugins, or presets exist.
 
@@ -24,8 +24,12 @@ plugins, or presets exist.
 
 ### `ghcr.io/dotenc/cli`
 
-Planned small OCI image containing only the dotenc CLI and the minimal runtime
+Small OCI image containing the compiled dotenc CLI and the minimal runtime
 needed to execute it.
+
+Status: implemented by [cli/Dockerfile](../cli/Dockerfile) and published by the
+release workflow after CLI version bumps or an image-only manual dispatch.
+Usage guidance lives in the [OCI image guide](./OCI_IMAGE.md).
 
 Target use cases:
 
@@ -33,7 +37,7 @@ Target use cases:
 - provider build hooks that can run a container image
 - reproducible smoke tests for released dotenc binaries
 
-Expected requirements:
+Release requirements:
 
 - multi-architecture Linux images, at least `linux/amd64` and `linux/arm64`
 - pinned dotenc version tags plus `latest`

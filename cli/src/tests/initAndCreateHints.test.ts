@@ -20,6 +20,6 @@ describe("docs url", () => {
 	test("resolves docs url from package metadata", () => {
 		const docsUrl = _resolveDocsUrl()
 		expect(typeof docsUrl).toBe("string")
-		expect(docsUrl).toContain("github.com/ivanfilhoz/dotenc")
+		expect(docsUrl).toContain("github.com/dotenc/dotenc")
 	})
 })

@@ -30,7 +30,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: ivanfilhoz/dotenc/actions/export@v1
+    - uses: dotenc/dotenc/actions/export@v1
       with:
         environment: ${{ inputs.environment }}
         names: ${{ inputs.names }}

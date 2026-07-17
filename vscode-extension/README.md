@@ -47,5 +47,5 @@ export DOTENC_SKIP_UPDATE_CHECK=1
 
 ## Reference
 
-- Repository: https://github.com/ivanfilhoz/dotenc
-- CLI and workflow docs: https://github.com/ivanfilhoz/dotenc#readme
+- Repository: https://github.com/dotenc/dotenc
+- CLI and workflow docs: https://github.com/dotenc/dotenc#readme

@@ -11,4 +11,4 @@ Export allowlisted dotenc variables to later GitHub Actions steps.
     DOTENC_PRIVATE_KEY_BASE64: ${{ secrets.DOTENC_PRIVATE_KEY_BASE64 }}
 ```
 
-Implementation is delegated to `ivanfilhoz/dotenc/actions/export@v1`.
+Implementation is delegated to `dotenc/dotenc/actions/export@v1`.

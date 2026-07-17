@@ -22,7 +22,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: ivanfilhoz/dotenc/actions/run@v1
+    - uses: dotenc/dotenc/actions/run@v1
       with:
         environment: ${{ inputs.environment }}
         command: ${{ inputs.command }}

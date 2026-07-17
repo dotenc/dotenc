@@ -12,7 +12,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: ivanfilhoz/dotenc/actions/setup@v1
+    - uses: dotenc/dotenc/actions/setup@v1
       with:
         version: ${{ inputs.version }}
         check: ${{ inputs.check }}
