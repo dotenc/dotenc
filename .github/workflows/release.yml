@@ -250,9 +250,9 @@ jobs:
         with:
           images: ghcr.io/dotenc/cli
           tags: |
-            type=raw,value=latest
-            type=raw,value=${{ needs.check-version.outputs.version }}
-            type=raw,value=v${{ needs.check-version.outputs.version }}
+            type=raw,value=${{ needs.check-version.outputs.version }},priority=300
+            type=raw,value=v${{ needs.check-version.outputs.version }},priority=250
+            type=raw,value=latest,priority=200
 
       - name: Build and publish CLI image
         uses: docker/build-push-action@v6
