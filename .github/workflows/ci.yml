@@ -90,15 +90,38 @@ jobs:
         run: docker run --rm dotenc-e2e
 
   cli-image:
+    name: CLI image (${{ matrix.variant }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: debian
+            target: runtime
+            image: dotenc-cli:debian
+          - variant: alpine
+            target: runtime-alpine
+            image: dotenc-cli:alpine
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Build CLI image
-        run: docker build -t dotenc-cli -f cli/Dockerfile .
+      - name: Build CLI image (${{ matrix.variant }})
+        run: docker build --target "${{ matrix.target }}" -t "${{ matrix.image }}" -f cli/Dockerfile .
 
-      - name: Verify CLI image
+      - name: Verify CLI image (${{ matrix.variant }})
         run: |
-          docker run --rm dotenc-cli --version
-          docker run --rm --entrypoint sh dotenc-cli -c 'command -v dotenc && command -v ssh-keygen'
+          docker run --rm "${{ matrix.image }}" --version
+          docker run --rm --entrypoint sh "${{ matrix.image }}" -c '
+            set -eu
+            test "$(id -u)" = "10001"
+            test "$(id -g)" = "10001"
+            command -v dotenc
+            command -v ssh-keygen
+            mkdir -p "$HOME/.ssh"
+            ssh-keygen -q -t ed25519 -N "" -f "$HOME/.ssh/id_ed25519"
+            dotenc init -n image-smoke -k id_ed25519 >/tmp/init.log
+            dotenc env create production image-smoke >/tmp/create.log
+            printf "IMAGE_SMOKE_OK=yes\n" | dotenc env encrypt --stdin production >/tmp/encrypt.log
+            test "$(dotenc env decrypt production)" = "IMAGE_SMOKE_OK=yes"
+          '
