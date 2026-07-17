@@ -154,12 +154,15 @@ Download the latest binary for your platform from the [GitHub Releases](https://
 
 ```bash
 docker run --rm ghcr.io/dotenc/cli:latest --version
+docker run --rm ghcr.io/dotenc/cli:alpine --version
 ```
 
-The `ghcr.io/dotenc/cli` image contains the standalone dotenc binary plus
-minimal SSH-key runtime support. It does not include Node.js, Bun, npm, or
-provider CLIs. See the [OCI image guide](https://github.com/dotenc/dotenc/blob/main/docs/OCI_IMAGE.md)
-for CI examples, pinning, and security notes.
+The default tags use Debian/glibc; `alpine` and `-alpine` tags use Alpine/musl.
+Both variants contain the standalone dotenc binary plus minimal SSH-key runtime
+support for `linux/amd64` and `linux/arm64`. They do not include an application
+runtime or provider CLIs: copy the matching binary into the application's
+existing image. See the [OCI image guide](https://github.com/dotenc/dotenc/blob/main/docs/OCI_IMAGE.md)
+for tags, multi-stage examples, pinning, and security notes.
 
 ## Basic Usage
 
@@ -510,8 +513,18 @@ resolution, or secret storage work differently from a generic shell pipeline.
   Vercel-owned cloud builds, then wrap the Vercel build command.
 - [Netlify](/docs/NETLIFY.md) — use a dedicated Netlify dotenc identity for
   Netlify-owned cloud builds, then wrap the Netlify build command.
+- [Coolify](https://github.com/dotenc/dotenc/blob/main/docs/COOLIFY.md) — add
+  dotenc to the application's existing Dockerfile, Railpack, or Nixpacks image,
+  then keep decryption at runtime when possible.
+- [Railpack](https://github.com/dotenc/dotenc/blob/main/docs/RAILPACK.md) —
+  compose the CLI image as a generic build or deploy layer without replacing
+  the auto-detected application runtime.
+- [Nixpacks](https://github.com/dotenc/dotenc/blob/main/docs/NIXPACKS.md) —
+  support existing Nixpacks deployments with a pinned standalone binary;
+  prefer Railpack for new generated-image deployments.
 - [Provider helpers roadmap](/docs/PROVIDER_HELPERS_ROADMAP.md) — track planned
-  Docker images, Railpack/Nixpacks presets, provider plugins, and provider CLIs.
+  presets, provider plugins, provider CLIs, and the criteria for revisiting
+  builder images.
 
 ## Key Management
 

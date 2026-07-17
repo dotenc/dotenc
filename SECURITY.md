@@ -247,18 +247,25 @@ these methods use the install script.
 ## OCI Image Trust Model
 
 The `ghcr.io/dotenc/cli` image packages the compiled standalone CLI for Linux
-container environments. The final image contains the `dotenc` binary,
-`ca-certificates`, and `openssh-client`; it does not include Node.js, Bun, npm,
-provider CLIs, application runtimes, private keys, decrypted `.env` files, or
-provider tokens.
+container environments. Debian/glibc and Alpine/musl variants contain the
+`dotenc` binary, `ca-certificates`, and `openssh-client`. The Alpine variant also
+contains `libstdc++` and `libgcc`, which its Bun-compiled musl binary requires.
+Neither variant includes Node.js, Bun, npm, provider CLIs, application runtimes,
+private keys, decrypted `.env` files, or provider tokens.
 
 Security properties:
 
 - **Release-built image** — the image is built from `cli/Dockerfile` by the
   release workflow after CLI version bumps or an authorized image-only manual
   dispatch.
-- **Version pinning** — production CI should pin a specific image tag or digest
-  instead of relying on `latest`.
+- **Variant separation** — default tags contain the glibc binary; `-alpine`
+  tags contain the musl binary. Copy only the variant matching the application
+  image's libc.
+- **Version pinning** — production CI should pin a specific image tag, and
+  higher-assurance deployments should pin the manifest digest, instead of
+  relying on the mutable `latest` or `alpine` rolling tags.
+- **Release attestations** — published image manifests include BuildKit
+  provenance and SBOM attestations as OCI referrers.
 - **Non-root default** — the image runs as the unprivileged `dotenc` user by
   default. Use Docker's `--user` option when host-mounted files need the host
   UID/GID.
@@ -271,9 +278,13 @@ Security properties:
   dedicated provider key over mounting a developer's full `~/.ssh` directory in
   automation.
 
-The CLI image is not a builder image. Commands wrapped by `dotenc run` execute
-inside the same container, so they can only use tools present in that image or
-mounted into it.
+The CLI image is not an application builder image. Commands wrapped by
+`dotenc run` execute inside the same container, so they can only use tools
+present in that image or mounted into it. For application builds and runtime
+decryption, copy `/usr/local/bin/dotenc` from the matching image variant into
+the application's existing image and install the documented runtime packages.
+Never pass a bootstrap private key through Docker `ARG` or `ENV`; use runtime
+environment injection or BuildKit secret mounts.
 
 ---
 

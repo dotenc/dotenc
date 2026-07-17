@@ -10,7 +10,7 @@ plugins, or presets exist.
 - Preserve runner ownership: the machine that owns the build gets the dotenc
   identity.
 - Keep provider keys separate across GitHub Actions, EAS, Vercel, Netlify,
-  Cloudflare, and future providers.
+  Coolify, Cloudflare, and future providers.
 - Prefer wrapping one command with `dotenc run --strict` over exporting a whole
   decrypted environment.
 - When values must cross process boundaries, require explicit allowlists.
@@ -24,47 +24,50 @@ plugins, or presets exist.
 
 ### `ghcr.io/dotenc/cli`
 
-Small OCI image containing the compiled dotenc CLI and the minimal runtime
+Small OCI images containing the compiled dotenc CLI and the minimal runtime
 needed to execute it.
 
 Status: implemented by [cli/Dockerfile](../cli/Dockerfile) and published by the
 release workflow after CLI version bumps or an image-only manual dispatch.
 Usage guidance lives in the [OCI image guide](./OCI_IMAGE.md).
 
+Shipped variants:
+
+- Debian/glibc: `latest`, `<version>`, and `v<version>`
+- Alpine/musl: `alpine`, `<version>-alpine`, and `v<version>-alpine`
+- `linux/amd64` and `linux/arm64` manifests for both variants
+- release provenance and SBOM attestations
+
 Target use cases:
 
 - shell-based CI jobs that want `dotenc` without a language-specific install
 - provider build hooks that can run a container image
+- multi-stage application images that copy only `/usr/local/bin/dotenc`
 - reproducible smoke tests for released dotenc binaries
 
-Release requirements:
+### Builder images
 
-- multi-architecture Linux images, at least `linux/amd64` and `linux/arm64`
-- pinned dotenc version tags plus `latest`
-- no bundled secrets, tokens, or generated `.env` files
-- release provenance, checksums, and SBOM if the release workflow supports them
+Status: deferred until a concrete integration cannot be served by the CLI
+images.
 
-### `ghcr.io/dotenc/builder`
+The supported pattern treats the application as an opaque executable: keep its
+existing image, language runtime, build command, and start command; add dotenc;
+then wrap the command that needs decrypted values. This covers common use cases
+without making the documentation language or framework specific:
 
-Planned batteries-included image for provider-style builds.
+- Dockerfiles copy the binary from the matching glibc or musl CLI image.
+- Railpack composes the binary as an image input layer.
+- Nixpacks compatibility installs a pinned standalone binary.
 
-Candidate contents:
+A universal builder would need to own a growing matrix of language versions,
+package managers, native libraries, and security updates. Provider-specific
+builders would add another fast-moving matrix of external CLIs. Both duplicate
+the application's existing build environment without removing the need to know
+its actual build or start command.
 
-- dotenc CLI
-- Node.js, npm, pnpm, Yarn, and Bun
-- Git, curl, jq, unzip, and common CA certificates
-- optional provider CLIs in provider-specific variants
-
-Candidate variants:
-
-- `ghcr.io/dotenc/builder-node`
-- `ghcr.io/dotenc/builder-bun`
-- `ghcr.io/dotenc/vercel-builder`
-- `ghcr.io/dotenc/netlify-builder`
-- `ghcr.io/dotenc/cloudflare-builder`
-
-The generic image should stay boring and predictable. Provider-specific images
-can include heavier CLIs such as `vercel`, `netlify-cli`, or `wrangler`.
+Revisit builder images only when repeated production use cases demonstrate a
+gap that image composition cannot solve, and define the smallest runtime or
+provider-specific image from those concrete requirements.
 
 ### Key input ergonomics
 
@@ -97,31 +100,30 @@ Initial checks:
 The doctor should be conservative: fail on high-confidence leaks, report
 warnings for ambiguous matches, and never print full secret values.
 
-## Railpack preset
+## Railpack integration
 
-Railpack should be the first preset target because it is the newer container
-builder path for platforms that want zero-config image generation.
+Status: supported through the generic [Railpack integration guide](./RAILPACK.md).
+Railpack can add `/usr/local/bin/dotenc` from the CLI image while preserving its
+auto-detected language provider.
 
-Planned shape:
+Supported shape:
 
-- detect Node/Bun/package-manager projects using Railpack's existing provider
-  analysis
-- add a dotenc install step without replacing the provider's dependency install
-  logic
-- wrap the generated build step with `dotenc run --strict`
+- compose the dotenc CLI as a build or deploy image layer
+- preserve Railpack's provider-generated runtime and dependency installation
+- wrap an explicit existing build or start command with `dotenc run --strict`
 - support a configured dotenc environment name, defaulting to the provider's
-  production environment
-- support BuildKit secrets where the host platform exposes them
+  production environment through a small optional wrapper
+- use Railpack BuildKit secrets for build-time decryption
 - keep decrypted values out of final image layers and caches
-- emit clear build-plan diagnostics without printing decrypted values
 
-Open design questions:
+Deferred preset work:
 
-- whether this ships as a reusable `railpack.json` fragment, a generator command
-  such as `dotenc presets railpack`, or a Railpack provider contribution
+- a generator such as `dotenc presets railpack`
+- a Railpack provider contribution if the upstream extension model supports it
 - how to map preview/production environments portably across hosts
-- whether provider-specific CLIs belong in the same preset or in separate
-  builder images
+
+A static fragment cannot wrap an unknown provider-generated build command, so
+build-time examples require the application's existing command explicitly.
 
 References:
 
@@ -129,36 +131,41 @@ References:
 - [Railpack configuration file](https://railpack.com/config/file/)
 - [Railpack adding steps](https://railpack.com/guides/adding-steps)
 
-## Nixpacks preset
+## Nixpacks compatibility
 
-Nixpacks remains important for compatibility with existing platforms and
-self-hosted deployments even if Railpack becomes the preferred path.
+Status: supported for existing deployments through the generic
+[Nixpacks integration guide](./NIXPACKS.md). Nixpacks is in maintenance mode and
+recommends Railpack for new deployments.
 
-Planned shape:
+Supported shape:
 
-- provide `nixpacks.toml` and `nixpacks.json` examples
-- extend provider-generated phases instead of replacing them
-- install dotenc in the setup or install phase
-- wrap the build phase with `dotenc run --strict`
-- avoid putting decrypted values in `[variables]`, final image metadata, or
-  runtime image layers
-- keep start commands independent of dotenc unless the application explicitly
-  needs runtime decryption
+- install a pinned standalone dotenc binary in a provider-generated image
+- preserve the auto-detected language provider and dependency phases
+- support runtime decryption when the final image retains the binary and SSH
+  runtime dependencies
+- keep bootstrap keys out of Nixpacks `[variables]`
+- direct build-time secret use to Railpack or a custom Dockerfile
 
-Open design questions:
+Deferred preset work:
 
-- whether to ship static snippets only or a generator command such as
-  `dotenc presets nixpacks`
-- how to handle package-manager-specific `exec` commands without brittle
-  detection
-- how much provider-specific behavior belongs in a Nixpacks preset versus a
-  Docker image
+- a generator command such as `dotenc presets nixpacks`
+- additional static fixtures if maintained Nixpacks hosts diverge in final-image
+  behavior
 
 References:
 
 - [Nixpacks configuration file](https://nixpacks.com/docs/configuration/file)
 - [Nixpacks configuring builds](https://nixpacks.com/docs/guides/configuring-builds)
 - [Nixpacks how it works](https://nixpacks.com/docs/how-it-works)
+
+## Coolify
+
+Status: supported through the [Coolify runbook](./COOLIFY.md).
+
+The Dockerfile path is the stable default, Railpack is the preferred generated
+image path, and Nixpacks is documented for existing deployments. All three
+paths use the same runtime-neutral contract: add dotenc to the existing
+application image and wrap the existing command.
 
 ## Vercel helpers
 
@@ -170,7 +177,6 @@ Planned helpers:
 - `@dotenc/vercel`
 - `dotenc vercel build`
 - `dotenc vercel doctor`
-- `ghcr.io/dotenc/vercel-builder`
 
 Candidate features:
 
@@ -201,7 +207,6 @@ Planned helpers:
 - `netlify-plugin-dotenc`
 - `@dotenc/netlify`
 - `dotenc netlify doctor`
-- `ghcr.io/dotenc/netlify-builder`
 
 Candidate plugin features:
 
@@ -241,7 +246,6 @@ Planned helpers:
 - `dotenc cloudflare worker deploy`
 - `dotenc cloudflare secrets sync`
 - `dotenc cloudflare doctor`
-- `ghcr.io/dotenc/cloudflare-builder`
 
 Candidate features:
 

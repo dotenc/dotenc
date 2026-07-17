@@ -215,6 +215,7 @@ jobs:
           fi
 
   publish-cli-image:
+    name: Publish CLI image (${{ matrix.variant }})
     needs: [check-version, build-and-release]
     if: >-
       always() &&
@@ -227,6 +228,18 @@ jobs:
         )
       )
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: debian
+            target: runtime
+            suffix: ""
+            rolling: latest
+          - variant: alpine
+            target: runtime-alpine
+            suffix: -alpine
+            rolling: alpine
     permissions:
       contents: read
       packages: write
@@ -250,15 +263,16 @@ jobs:
         with:
           images: ghcr.io/dotenc/cli
           tags: |
-            type=raw,value=${{ needs.check-version.outputs.version }},priority=300
-            type=raw,value=v${{ needs.check-version.outputs.version }},priority=250
-            type=raw,value=latest,priority=200
+            type=raw,value=${{ needs.check-version.outputs.version }}${{ matrix.suffix }},priority=300
+            type=raw,value=v${{ needs.check-version.outputs.version }}${{ matrix.suffix }},priority=250
+            type=raw,value=${{ matrix.rolling }},priority=200
 
-      - name: Build and publish CLI image
+      - name: Build and publish CLI image (${{ matrix.variant }})
         uses: docker/build-push-action@v6
         with:
           context: .
           file: cli/Dockerfile
+          target: ${{ matrix.target }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
