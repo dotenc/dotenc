@@ -1,14 +1,35 @@
 # Coolify runbook
 
 This runbook covers Git-based Coolify deployments that use encrypted dotenc
-environments. It is intentionally application-runtime agnostic: keep the
-application's existing build and start commands, then decide whether dotenc
-should wrap the build command, the start command, or both.
+environments. Choose this path when Coolify checks out the repository, builds
+the application image, and runs the resulting container.
 
 Give Coolify its own dotenc identity. Do not reuse a developer, GitHub Actions,
 or another provider key.
 
-## Choose the deployment path
+## When to use this
+
+Use this runbook when a Coolify application needs encrypted configuration:
+
+- at runtime, before starting a long-running server or worker
+- at build time, for private dependencies, code generation, or other protected
+  build inputs
+- at both stages when the build and running application each need encrypted
+  configuration
+
+Runtime decryption is the recommended default for server applications because
+the provider key stays out of the image build. Build-time decryption should be
+limited to builds that genuinely need the values. Client-side and static builds
+must only receive values that are intentionally public because frameworks can
+inline build-time values into browser-visible output.
+
+The integration is application-runtime agnostic. Keep the application's
+existing base image and build and start commands; the examples below only add
+the dotenc CLI and wrap the stage that needs encrypted configuration.
+
+## Deploy with Coolify
+
+### Choose a deployment path
 
 | Path | Best for | dotenc integration |
 | --- | --- | --- |
@@ -20,7 +41,7 @@ The Dockerfile path is the recommended default. Railpack is the preferred
 generated-image path when it is available. Nixpacks remains a compatibility
 path.
 
-## 1. Create a dedicated Coolify key
+### 1. Create a dedicated Coolify key
 
 Create a key specifically for the Coolify application:
 
@@ -45,7 +66,7 @@ base64 < coolify_key | tr -d '\n'
 rm coolify_key coolify_key.pub
 ```
 
-## 2. Prefer runtime decryption for server applications
+### 2. Add dotenc to the application image
 
 Runtime decryption keeps the provider key out of the image build. The final
 image must contain:
@@ -98,7 +119,7 @@ CMD ["dotenc", "run", "--strict", "-e", "production", "sh", "-c", "<start-comman
 Do not copy the Alpine/musl binary into a glibc image, or the glibc binary into
 an Alpine image.
 
-## 3. Configure Coolify runtime variables
+### 3. Configure Coolify runtime variables
 
 Create these variables in the Coolify application:
 
@@ -189,6 +210,22 @@ exec dotenc run --strict -e "$environment" "$@"
   production.
 - Rotate the Coolify key and affected environment values if build logs, image
   layers, or the Coolify server may have exposed the key.
+
+## Troubleshooting
+
+- `dotenc: not found`: confirm that the final application image copies
+  `/usr/local/bin/dotenc` from the CLI image and keeps it on `PATH`.
+- `No private keys found`: confirm that `DOTENC_PRIVATE_KEY_BASE64` is enabled
+  for the stage that runs dotenc and that Coolify stores the value literally.
+- `Environment not found`: confirm that the selected `.env.*.enc` file is
+  committed and its environment name matches the value passed to `-e`.
+- `Permission denied`: the Coolify public key exists in `.dotenc/`, but it has
+  not been granted to the selected encrypted environment.
+- The binary exists but does not start: use the default CLI image for glibc
+  application images and the `-alpine` CLI image for musl-based images.
+- The build succeeds but the container fails at startup: enable **Runtime
+  Variable** for the provider key and confirm that dotenc wraps the existing
+  start command.
 
 ## References
 
