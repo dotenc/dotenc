@@ -9,18 +9,7 @@
 
 ## 30-Second Example
 
-```bash
-dotenc init            # pick your SSH key, choose a name
-dotenc env edit alice  # add your personal secrets
-dotenc dev npm start   # run with your encrypted env
-```
-
 ![Animated terminal demo showing a Node.js app, dotenc env edit development in nano, and dotenc dev injecting the encrypted greeting](https://raw.githubusercontent.com/dotenc/dotenc/main/assets/demos/quickstart.gif)
-
-Encrypted `.env.alice.enc` committed.
-No external services.
-Uses your existing SSH keys.
-Done.
 
 ## Features
 
@@ -33,10 +22,24 @@ Done.
 - 🔄 Automatic data key rotation on edits
 - 🛡️ Supports both RSA and Ed25519 SSH keys
 
+## Getting Started
+
+```bash
+dotenc init            # pick your SSH key, choose a name
+dotenc env edit alice  # add your personal secrets
+dotenc dev npm start   # run with your encrypted env
+```
+
+Encrypted `.env.alice.enc` committed.
+No external services.
+Uses your existing SSH keys.
+Done.
+
 ## Table of Contents
 
 - [30-Second Example](#30-second-example)
 - [Features](#features)
+- [Getting Started](#getting-started)
 - [Why?](#why)
 - [Security Model](#security-model)
 - [How It Works](#how-it-works)
@@ -325,13 +328,13 @@ Now, Alice will be able to decrypt the `development` and `test` environments usi
 
 ### Revoking access from a team member
 
+![Animated terminal demo showing dotenc revoking a team member's access and listing the remaining authorized user](https://raw.githubusercontent.com/dotenc/dotenc/main/assets/demos/offboarding.gif)
+
 To fully offboard a team member (e.g., John), use `auth purge`:
 
 ```bash
 dotenc auth purge john --yes
 ```
-
-![Animated terminal demo showing dotenc revoking a team member's access and listing the remaining authorized user](https://raw.githubusercontent.com/dotenc/dotenc/main/assets/demos/offboarding.gif)
 
 This revokes and re-encrypts every affected environment, then removes his public key file. Then, commit your changes:
 
