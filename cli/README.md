@@ -17,7 +17,7 @@
 - 👤 Personal encrypted environments per developer
 - 🔄 Automatic data key rotation on edits
 - 🛡️ Supports both RSA and Ed25519 SSH keys
-- 🤖 Ready for the AI era — check out the official [dotenc skill](https://www.skills.sh/dotenc/dotenc/dotenc)
+- 🤖 Ready for the AI era — check out the official [dotenc skill](https://www.skills.sh/dotenc/skills/dotenc)
 
 ## Getting Started
 

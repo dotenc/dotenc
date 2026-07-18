@@ -16,7 +16,6 @@ Agent work here should preserve:
 - `vscode-extension/` — VS Code extension that depends on the installed `dotenc` CLI
 - `website/` — marketing/docs website build
 - `scripts/` — coverage merge/summary scripts used by root test coverage workflows
-- `skills/dotenc/` — operational skill docs for agents/users consuming dotenc in other repos
 - `docs/` — implementation references and deep dives (read only when relevant)
 
 Notes:
@@ -106,7 +105,7 @@ Coverage:
 - `cli/README.md` — CLI-focused usage and distribution context
 - `SECURITY.md` — full cryptographic design, threat model, key material handling, and vulnerability reporting
 - `vscode-extension/README.md` — extension behavior, prerequisites, settings
-- `skills/dotenc/SKILL.md` — operational dotenc workflows for agents/users consuming dotenc in other repos; do not follow this skill for dotenc development work — inspect and modify source code directly instead
+- The official operational skill is maintained separately in `dotenc/skills`; for dotenc development work, inspect and modify this repository directly instead of following consumer workflows from that skill.
 - `scripts/coverage-summary.sh` and `scripts/merge-lcov.ts` — coverage aggregation details
 - `docs/` — implementation references and deep dives (e.g. `docs/NESTING.md`)
 
