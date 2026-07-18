@@ -15,6 +15,8 @@ dotenc env edit alice  # add your personal secrets
 dotenc dev npm start   # run with your encrypted env
 ```
 
+![Animated terminal demo showing a Node.js app, dotenc env edit development in nano, and dotenc dev injecting the encrypted greeting](https://raw.githubusercontent.com/dotenc/dotenc/main/assets/demos/quickstart.gif)
+
 Encrypted `.env.alice.enc` committed.
 No external services.
 Uses your existing SSH keys.
@@ -328,6 +330,8 @@ To fully offboard a team member (e.g., John), use `auth purge`:
 ```bash
 dotenc auth purge john --yes
 ```
+
+![Animated terminal demo showing dotenc revoking a team member's access and listing the remaining authorized user](https://raw.githubusercontent.com/dotenc/dotenc/main/assets/demos/offboarding.gif)
 
 This revokes and re-encrypts every affected environment, then removes his public key file. Then, commit your changes:
 

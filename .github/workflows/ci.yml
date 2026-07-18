@@ -24,6 +24,9 @@ jobs:
       - name: Lint
         run: bun run lint
 
+      - name: Validate README demos
+        run: bun run readme:demos:check
+
       - name: Validate GitHub Action scripts
         run: bash -n actions/_lib/*.sh scripts/sync-action-wrappers.sh
 

@@ -9,6 +9,8 @@
 		"ignoreUnknown": false,
 		"includes": [
 			"cli/src/**",
+			"scripts/readme-demos/**/*.ts",
+			"scripts/readme-demos/*.json",
 			"website/src/**/*.ts",
 			"website/src/**/*.js",
 			"website/src/**/*.html",
