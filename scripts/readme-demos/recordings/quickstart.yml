@@ -19,14 +19,15 @@ config:
     style:
       backgroundColor: "#0d1117"
       border: "1px #30363d solid"
-      boxShadow: "0 0 0 8px #0d1117"
+      borderRadius: "0px"
+      boxShadow: none
       margin: "0px"
   watermark:
     imagePath: null
     style: {}
   cursorStyle: bar
   fontFamily: "SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace"
-  fontSize: 15
+  fontSize: 22
   lineHeight: 1.3
   letterSpacing: 0
   theme:

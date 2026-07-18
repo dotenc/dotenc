@@ -9,6 +9,7 @@ normal installs, or CI rendering.
 
 - Bun 1.3.10
 - Node 16 active on `PATH` (for Terminalizer's native PTY)
+- WebP tools (`gif2webp` and `webpmux`; installed by Homebrew's `webp` formula)
 - `git`, `ssh-keygen`, `nano`, and `expect`
 - A real terminal/TTY when recording
 
@@ -27,9 +28,9 @@ bun run readme:demos:record
 bun run readme:demos:check
 ```
 
-`record` creates the scripted scene, sanitizes its YAML, renders the GIF,
-optimizes it locally with pinned `gifsicle`, and removes the temporary home,
-repository, keys, and renderer data. To render
+`record` creates the scripted scene, sanitizes its YAML, renders a high-density
+lossless animated WebP, and removes the temporary home, repository, keys, and
+renderer data. To render
 the committed sanitized recordings without recording again:
 
 ```bash
@@ -46,14 +47,14 @@ The committed outputs are:
 
 - `scripts/readme-demos/recordings/*.yml` — sanitized, reviewable Terminalizer
   recordings
-- `assets/demos/*.gif` — rendered README assets
+- `assets/demos/*.webp` — rendered README assets
 
 ## Safety rules
 
 - Never run `terminalizer share`; it uploads the complete recording YAML.
 - Keep `--skip-sharing` on every recording command.
 - Only use the generated temporary SSH keys and obviously fake values.
-- Review recording diffs and inspect every GIF frame before committing.
-- Keep each asset under 3 MiB and within 1440×810 pixels.
+- Review recording diffs and inspect every WebP frame before committing.
+- Keep each asset under 3 MiB and within 2200×1200 pixels.
 - Rendering is manual. CI runs the cheap checker, but does not install or run
   Terminalizer.

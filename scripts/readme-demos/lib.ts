@@ -17,12 +17,6 @@ export const terminalizerBin = path.join(
 	".bin",
 	"terminalizer",
 )
-export const gifsicleBin = path.join(
-	demoDir,
-	"node_modules",
-	".bin",
-	"gifsicle",
-)
 
 const nodeVersionPattern = /^v16\./
 
@@ -75,10 +69,21 @@ export const assertTerminalizer = (env: NodeJS.ProcessEnv) => {
 			`Expected Terminalizer 0.12.0, received ${version.stdout || version.stderr || "no version"}.`,
 		)
 	}
+}
 
-	if (!existsSync(gifsicleBin)) {
-		throw new Error("gifsicle 7.0.1 is not installed with the demo tooling.")
+export const getWebPTools = () => ({
+	gif2webp: resolveAuthoringTool("gif2webp"),
+	webpmux: resolveAuthoringTool("webpmux"),
+})
+
+const resolveAuthoringTool = (command: "gif2webp" | "webpmux") => {
+	const executable = Bun.which(command)
+	if (!executable) {
+		throw new Error(
+			`${command} is required to render README demos. Install the WebP tools before rendering.`,
+		)
 	}
+	return executable
 }
 
 export const createToolEnvironment = async (
@@ -172,7 +177,7 @@ export const ensureOutputDirectories = async () => {
 export const recordingPath = (scene: Scene) =>
 	path.join(recordingsDir, `${scene}.yml`)
 
-export const assetPath = (scene: Scene) => path.join(assetsDir, `${scene}.gif`)
+export const assetPath = (scene: Scene) => path.join(assetsDir, `${scene}.webp`)
 
 export const removeRendererData = async () => {
 	await fs

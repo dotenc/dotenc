@@ -9,12 +9,10 @@
 		"check": "bun run check.ts"
 	},
 	"dependencies": {
-		"gifsicle": "7.0.1",
 		"terminalizer": "0.12.0"
 	},
 	"trustedDependencies": [
 		"@homebridge/node-pty-prebuilt-multiarch",
-		"electron",
-		"gifsicle"
+		"electron"
 	]
 }

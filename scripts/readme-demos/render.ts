@@ -5,9 +5,10 @@ import path from "node:path"
 import {
 	assertTerminalizer,
 	assetPath,
+	assetsDir,
 	createToolEnvironment,
 	ensureOutputDirectories,
-	gifsicleBin,
+	getWebPTools,
 	parseSceneSelection,
 	recordingPath,
 	removeRendererData,
@@ -21,11 +22,14 @@ export const renderScene = async (scene: Scene, temporaryHome?: string) => {
 	const rendererHome =
 		temporaryHome ??
 		(await fs.mkdtemp(path.join(os.tmpdir(), "dotenc-render-")))
-	const env = await createToolEnvironment(rendererHome)
-	assertTerminalizer(env)
 	const rawAsset = path.join(rendererHome, `${scene}.raw.gif`)
+	const encodedAsset = path.join(rendererHome, `${scene}.encoded.webp`)
+	const stagedAsset = path.join(assetsDir, `.${scene}.${process.pid}.tmp.webp`)
 
 	try {
+		const env = await createToolEnvironment(rendererHome)
+		assertTerminalizer(env)
+		const webPTools = getWebPTools()
 		await runTerminalizer(
 			[
 				"render",
@@ -40,22 +44,31 @@ export const renderScene = async (scene: Scene, temporaryHome?: string) => {
 			env,
 		)
 		await runCommand(
-			gifsicleBin,
+			webPTools.gif2webp,
 			[
-				"--optimize=3",
-				"--resize-fit",
-				"1440x810",
-				"--colors",
-				"128",
+				"-q",
+				"100",
+				"-m",
+				"4",
+				"-mt",
+				"-min_size",
 				rawAsset,
-				"--output",
-				assetPath(scene),
+				"-o",
+				encodedAsset,
 			],
 			env,
 		)
-		await fs.chmod(assetPath(scene), 0o644)
+		await runCommand(
+			webPTools.webpmux,
+			["-set", "bgcolor", "255,13,17,23", encodedAsset, "-o", stagedAsset],
+			env,
+		)
+		await fs.chmod(stagedAsset, 0o644)
+		await fs.rename(stagedAsset, assetPath(scene))
 	} finally {
 		await fs.rm(rawAsset, { force: true }).catch(() => {})
+		await fs.rm(encodedAsset, { force: true }).catch(() => {})
+		await fs.rm(stagedAsset, { force: true }).catch(() => {})
 		await removeRendererData()
 		if (ownsHome) await fs.rm(rendererHome, { recursive: true, force: true })
 	}

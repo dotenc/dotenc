@@ -1,4 +1,4 @@
-# ![dotenc — animated terminal demo showing a Node.js app, dotenc env edit development in nano, and dotenc dev injecting the encrypted greeting](https://raw.githubusercontent.com/dotenc/dotenc/main/assets/demos/quickstart.gif)
+# ![dotenc — animated terminal demo showing a Node.js app, dotenc env edit development in nano, and dotenc dev injecting the encrypted greeting](https://raw.githubusercontent.com/dotenc/dotenc/main/assets/demos/quickstart.webp)
 
 [![NPM Version][npm-image]][npm-url]
 [![Github License][license-image]](/LICENSE)
@@ -17,7 +17,7 @@
 - 👤 Personal encrypted environments per developer
 - 🔄 Automatic data key rotation on edits
 - 🛡️ Supports both RSA and Ed25519 SSH keys
-- 🤖 [AI-native workflows with a first-party skill for coding agents](https://skills.sh/dotenc/dotenc/dotenc)
+- 🤖 Ready for the AI era — check out the official [dotenc skill](https://www.skills.sh/dotenc/dotenc/dotenc)
 
 ## Getting Started
 
