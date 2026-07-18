@@ -3,7 +3,7 @@ import { existsSync } from "node:fs"
 import fs from "node:fs/promises"
 import path from "node:path"
 
-export const scenes = ["quickstart", "offboarding"] as const
+export const scenes = ["quickstart"] as const
 export type Scene = (typeof scenes)[number]
 
 export const demoDir = import.meta.dir

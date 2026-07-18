@@ -127,30 +127,7 @@ const quickstart = async () => {
 	await devCommand("node", ["app.js"])
 }
 
-const offboarding = async () => {
-	await initializeFixture()
-	await generateKey("id_john", "john@dotenc-demo.invalid")
-	await runCli(["init", "--name", "alice", "--private-key", "id_ed25519"], true)
-	await runCli(
-		[
-			"key",
-			"add",
-			"john",
-			"--from-ssh",
-			path.join(demoHome, ".ssh", "id_john"),
-		],
-		true,
-	)
-	await runCli(["auth", "grant", "development", "john"], true)
-
-	await showCommand("dotenc auth purge john --yes")
-	await runCli(["auth", "purge", "john", "--yes"])
-
-	await showCommand("dotenc auth list development")
-	await runCli(["auth", "list", "development"])
-}
-
-const scenes: Record<Scene, () => Promise<void>> = { quickstart, offboarding }
+const scenes: Record<Scene, () => Promise<void>> = { quickstart }
 
 try {
 	await scenes[scene]()

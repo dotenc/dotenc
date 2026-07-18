@@ -324,8 +324,6 @@ Now, Alice will be able to decrypt the `development` and `test` environments usi
 
 ### Revoking access from a team member
 
-![Animated terminal demo showing dotenc revoking a team member's access and listing the remaining authorized user](https://raw.githubusercontent.com/dotenc/dotenc/main/assets/demos/offboarding.gif)
-
 To fully offboard a team member (e.g., John), use `auth purge`:
 
 ```bash

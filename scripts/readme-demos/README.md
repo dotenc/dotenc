@@ -27,8 +27,8 @@ bun run readme:demos:record
 bun run readme:demos:check
 ```
 
-`record` creates both scripted scenes, sanitizes their YAML, renders the GIFs,
-optimizes them locally with pinned `gifsicle`, and removes the temporary home,
+`record` creates the scripted scene, sanitizes its YAML, renders the GIF,
+optimizes it locally with pinned `gifsicle`, and removes the temporary home,
 repository, keys, and renderer data. To render
 the committed sanitized recordings without recording again:
 

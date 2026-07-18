@@ -35,11 +35,6 @@ const expectedRecordingText: Record<Scene, string[]> = {
 		"dotenc dev node app.js",
 		"Hello from dotenc!",
 	],
-	offboarding: [
-		"dotenc auth purge john --yes",
-		"Offboarding complete. 1 environment updated, 0 failed.",
-		"dotenc auth list development",
-	],
 }
 
 for (const scene of parseSceneSelection("all")) {
@@ -47,7 +42,7 @@ for (const scene of parseSceneSelection("all")) {
 }
 
 console.log(
-	`Verified ${scenes.length} sanitized README demo recordings and GIFs.`,
+	`Verified ${scenes.length} sanitized README demo scene${scenes.length === 1 ? "" : "s"}.`,
 )
 
 async function checkScene(scene: Scene) {
@@ -71,7 +66,7 @@ async function checkScene(scene: Scene) {
 			)
 		}
 	}
-	if (scene === "quickstart") assertNanoTyping(parsedRecording.records)
+	assertNanoTyping(parsedRecording.records)
 
 	const gif = await fs.readFile(assetPath(scene))
 	const signature = gif.subarray(0, 6).toString("ascii")
