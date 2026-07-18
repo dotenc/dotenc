@@ -1,0 +1,278 @@
+# The configurations that used for the recording, feel free to edit them
+config:
+
+  # Terminalizer is an authoring-only dependency. Keep this configuration fixed so
+  # regenerated README assets have stable dimensions, colors, and timing.
+  command: bun scene.ts
+  cwd: .
+  env:
+    recording: true
+  cols: 76
+  rows: 12
+  repeat: 0
+  quality: 88
+  frameDelay: auto
+  maxIdleTime: 3000
+  frameBox:
+    type: solid
+    title: dotenc
+    style:
+      backgroundColor: "#0d1117"
+      border: "1px #30363d solid"
+      boxShadow: none
+      margin: "0px"
+  watermark:
+    imagePath: null
+    style: {}
+  cursorStyle: bar
+  fontFamily: "SFMono-Regular, Consolas, Liberation Mono, Menlo, monospace"
+  fontSize: 15
+  lineHeight: 1.3
+  letterSpacing: 0
+  theme:
+    background: "#0d1117"
+    foreground: "#c9d1d9"
+    cursor: "#58a6ff"
+    black: "#484f58"
+    red: "#ff7b72"
+    green: "#3fb950"
+    yellow: "#d29922"
+    blue: "#58a6ff"
+    magenta: "#bc8cff"
+    cyan: "#39c5cf"
+    white: "#b1bac4"
+    brightBlack: "#6e7681"
+    brightRed: "#ffa198"
+    brightGreen: "#56d364"
+    brightYellow: "#e3b341"
+    brightBlue: "#79c0ff"
+    brightMagenta: "#d2a8ff"
+    brightCyan: "#56d4dd"
+    brightWhite: "#f0f6fc"
+
+# Records, feel free to edit them
+records:
+  - delay: 3000
+    content: "\e[2J\e[H\e[32m$\e[0m \e[36m"
+  - delay: 500
+    content: c
+  - delay: 55
+    content: a
+  - delay: 75
+    content: t
+  - delay: 95
+    content: ' '
+  - delay: 140
+    content: a
+  - delay: 75
+    content: p
+  - delay: 95
+    content: p
+  - delay: 55
+    content: .
+  - delay: 95
+    content: j
+  - delay: 95
+    content: s
+  - delay: 500
+    content: "\e[0m\r\n"
+  - delay: 250
+    content: "console.log(process.env.GREETING ?? \"No greeting\")\r\n"
+  - delay: 1400
+    content: "\r\n\e[32m$\e[0m \e[36m"
+  - delay: 500
+    content: 'n'
+  - delay: 55
+    content: o
+  - delay: 75
+    content: d
+  - delay: 95
+    content: e
+  - delay: 55
+    content: ' '
+  - delay: 140
+    content: a
+  - delay: 95
+    content: p
+  - delay: 55
+    content: p
+  - delay: 75
+    content: .
+  - delay: 95
+    content: j
+  - delay: 55
+    content: s
+  - delay: 500
+    content: "\e[0m\r\n"
+  - delay: 250
+    content: "No greeting\r\n"
+  - delay: 1400
+    content: "\r\n\e[32m$\e[0m \e[36m"
+  - delay: 500
+    content: d
+  - delay: 55
+    content: o
+  - delay: 75
+    content: t
+  - delay: 95
+    content: e
+  - delay: 55
+    content: 'n'
+  - delay: 75
+    content: c
+  - delay: 95
+    content: ' '
+  - delay: 140
+    content: e
+  - delay: 75
+    content: 'n'
+  - delay: 95
+    content: v
+  - delay: 55
+    content: ' '
+  - delay: 140
+    content: e
+  - delay: 95
+    content: d
+  - delay: 55
+    content: i
+  - delay: 75
+    content: t
+  - delay: 95
+    content: ' '
+  - delay: 140
+    content: d
+  - delay: 75
+    content: e
+  - delay: 95
+    content: v
+  - delay: 55
+    content: e
+  - delay: 75
+    content: l
+  - delay: 95
+    content: o
+  - delay: 55
+    content: p
+  - delay: 75
+    content: m
+  - delay: 95
+    content: e
+  - delay: 55
+    content: 'n'
+  - delay: 75
+    content: t
+  - delay: 500
+    content: "\e[0m\r\n"
+  - delay: 500
+    content: "\e[?1049h\e[1;12r\e[1;1H\e[J\e[7m  UW PICO 5.09                         New Buffer                           \e[27m\e[3;1H\e[12;1H                                                                           \e[12;31H\e[7m[ Reading file ]\e[27m\e[12;1H                                                                           \e[12;31H\e[7m[ Read 9 lines ]\e[27m\e[1;1H\e[J\e[7m  UW PICO 5.09                   File: .env.development                     \e[27m\e[3;1H# Use 'dotenc auth grant' and/or 'dotenc auth revoke' to manage access.\e[4;1H# Make sure to save your changes before closing the editor.\e[5;1H# ---\e[6;1H# development environment\e[7;1H"
+  - delay: 1400
+    content: "\e[1;30H\e[7mFile: .env.development               Modified\e[27m\e[8;1HGR"
+  - delay: 75
+    content: E
+  - delay: 95
+    content: E
+  - delay: 55
+    content: T
+  - delay: 75
+    content: I
+  - delay: 95
+    content: 'N'
+  - delay: 55
+    content: G
+  - delay: 75
+    content: '='
+  - delay: 140
+    content: H
+  - delay: 55
+    content: e
+  - delay: 75
+    content: l
+  - delay: 95
+    content: l
+  - delay: 55
+    content: o
+  - delay: 75
+    content: "\e[8;16H"
+  - delay: 140
+    content: f
+  - delay: 55
+    content: r
+  - delay: 75
+    content: o
+  - delay: 95
+    content: m
+  - delay: 55
+    content: "\e[8;21H"
+  - delay: 140
+    content: d
+  - delay: 95
+    content: o
+  - delay: 55
+    content: t
+  - delay: 75
+    content: e
+  - delay: 95
+    content: 'n'
+  - delay: 55
+    content: c
+  - delay: 75
+    content: '!'
+  - delay: 1400
+    content: "\e[12;1H                                                                           \e[12;1H\e[7mFile Name to write :                                                       \e[12;22H\e[27m"
+  - delay: 500
+    content: "\e[7m.env.development                                      \e[12;38H\e[27m\e[12;1H                                                                           \e[12;32H\e[7m[ Writing... ]\e[27m\e[12;1H                                                                           \e[12;30H\e[7m[ Wrote 11 lines ]\e[27m\e[1;30H\e[7m    File: .env.development                   \e[27m\e[8;28H"
+  - delay: 900
+    content: "\e[11;1H\e[K\e[12;1H\e[K\e[?1049l"
+  - delay: 55
+    content: "\r\nEncrypted \e[36mdevelopment\e[39m environment and saved it to \e[90m.env.development.enc\e[39m.\r\n"
+  - delay: 1400
+    content: "\r\n\e[32m$\e[0m \e[36m"
+  - delay: 500
+    content: d
+  - delay: 55
+    content: o
+  - delay: 75
+    content: t
+  - delay: 95
+    content: e
+  - delay: 55
+    content: 'n'
+  - delay: 75
+    content: c
+  - delay: 95
+    content: ' '
+  - delay: 140
+    content: d
+  - delay: 75
+    content: e
+  - delay: 95
+    content: v
+  - delay: 55
+    content: ' '
+  - delay: 140
+    content: 'n'
+  - delay: 95
+    content: o
+  - delay: 55
+    content: d
+  - delay: 75
+    content: e
+  - delay: 95
+    content: ' '
+  - delay: 140
+    content: a
+  - delay: 75
+    content: p
+  - delay: 95
+    content: p
+  - delay: 55
+    content: .
+  - delay: 95
+    content: j
+  - delay: 95
+    content: s
+  - delay: 500
+    content: "\e[0m\r\n"
+  - delay: 500
+    content: "Hello from dotenc!\r\n"
