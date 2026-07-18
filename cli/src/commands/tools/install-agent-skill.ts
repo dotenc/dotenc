@@ -10,7 +10,7 @@ type Options = {
 
 type Scope = "local" | "global"
 
-const SKILL_SOURCE = "dotenc/dotenc"
+const SKILL_SOURCE = "dotenc/skills"
 const SKILL_NAME = "dotenc"
 const NON_INTERACTIVE_SCOPE_FALLBACK =
 	"Install scope prompt is unavailable in non-interactive mode."
