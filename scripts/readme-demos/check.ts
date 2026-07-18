@@ -11,8 +11,8 @@ import {
 } from "./lib"
 
 const maxBytes = 3 * 1024 * 1024
-const maxWidth = 960
-const maxHeight = 540
+const maxWidth = 1440
+const maxHeight = 810
 const escapeCharacter = String.fromCharCode(27)
 const ansiControlSequence = new RegExp(
 	`${escapeCharacter}\\[[0-?]*[ -/]*[@-~]`,

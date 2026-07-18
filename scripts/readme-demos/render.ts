@@ -44,7 +44,7 @@ export const renderScene = async (scene: Scene, temporaryHome?: string) => {
 			[
 				"--optimize=3",
 				"--resize-fit",
-				"960x540",
+				"1440x810",
 				"--colors",
 				"128",
 				rawAsset,

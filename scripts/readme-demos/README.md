@@ -54,6 +54,6 @@ The committed outputs are:
 - Keep `--skip-sharing` on every recording command.
 - Only use the generated temporary SSH keys and obviously fake values.
 - Review recording diffs and inspect every GIF frame before committing.
-- Keep each asset under 3 MiB and within 960×540 pixels.
+- Keep each asset under 3 MiB and within 1440×810 pixels.
 - Rendering is manual. CI runs the cheap checker, but does not install or run
   Terminalizer.
