@@ -14,10 +14,10 @@ jobs:
       version: ${{ steps.version-check.outputs.version }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org/"
@@ -25,34 +25,38 @@ jobs:
       - name: Check if version has been bumped
         id: version-check
         run: |
-          VERSION=$(node -p "require('./cli/package.json').version")
-          NPM_VERSION=$(npm view @dotenc/cli version 2>/dev/null || echo "0.0.0")
+          VERSION="$(node -p "require('./cli/package.json').version")"
+          NPM_VERSION="$(npm view @dotenc/cli version 2>/dev/null || echo "0.0.0")"
 
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
           if [ "$VERSION" = "$NPM_VERSION" ]; then
             echo "Version has not been bumped."
-            echo "bumped=false" >> $GITHUB_OUTPUT
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
           else
             echo "Version has been bumped to $VERSION."
-            echo "bumped=true" >> $GITHUB_OUTPUT
+            echo "bumped=true" >> "$GITHUB_OUTPUT"
           fi
 
   build-and-release:
     needs: check-version
     if: github.event_name == 'push' && needs.check-version.outputs.bumped == 'true'
     runs-on: ubuntu-latest
+    outputs:
+      linux_package_input_artifact_id: ${{ steps.linux-package-inputs.outputs.artifact-id }}
     permissions:
       contents: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
 
       - name: Install dependencies
-        run: cd cli && bun install
+        run: bun install --frozen-lockfile
 
       - name: Build binaries
         run: cd cli && bun run build:binary
@@ -60,13 +64,37 @@ jobs:
       - name: Package archives
         run: |
           cd cli/dist
-          for target in darwin-arm64 darwin-x64 linux-x64 linux-arm64; do
+          for target in darwin-arm64 darwin-x64 linux-x64 linux-arm64 linux-x64-musl linux-arm64-musl; do
             tar -czf "dotenc-${target}.tar.gz" "dotenc-${target}"
           done
           zip "dotenc-windows-x64.zip" "dotenc-windows-x64.exe"
+          sha256sum \
+            dotenc-darwin-arm64.tar.gz \
+            dotenc-darwin-x64.tar.gz \
+            dotenc-linux-x64.tar.gz \
+            dotenc-linux-arm64.tar.gz \
+            dotenc-linux-x64-musl.tar.gz \
+            dotenc-linux-arm64-musl.tar.gz \
+            dotenc-windows-x64.zip \
+            > SHA256SUMS
+
+      - name: Seal Linux package inputs for this workflow run
+        id: linux-package-inputs
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: linux-package-inputs-v${{ needs.check-version.outputs.version }}-attempt-${{ github.run_attempt }}
+          path: |
+            cli/dist/dotenc-linux-x64.tar.gz
+            cli/dist/dotenc-linux-arm64.tar.gz
+            cli/dist/dotenc-linux-x64-musl.tar.gz
+            cli/dist/dotenc-linux-arm64-musl.tar.gz
+            cli/dist/SHA256SUMS
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: v${{ needs.check-version.outputs.version }}
           name: v${{ needs.check-version.outputs.version }}
@@ -76,7 +104,10 @@ jobs:
             cli/dist/dotenc-darwin-x64.tar.gz
             cli/dist/dotenc-linux-x64.tar.gz
             cli/dist/dotenc-linux-arm64.tar.gz
+            cli/dist/dotenc-linux-x64-musl.tar.gz
+            cli/dist/dotenc-linux-arm64-musl.tar.gz
             cli/dist/dotenc-windows-x64.zip
+            cli/dist/SHA256SUMS
 
       - name: Update Homebrew tap
         env:
@@ -285,3 +316,34 @@ jobs:
             VCS_REF=${{ github.sha }}
           provenance: true
           sbom: true
+
+  publish-linux-packages:
+    name: Publish Linux packages
+    needs: [check-version, build-and-release]
+    if: >-
+      github.event_name == 'push' &&
+      vars.LINUX_PACKAGES_ENABLED == 'true' &&
+      needs.check-version.outputs.bumped == 'true' &&
+      needs.build-and-release.result == 'success'
+    permissions:
+      actions: read
+      contents: write
+    uses: ./.github/workflows/publish-linux-packages.yml
+    with:
+      version: ${{ needs.check-version.outputs.version }}
+      package_input_artifact_id: ${{ needs.build-and-release.outputs.linux_package_input_artifact_id }}
+
+  publish-aur-package:
+    name: Publish AUR package
+    needs: [check-version, build-and-release]
+    if: >-
+      github.event_name == 'push' &&
+      vars.AUR_PACKAGES_ENABLED == 'true' &&
+      needs.check-version.outputs.bumped == 'true' &&
+      needs.build-and-release.result == 'success'
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/publish-aur-package.yml
+    with:
+      version: ${{ needs.check-version.outputs.version }}

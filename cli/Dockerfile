@@ -20,7 +20,7 @@ ARG TARGETARCH
 RUN set -eux; \
 	arch="${TARGETARCH:-$(uname -m)}"; \
 	case "$arch" in \
-		amd64|x86_64) target="bun-linux-x64" ;; \
+		amd64|x86_64) target="bun-linux-x64-baseline" ;; \
 		arm64|aarch64) target="bun-linux-arm64" ;; \
 		*) echo "Unsupported target architecture: $arch" >&2; exit 1 ;; \
 	esac; \
@@ -33,7 +33,7 @@ ARG TARGETARCH
 RUN set -eux; \
 	arch="${TARGETARCH:-$(uname -m)}"; \
 	case "$arch" in \
-		amd64|x86_64) target="bun-linux-x64-musl" ;; \
+		amd64|x86_64) target="bun-linux-x64-musl-baseline" ;; \
 		arm64|aarch64) target="bun-linux-arm64-musl" ;; \
 		*) echo "Unsupported target architecture: $arch" >&2; exit 1 ;; \
 	esac; \

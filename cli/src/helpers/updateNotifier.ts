@@ -3,7 +3,13 @@ import { box } from "consola/utils"
 import pkg from "../../package.json"
 import { logger } from "../ui/logger"
 import { getHomeConfig, setHomeConfig } from "./homeConfig"
-import { fetchLatestVersion, isVersionNewer } from "./update"
+import {
+	detectInstallMethod,
+	fetchLatestVersion,
+	type InstallMethod,
+	isSystemInstallMethod,
+	isVersionNewer,
+} from "./update"
 
 type HomeConfig = Awaited<ReturnType<typeof getHomeConfig>>
 
@@ -14,6 +20,7 @@ type UpdateNotifierDeps = {
 	currentVersion: string
 	log: (message: string) => void
 	args: string[]
+	detectInstallMethod: () => InstallMethod
 }
 
 const UPDATE_BOX_TITLE = "UPDATE AVAILABLE"
@@ -47,6 +54,7 @@ const defaultDeps: UpdateNotifierDeps = {
 	currentVersion: pkg.version,
 	log: (message) => logger.log(message),
 	args: process.argv.slice(2),
+	detectInstallMethod,
 }
 
 const shouldCheckForUpdate = (args: string[]): boolean => args[0] === "dev"
@@ -75,6 +83,10 @@ export const maybeNotifyAboutUpdate = async (
 	}
 
 	if (!shouldCheckForUpdate(deps.args)) {
+		return
+	}
+
+	if (isSystemInstallMethod(deps.detectInstallMethod())) {
 		return
 	}
 

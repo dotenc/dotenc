@@ -1,0 +1,35 @@
+# yaml-language-server: $schema=https://nfpm.goreleaser.com/schema.json
+# Keep this file compatible with the version pinned in tools.json.
+name: dotenc
+arch: "${NFPM_ARCH}"
+platform: linux
+version: "${NFPM_VERSION}"
+version_schema: semver
+release: "1"
+section: utils
+priority: optional
+maintainer: Dotenc <security@dotenc.org>
+description: Git-native encrypted environments powered by SSH keys
+homepage: https://dotenc.org
+license: MIT
+depends:
+  - libc6 (>= 2.25)
+  - ca-certificates
+  - openssh-client
+contents:
+  - src: "${NFPM_BINARY}"
+    dst: /usr/bin/dotenc
+    expand: true
+    file_info:
+      mode: 0755
+      owner: root
+      group: root
+  - src: "${NFPM_INSTALL_MARKER}"
+    dst: /usr/share/dotenc/install-method
+    expand: true
+    file_info:
+      mode: 0644
+      owner: root
+      group: root
+deb:
+  compression: xz

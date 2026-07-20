@@ -50,6 +50,89 @@ describe("update helpers", () => {
 		expect(method).toBe("binary")
 	})
 
+	test.each([
+		"apt",
+		"rpm",
+		"apk",
+		"aur",
+	] as const)("detectInstallMethod detects %s native Linux package marker", (expectedMethod) => {
+		let readPath = ""
+		const method = detectInstallMethod({
+			execPath: "/usr/bin/dotenc",
+			argv: ["dotenc", "whoami"],
+			platform: "linux",
+			resolveRealPath: (input) => input,
+			installMethodMarkerPath: "/test/install-method",
+			readInstallMethodMarker: (filePath) => {
+				readPath = filePath
+				return ` ${expectedMethod.toUpperCase()}\n`
+			},
+		})
+
+		expect(readPath).toBe("/test/install-method")
+		expect(method).toBe(expectedMethod)
+	})
+
+	test("detectInstallMethod does not trust marker for a non-system binary", () => {
+		let reads = 0
+		const method = detectInstallMethod({
+			execPath: "/usr/local/bin/dotenc",
+			argv: ["dotenc", "whoami"],
+			platform: "linux",
+			resolveRealPath: (input) => input,
+			readInstallMethodMarker: () => {
+				reads += 1
+				return "apt"
+			},
+		})
+
+		expect(reads).toBe(0)
+		expect(method).toBe("binary")
+	})
+
+	test("detectInstallMethod ignores invalid native package marker", () => {
+		const method = detectInstallMethod({
+			execPath: "/usr/bin/dotenc",
+			argv: ["dotenc", "whoami"],
+			platform: "linux",
+			resolveRealPath: (input) => input,
+			readInstallMethodMarker: () => "pacman",
+		})
+
+		expect(method).toBe("unknown")
+	})
+
+	test("detectInstallMethod treats marker-less /usr/bin install as unknown", () => {
+		const method = detectInstallMethod({
+			execPath: "/usr/bin/dotenc",
+			argv: ["dotenc", "whoami"],
+			platform: "linux",
+			resolveRealPath: (input) => input,
+			readInstallMethodMarker: () => {
+				throw new Error("ENOENT")
+			},
+		})
+
+		expect(method).toBe("unknown")
+	})
+
+	test("detectInstallMethod does not read Linux marker on other platforms", () => {
+		let reads = 0
+		const method = detectInstallMethod({
+			execPath: "/usr/local/bin/dotenc",
+			argv: ["dotenc", "whoami"],
+			platform: "darwin",
+			resolveRealPath: (input) => input,
+			readInstallMethodMarker: () => {
+				reads += 1
+				return "apt"
+			},
+		})
+
+		expect(reads).toBe(0)
+		expect(method).toBe("binary")
+	})
+
 	test("detectInstallMethod returns unknown for local src/cli.ts runs", () => {
 		const method = detectInstallMethod({
 			execPath: "/usr/local/bin/bun",

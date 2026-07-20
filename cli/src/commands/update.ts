@@ -4,6 +4,8 @@ import {
 	detectInstallMethod,
 	GITHUB_RELEASES_URL,
 	type InstallMethod,
+	isSystemInstallMethod,
+	type SystemInstallMethod,
 } from "../helpers/update"
 
 const updateCommands: Record<
@@ -27,6 +29,28 @@ const updateCommands: Record<
 	},
 }
 
+const systemUpdateCommands: Record<
+	SystemInstallMethod,
+	{ label: string; commands: string[] }
+> = {
+	apt: {
+		label: "APT",
+		commands: ["sudo apt update && sudo apt install --only-upgrade dotenc"],
+	},
+	rpm: {
+		label: "an RPM package manager",
+		commands: ["sudo dnf upgrade dotenc", "sudo yum update dotenc"],
+	},
+	apk: {
+		label: "APK",
+		commands: ["sudo apk upgrade dotenc"],
+	},
+	aur: {
+		label: "an AUR helper",
+		commands: ["yay -Syu dotenc-bin", "paru -Syu dotenc-bin"],
+	},
+}
+
 export const _runPackageManagerCommand = (
 	command: string,
 	args: string[],
@@ -45,6 +69,20 @@ export const _runPackageManagerCommand = (
 export const updateCommand = async () => {
 	const method = detectInstallMethod()
 
+	if (isSystemInstallMethod(method)) {
+		const updater = systemUpdateCommands[method]
+		console.log(`dotenc is managed by ${updater.label}.`)
+		console.log(
+			updater.commands.length === 1
+				? "Run this command to update:"
+				: "Run the command for your system:",
+		)
+		for (const command of updater.commands) {
+			console.log(`  ${chalk.gray(command)}`)
+		}
+		return
+	}
+
 	if (method === "binary") {
 		console.log(
 			`Standalone binary detected. Download the latest release at ${chalk.cyan(GITHUB_RELEASES_URL)}.`,
@@ -55,6 +93,14 @@ export const updateCommand = async () => {
 	if (method === "unknown") {
 		console.log("Could not determine installation method automatically.")
 		console.log(`Try one of these commands:`)
+		console.log(
+			`  ${chalk.gray("sudo apt update && sudo apt install --only-upgrade dotenc")}`,
+		)
+		console.log(`  ${chalk.gray("sudo dnf upgrade dotenc")}`)
+		console.log(`  ${chalk.gray("sudo yum update dotenc")}`)
+		console.log(`  ${chalk.gray("sudo apk upgrade dotenc")}`)
+		console.log(`  ${chalk.gray("yay -Syu dotenc-bin")}`)
+		console.log(`  ${chalk.gray("paru -Syu dotenc-bin")}`)
 		console.log(`  ${chalk.gray("brew update && brew upgrade dotenc")}`)
 		console.log(`  ${chalk.gray("scoop update dotenc")}`)
 		console.log(`  ${chalk.gray("npm install -g @dotenc/cli")}`)

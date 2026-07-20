@@ -1,0 +1,427 @@
+name: Publish AUR package
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Stable dotenc version without the v prefix
+        required: true
+        type: string
+      publish:
+        description: Publish after validation when the launch gate is enabled
+        required: false
+        type: boolean
+        default: true
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Stable dotenc version without the v prefix
+        required: true
+        type: string
+      publish:
+        description: Publish after validation when the launch gate is enabled
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: aur-dotenc-bin-production
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate dotenc-bin ${{ inputs.version }}
+    runs-on: ubuntu-24.04
+    container:
+      # Official x86_64 Arch base-devel image, pinned on 2026-07-20.
+      image: docker.io/library/archlinux:base-devel@sha256:212b1e518e94ee9c52be55e8a32da75fcf11e7b5610b80b49479e67880102406
+      options: --platform linux/amd64
+    steps:
+      - name: Install validation tools
+        run: pacman -Syu --noconfirm --needed bun git openssh
+
+      - name: Checkout code
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Validate version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "version must be a stable X.Y.Z release" >&2
+            exit 1
+          fi
+
+      - name: Download and verify exact release inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          input_dir="$RUNNER_TEMP/aur-release-inputs"
+          install -d -m 0755 "$input_dir"
+
+          api_url="https://api.github.com/repos/${REPOSITORY}/releases/tags/v${VERSION}"
+          curl_options=(
+            --fail
+            --silent
+            --show-error
+            --location
+            --retry 3
+            --proto '=https'
+            --proto-redir '=https'
+            --tlsv1.2
+          )
+          curl "${curl_options[@]}" \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "$api_url" \
+            --output "$input_dir/release.json"
+
+          # JavaScript is intentionally single-quoted.
+          # shellcheck disable=SC2016
+          has_release_sums="$(bun -e '
+            const release = await Bun.file(process.argv[1]).json()
+            const version = process.argv[2]
+            const expected = [
+              "dotenc-linux-x64.tar.gz",
+              "dotenc-linux-arm64.tar.gz",
+            ]
+            if (release.tag_name !== `v${version}` || release.draft || release.prerelease) {
+              throw new Error("target must be a published, stable GitHub Release")
+            }
+            const assets = new Map(release.assets.map((asset) => [asset.name, asset]))
+            const digestLines = []
+            for (const name of expected) {
+              const asset = assets.get(name)
+              if (!asset || asset.state !== "uploaded" || asset.size <= 0) {
+                throw new Error(`release asset is unavailable: ${name}`)
+              }
+              const digest = /^sha256:([a-f0-9]{64})$/.exec(asset.digest ?? "")
+              if (!digest) throw new Error(`release asset has no trusted SHA-256 digest: ${name}`)
+              digestLines.push(`${digest[1]}  ${name}`)
+            }
+            await Bun.write(process.argv[3], `${digestLines.join("\n")}\n`)
+            const releaseSums = assets.get("SHA256SUMS")
+            if (releaseSums && (releaseSums.state !== "uploaded" || releaseSums.size <= 0)) {
+              throw new Error("release SHA256SUMS asset is incomplete")
+            }
+            console.log(releaseSums ? "true" : "false")
+          ' "$input_dir/release.json" "$VERSION" "$input_dir/ASSET_SHA256SUMS")"
+
+          release_url="https://github.com/${REPOSITORY}/releases/download/v${VERSION}"
+          for asset in dotenc-linux-x64.tar.gz dotenc-linux-arm64.tar.gz; do
+            curl "${curl_options[@]}" \
+              "${release_url}/${asset}" \
+              --output "$input_dir/$asset"
+          done
+          if [[ "$has_release_sums" == "true" ]]; then
+            curl "${curl_options[@]}" \
+              "${release_url}/SHA256SUMS" \
+              --output "$input_dir/RELEASE_SHA256SUMS"
+          fi
+          curl "${curl_options[@]}" \
+            "https://raw.githubusercontent.com/${REPOSITORY}/v${VERSION}/LICENSE" \
+            --output "$input_dir/LICENSE"
+
+          release_sums_path=""
+          if [[ "$has_release_sums" == "true" ]]; then
+            release_sums_path="$input_dir/RELEASE_SHA256SUMS"
+          fi
+
+          # JavaScript is intentionally single-quoted.
+          # shellcheck disable=SC2016
+          bun -e '
+            const parse = (text, label) => {
+              const entries = new Map()
+              for (const rawLine of text.split("\n")) {
+                const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine
+                if (!line) continue
+                const match = /^([A-Fa-f0-9]{64}) [ *]([A-Za-z0-9][A-Za-z0-9._-]*)$/.exec(line)
+                if (!match) throw new Error(`invalid ${label} line: ${line}`)
+                if (entries.has(match[2])) throw new Error(`duplicate ${label} entry: ${match[2]}`)
+                entries.set(match[2], match[1].toLowerCase())
+              }
+              return entries
+            }
+            const assetText = await Bun.file(process.argv[1]).text()
+            const assetDigests = parse(assetText, "GitHub asset digest")
+            const releaseSumsPath = process.argv[2]
+            if (releaseSumsPath) {
+              const releaseText = await Bun.file(releaseSumsPath).text()
+              const releaseDigests = parse(releaseText, "release SHA256SUMS")
+              for (const [name, digest] of assetDigests) {
+                if (releaseDigests.get(name) !== digest) {
+                  throw new Error(`release SHA256SUMS disagrees with GitHub asset digest: ${name}`)
+                }
+              }
+            }
+            const canonical = [...assetDigests].map(([name, digest]) => `${digest}  ${name}`)
+            await Bun.write(process.argv[3], `${canonical.join("\n")}\n`)
+          ' \
+            "$input_dir/ASSET_SHA256SUMS" \
+            "$release_sums_path" \
+            "$input_dir/SHA256SUMS"
+
+          (
+            cd "$input_dir"
+            sha256sum --check --strict SHA256SUMS
+          )
+
+          for architecture in x64 arm64; do
+            archive="$input_dir/dotenc-linux-${architecture}.tar.gz"
+            expected="dotenc-linux-${architecture}"
+            mapfile -t members < <(tar -tzf "$archive")
+            if (( ${#members[@]} != 1 )) || [[ "${members[0]}" != "$expected" ]]; then
+              echo "$archive must contain only $expected" >&2
+              exit 1
+            fi
+          done
+
+      - name: Render and validate the AUR recipe
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          input_dir="$RUNNER_TEMP/aur-release-inputs"
+          recipe_dir="$RUNNER_TEMP/dotenc-bin"
+
+          useradd --create-home --shell /bin/bash aur-builder
+          install -d -o aur-builder -g aur-builder -m 0755 "$recipe_dir"
+          chown -R aur-builder:aur-builder "$input_dir"
+
+          runuser -u aur-builder -- bun cli/packaging/aur.ts \
+            --version "$VERSION" \
+            --checksums "$input_dir/SHA256SUMS" \
+            --license-file "$input_dir/LICENSE" \
+            --output-dir "$recipe_dir"
+
+          # $1 expands inside the child shell.
+          # shellcheck disable=SC2016
+          runuser -u aur-builder -- bash -c \
+            'cd "$1" && makepkg --printsrcinfo > .SRCINFO.generated' \
+            _ "$recipe_dir"
+          diff --unified "$recipe_dir/.SRCINFO" "$recipe_dir/.SRCINFO.generated"
+          rm "$recipe_dir/.SRCINFO.generated"
+
+          # $1 expands inside the child shell.
+          # shellcheck disable=SC2016
+          runuser -u aur-builder -- bash -c \
+            'cd "$1" && makepkg --verifysource --noconfirm && makepkg --cleanbuild --clean --noconfirm' \
+            _ "$recipe_dir"
+
+          mapfile -t packages < <(
+            # $1 expands inside the child shell.
+            # shellcheck disable=SC2016
+            runuser -u aur-builder -- bash -c \
+              'cd "$1" && makepkg --packagelist' \
+              _ "$recipe_dir"
+          )
+          if (( ${#packages[@]} != 1 )) || [[ ! -f "${packages[0]}" ]]; then
+            echo "makepkg did not produce exactly one package" >&2
+            exit 1
+          fi
+
+          pacman -U --noconfirm "${packages[0]}"
+          [[ "$(dotenc --version)" == "$VERSION" ]]
+          [[ "$(cat /usr/share/dotenc/install-method)" == "aur" ]]
+
+          cd "$recipe_dir"
+          sha256sum PKGBUILD .SRCINFO install-method > RECIPE_SHA256SUMS
+
+      - name: Preserve the validated public recipe
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: aur-recipe-v${{ inputs.version }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/dotenc-bin/PKGBUILD
+            ${{ runner.temp }}/dotenc-bin/.SRCINFO
+            ${{ runner.temp }}/dotenc-bin/install-method
+            ${{ runner.temp }}/dotenc-bin/RECIPE_SHA256SUMS
+          if-no-files-found: error
+          include-hidden-files: true
+          compression-level: 0
+          retention-days: 1
+
+  publish:
+    name: Publish dotenc-bin ${{ inputs.version }}
+    needs: validate
+    if: >-
+      needs.validate.result == 'success' &&
+      inputs.publish == true &&
+      vars.AUR_PACKAGES_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    environment: linux-packages
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Download validated recipe
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: aur-recipe-v${{ inputs.version }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/validated-aur-recipe
+
+      - name: Verify publication input
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          recipe_dir="$RUNNER_TEMP/validated-aur-recipe"
+          expected_files=$'.SRCINFO\nPKGBUILD\nRECIPE_SHA256SUMS\ninstall-method'
+          actual_files="$(find "$recipe_dir" -mindepth 1 -maxdepth 1 -type f -printf '%f\n' | sort)"
+          if [[ "$actual_files" != "$expected_files" ]]; then
+            echo "validated recipe artifact contains unexpected files" >&2
+            exit 1
+          fi
+
+          (
+            cd "$recipe_dir"
+            sha256sum --check --strict RECIPE_SHA256SUMS
+            bash -n PKGBUILD
+          )
+          grep -Fqx "pkgver=$VERSION" "$recipe_dir/PKGBUILD"
+          grep -Fqx $'\tpkgver = '"$VERSION" "$recipe_dir/.SRCINFO"
+          grep -Fqx "aur" "$recipe_dir/install-method"
+
+      - name: Publish through pinned AUR SSH
+        env:
+          AUR_SSH_PRIVATE_KEY_BASE64: ${{ secrets.AUR_SSH_PRIVATE_KEY_BASE64 }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$AUR_SSH_PRIVATE_KEY_BASE64" ]]; then
+            echo "AUR_SSH_PRIVATE_KEY_BASE64 is not configured in the linux-packages environment" >&2
+            exit 1
+          fi
+
+          # Published by aur.archlinux.org under "Submitting Packages".
+          readonly expected_host_fingerprint='SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4'
+          readonly recipe_dir="$RUNNER_TEMP/validated-aur-recipe"
+          aur_temp="$(mktemp -d "$RUNNER_TEMP/dotenc-aur-publish.XXXXXX")"
+          key_file=''
+          cleanup() {
+            if [[ -n "$key_file" && -f "$key_file" ]]; then
+              shred --remove --zero "$key_file" 2>/dev/null || rm -f -- "$key_file"
+            fi
+            chmod -R u+w "$aur_temp" 2>/dev/null || true
+            rm -rf -- "$aur_temp"
+          }
+          trap cleanup EXIT
+          umask 077
+
+          candidate_hosts="$aur_temp/known_hosts.candidate"
+          ssh-keyscan -T 15 -t ed25519 aur.archlinux.org \
+            > "$candidate_hosts" 2>/dev/null
+          mapfile -t host_fingerprints < <(
+            ssh-keygen -l -E sha256 -f "$candidate_hosts" | awk '{print $2}'
+          )
+          if (( ${#host_fingerprints[@]} == 0 )); then
+            echo "AUR did not return an Ed25519 host key" >&2
+            exit 1
+          fi
+          for fingerprint in "${host_fingerprints[@]}"; do
+            if [[ "$fingerprint" != "$expected_host_fingerprint" ]]; then
+              echo "AUR Ed25519 host-key fingerprint does not match the pinned value" >&2
+              exit 1
+            fi
+          done
+          install -m 0600 "$candidate_hosts" "$aur_temp/known_hosts"
+
+          key_file="$aur_temp/id_ed25519"
+          if ! printf '%s' "$AUR_SSH_PRIVATE_KEY_BASE64" | base64 --decode > "$key_file"; then
+            echo "AUR_SSH_PRIVATE_KEY_BASE64 is not valid base64" >&2
+            exit 1
+          fi
+          unset AUR_SSH_PRIVATE_KEY_BASE64
+          chmod 0600 "$key_file"
+          key_type="$(ssh-keygen -y -P '' -f "$key_file" 2>/dev/null | awk '{print $1}')"
+          if [[ "$key_type" != "ssh-ed25519" ]]; then
+            echo "the AUR deployment key must be an unencrypted Ed25519 SSH key" >&2
+            exit 1
+          fi
+
+          ssh_config="$aur_temp/ssh_config"
+          cat > "$ssh_config" <<EOF
+          Host aur.archlinux.org
+            HostName aur.archlinux.org
+            User aur
+            Port 22
+            IdentityFile $key_file
+            IdentitiesOnly yes
+            BatchMode yes
+            PasswordAuthentication no
+            KbdInteractiveAuthentication no
+            StrictHostKeyChecking yes
+            UserKnownHostsFile $aur_temp/known_hosts
+          EOF
+          chmod 0600 "$ssh_config"
+
+          aur_repository="$aur_temp/dotenc-bin"
+          git -c init.defaultBranch=master \
+            -c core.sshCommand="ssh -F $ssh_config" \
+            clone ssh://aur@aur.archlinux.org/dotenc-bin.git "$aur_repository"
+
+          unexpected_files="$(
+            git -C "$aur_repository" ls-files |
+              awk '$0 != "PKGBUILD" && $0 != ".SRCINFO" && $0 != "install-method"'
+          )"
+          if [[ -n "$unexpected_files" ]]; then
+            echo "AUR repository contains unexpected tracked files; refusing to delete or replace them" >&2
+            exit 1
+          fi
+
+          current_version=''
+          if [[ -f "$aur_repository/PKGBUILD" ]]; then
+            mapfile -t current_versions < <(
+              sed -n 's/^pkgver=//p' "$aur_repository/PKGBUILD"
+            )
+            if (( ${#current_versions[@]} != 1 )) ||
+              [[ ! "${current_versions[0]}" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+              echo "existing AUR PKGBUILD has an unexpected pkgver" >&2
+              exit 1
+            fi
+            current_version="${current_versions[0]}"
+          elif [[ -n "$(git -C "$aur_repository" ls-files)" ]]; then
+            echo "existing AUR repository has no PKGBUILD" >&2
+            exit 1
+          fi
+
+          install -m 0644 "$recipe_dir/PKGBUILD" "$aur_repository/PKGBUILD"
+          install -m 0644 "$recipe_dir/.SRCINFO" "$aur_repository/.SRCINFO"
+          install -m 0644 "$recipe_dir/install-method" "$aur_repository/install-method"
+          git -C "$aur_repository" add -- PKGBUILD .SRCINFO install-method
+          git -C "$aur_repository" diff --cached --check
+
+          if git -C "$aur_repository" diff --cached --quiet; then
+            echo "dotenc-bin $VERSION is already current in AUR"
+            exit 0
+          fi
+          if [[ "$current_version" == "$VERSION" ]]; then
+            echo "AUR already has version $VERSION with different content; bump pkgrel explicitly" >&2
+            exit 1
+          fi
+          if [[ -n "$current_version" ]]; then
+            newest_version="$(printf '%s\n%s\n' "$current_version" "$VERSION" | sort -V | tail -n 1)"
+            if [[ "$newest_version" != "$VERSION" ]]; then
+              echo "refusing to downgrade AUR from $current_version to $VERSION" >&2
+              exit 1
+            fi
+          fi
+
+          git -C "$aur_repository" config user.name "Dotenc Release Bot"
+          git -C "$aur_repository" config user.email "security@dotenc.org"
+          git -C "$aur_repository" config commit.gpgsign false
+          git -C "$aur_repository" commit -m "dotenc-bin ${VERSION}-1"
+          git -C "$aur_repository" \
+            -c core.sshCommand="ssh -F $ssh_config" \
+            push origin HEAD:master

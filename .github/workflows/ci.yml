@@ -28,7 +28,15 @@ jobs:
         run: bun run readme:demos:check
 
       - name: Validate GitHub Action scripts
-        run: bash -n actions/_lib/*.sh scripts/sync-action-wrappers.sh
+        run: >-
+          bash -n
+          actions/_lib/*.sh
+          scripts/sync-action-wrappers.sh
+          scripts/alpine-package-tool.sh
+          scripts/verify-packages-edge.sh
+
+      - name: Test Linux package publisher safety checks
+        run: bun run packages:test-publisher && bun run packages:typecheck-publisher
 
   typecheck:
     runs-on: ubuntu-latest
