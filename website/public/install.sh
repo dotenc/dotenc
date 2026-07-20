@@ -6,6 +6,7 @@ set -eu
 PACKAGES_URL="https://packages.dotenc.org"
 INSTALLATION_GUIDE="https://github.com/dotenc/dotenc/blob/main/docs/INSTALLATION.md"
 
+# Keep saved installer copies reproducible; the manual guide uses short aliases.
 APT_KEY_SHA256="108333389e16fc3dbdb09938308639951ea6df5fb8f482eba562cafbc353c58f"
 APT_KEY_URL="$PACKAGES_URL/keys/dotenc-apt-7BEFECEEA5921A0C3C431CFAA1A964033C1E2A5B-$APT_KEY_SHA256.asc"
 RPM_KEY_SHA256="2600233af0c9acab0f047d2f0c1fbda5d5970187a41a67eecdd85240b983309b"

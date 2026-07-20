@@ -34,6 +34,10 @@ rm dotenc-install.sh
 
 ## Manual installation
 
+The short key URLs below are stable aliases. Each command verifies the exact
+pinned SHA-256 before installing the key; immutable trust-root records remain
+available in the [Linux repository runbook](LINUX_PACKAGES.md#production-trust-roots).
+
 ### APT (Debian and Ubuntu)
 
 ```sh
@@ -48,7 +52,7 @@ sudo apt install -y ca-certificates curl
 sudo install -m 0755 -d /etc/apt/keyrings
 key_file="$(mktemp)"
 curl -fsSL \
-  https://packages.dotenc.org/keys/dotenc-apt-7BEFECEEA5921A0C3C431CFAA1A964033C1E2A5B-108333389e16fc3dbdb09938308639951ea6df5fb8f482eba562cafbc353c58f.asc \
+  https://packages.dotenc.org/keys/linux/apt \
   -o "$key_file"
 echo "108333389e16fc3dbdb09938308639951ea6df5fb8f482eba562cafbc353c58f  $key_file" \
   | sha256sum -c -
@@ -79,7 +83,7 @@ set -e
 sudo install -m 0755 -d /etc/pki/rpm-gpg
 key_file="$(mktemp)"
 curl -fsSL \
-  https://packages.dotenc.org/keys/dotenc-rpm-C1FFEF75009580AB4A9EDDE87486A84C0C27D6A2-2600233af0c9acab0f047d2f0c1fbda5d5970187a41a67eecdd85240b983309b.asc \
+  https://packages.dotenc.org/keys/linux/rpm \
   -o "$key_file"
 echo "2600233af0c9acab0f047d2f0c1fbda5d5970187a41a67eecdd85240b983309b  $key_file" \
   | sha256sum -c -
@@ -118,7 +122,7 @@ apk add --no-cache ca-certificates
 # Add dotenc's signing key after verifying its pinned checksum.
 key_name=dotenc-600d1cdeb051ccba069f4c444aa76d9094caf23b3aea0a29f1a84e2bf3204128
 key_file="$(mktemp)"
-wget -q "https://packages.dotenc.org/keys/${key_name}.rsa.pub" -O "$key_file"
+wget -q https://packages.dotenc.org/keys/linux/apk -O "$key_file"
 echo "6b8e09be9c96801f9434f8b8e7c622cedcf6c343eb50483509dcd18a3b5b4b50  $key_file" \
   | sha256sum -c -
 cp "$key_file" "/etc/apk/keys/${key_name}.rsa.pub"

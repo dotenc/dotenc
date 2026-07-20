@@ -239,7 +239,9 @@ This is a standard pattern used by many developer tools (Homebrew, Rust, Node.js
 - **Pinned Linux repository bootstrap** — before configuring APT, RPM, or APK,
   the script downloads an immutable public-key object and verifies its exact
   SHA-256. It then renders signature-enforcing repository configuration locally
-  before installing dotenc.
+  before installing dotenc. The manual installation guide uses shorter mutable
+  key aliases for readability but performs the same exact-byte checksum checks;
+  the aliases alone are not trust roots.
 - **Safe privilege selection** — native Linux repositories are selected only
   when the process is root, passwordless `sudo` succeeds, or an interactive
   terminal can accept a `sudo` prompt. Noninteractive callers such as the VS
