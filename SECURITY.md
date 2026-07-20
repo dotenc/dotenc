@@ -262,7 +262,9 @@ of the installation methods listed above.
 The planned trust model separates authenticity from delivery:
 
 - APT and RPM use independent OpenPGP v4 RSA trust roots. Each primary key
-  remains offline; CI receives only that ecosystem's RSA-4096 signing subkey.
+  remains offline; CI receives only that ecosystem's RSA-4096 signing-subkey
+  export with a dummy primary-secret stub. The production RPM export remains
+  passphrase-protected at rest.
 - APT signs `InRelease`, which authenticates repository indexes and the hashes
   of `.deb` files. The `.deb` files do not carry separate dotenc repository
   signatures.
@@ -293,9 +295,22 @@ The planned trust model separates authenticity from delivery:
 - Private signing keys must never be published to the package host, included in
   packages, stored in repository history, or exposed through workflow logs,
   artifacts, or caches.
-- APT and RPM signing run in separate ephemeral GPG homes. Alpine signing runs
-  in a network-disabled container whose tools are prepared before its read-only
-  key mount is attached; the R2 publication step receives no signing secrets.
+- APT and RPM signing run in separate ephemeral GPG homes. The durable RPM
+  signing-subkey export and its metadata-signing GPG home remain protected by
+  `DOTENC_RPM_GPG_PASSPHRASE_FILE`. nFPM `2.47.0` cannot unlock a protected
+  subkey beneath the required dummy/offline primary, so the builder first proves
+  that passphrase by signing an ephemeral probe with the exact RPM subkey. It
+  then creates an isolated mode-`0700` working directory, removes protection
+  only from a copy, validates a mode-`0600` export containing the same dummy
+  primary and exact signing subkey, and gives only that transient export to the
+  nFPM RPM child. nFPM receives no passphrase. The builder scrubs the working
+  copy immediately after native package generation and on failure, before
+  metadata signing or publication; the workflow exit trap supplies a second
+  cleanup boundary. The unprotected copy must never enter logs, artifacts,
+  caches, container layers, or publication inputs.
+- Alpine signing runs in a network-disabled container whose tools are prepared
+  before its read-only key mount is attached; the R2 publication step receives
+  no signing secrets.
 
 The repository objects are stored in the private-write
 `dotenc-packages` Cloudflare R2 bucket and exposed through the

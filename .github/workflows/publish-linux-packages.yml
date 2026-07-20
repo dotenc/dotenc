@@ -490,10 +490,12 @@ jobs:
               rm -rf -- "$apk_key_dir"
             fi
             if [[ -n "$signing_dir" && "$signing_dir" == "$RUNNER_TEMP"/dotenc-signing.* ]]; then
-              for isolated_home in "$signing_dir/apt-gnupg" "$signing_dir/rpm-gnupg"; do
-                if [[ -d "$isolated_home" ]]; then
-                  gpgconf --homedir "$isolated_home" --kill gpg-agent >/dev/null 2>&1 || true
-                fi
+              for isolated_home in \
+                "$signing_dir/apt-gnupg" \
+                "$signing_dir/rpm-gnupg" \
+                "$signing_dir/nfpm-rpm-secret/gnupg" \
+                "$signing_dir/nfpm-rpm-secret/inspect-gnupg"; do
+                gpgconf --homedir "$isolated_home" --kill gpg-agent >/dev/null 2>&1 || true
               done
               find "$signing_dir" -type f -exec shred --force --remove {} + 2>/dev/null || true
               rm -rf -- "$signing_dir"
@@ -758,13 +760,13 @@ jobs:
           unset GNUPGHOME
           export DOTENC_APT_GNUPGHOME="$apt_gnupg_home"
           export DOTENC_RPM_GNUPGHOME="$rpm_gnupg_home"
+          export DOTENC_PACKAGING_SECRET_SCRATCH_DIR="$signing_dir"
           export NFPM_RPM_KEY_FILE="$rpm_gpg_private_key"
           export NFPM_APK_KEY_FILE="$apk_container_private_key"
           if [[ -n "$apt_gpg_passphrase_file" ]]; then
             export DOTENC_APT_GPG_PASSPHRASE_FILE="$apt_gpg_passphrase_file"
           fi
           if [[ -n "$rpm_gpg_passphrase_file" ]]; then
-            export NFPM_RPM_PASSPHRASE_FILE="$rpm_gpg_passphrase_file"
             export DOTENC_RPM_GPG_PASSPHRASE_FILE="$rpm_gpg_passphrase_file"
           fi
 

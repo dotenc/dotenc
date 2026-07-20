@@ -162,6 +162,37 @@ describe("Linux package publication manifest", () => {
 		}
 	})
 
+	test("contains transient nFPM RPM key material inside the scrubbed signing directory", () => {
+		const workflow = readFileSync(
+			path.resolve(
+				import.meta.dir,
+				"../../.github/workflows/publish-linux-packages.yml",
+			),
+			"utf8",
+		)
+
+		expect(workflow).toContain(
+			'export DOTENC_PACKAGING_SECRET_SCRATCH_DIR="$signing_dir"',
+		)
+		expect(workflow).toContain(
+			'export NFPM_RPM_KEY_FILE="$rpm_gpg_private_key"',
+		)
+		expect(workflow).toContain(
+			'export DOTENC_RPM_GPG_PASSPHRASE_FILE="$rpm_gpg_passphrase_file"',
+		)
+		expect(workflow).not.toContain("export NFPM_RPM_PASSPHRASE_FILE=")
+		expect(workflow).toContain(
+			'"$signing_dir/nfpm-rpm-secret/gnupg"',
+		)
+		expect(workflow).toContain(
+			'"$signing_dir/nfpm-rpm-secret/inspect-gnupg"',
+		)
+		expect(workflow).not.toContain('if [[ -d "$isolated_home" ]]')
+		expect(workflow).toContain(
+			'find "$signing_dir" -type f -exec shred --force --remove {} +',
+		)
+	})
+
 	test("does not purge an existing identical immutable object", () => {
 		const objectPath = "apt/pool/main/d/dotenc/dotenc_1.2.3_amd64.deb"
 		expect(

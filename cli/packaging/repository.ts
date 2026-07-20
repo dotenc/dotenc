@@ -103,6 +103,7 @@ type ToolName =
 	| "abuildSign"
 	| "abuildGzsplit"
 	| "gpg"
+	| "gpgconf"
 	| "gpgv"
 	| "rpm"
 	| "rpmkeys"
@@ -129,6 +130,7 @@ const TOOL_COMMANDS: Record<ToolName, { command: string; override: string }> = {
 		override: "DOTENC_ABUILD_GZSPLIT_COMMAND",
 	},
 	gpg: { command: "gpg", override: "DOTENC_GPG_COMMAND" },
+	gpgconf: { command: "gpgconf", override: "DOTENC_GPGCONF_COMMAND" },
 	gpgv: { command: "gpgv", override: "DOTENC_GPGV_COMMAND" },
 	rpm: { command: "rpm", override: "DOTENC_RPM_COMMAND" },
 	rpmkeys: { command: "rpmkeys", override: "DOTENC_RPMKEYS_COMMAND" },
@@ -152,6 +154,8 @@ export type RunOptions = {
 	env?: NodeJS.ProcessEnv
 	stdinFile?: string
 	stdoutFile?: string
+	stderr?: "inherit" | "ignore"
+	acceptedExitCodes?: readonly number[]
 }
 
 export type CommandRunner = {
@@ -173,7 +177,7 @@ const spawnCommand = async (
 			stdio: [
 				options.stdinFile === undefined ? "ignore" : "pipe",
 				shouldPipe ? "pipe" : "inherit",
-				"inherit",
+				options.stderr ?? "inherit",
 			],
 		})
 		const chunks: Buffer[] = []
@@ -187,7 +191,8 @@ const spawnCommand = async (
 			input.pipe(child.stdin as NodeJS.WritableStream)
 		}
 		child.once("close", async (code) => {
-			if (code !== 0) {
+			const acceptedExitCodes = options.acceptedExitCodes ?? [0]
+			if (code === null || !acceptedExitCodes.includes(code)) {
 				rejectPromise(
 					new Error(
 						`${basename(command)} exited with status ${code ?? "unknown"}`,
@@ -246,13 +251,13 @@ Optional:
   --help                             Show this help
 
 Build-only environment:
-  NFPM_RPM_KEY_FILE                  chmod-600 OpenPGP RPM secret key file
-  NFPM_RPM_PASSPHRASE_FILE           Optional chmod-600 RPM passphrase file
+  NFPM_RPM_KEY_FILE                  chmod-600 OpenPGP RPM secret-subkey export
   NFPM_APK_KEY_FILE                  chmod-600 unencrypted RSA private PEM
   DOTENC_APT_GNUPGHOME               APT subkey-only signing keyring
   DOTENC_RPM_GNUPGHOME               RPM subkey-only signing keyring
   DOTENC_APT_GPG_PASSPHRASE_FILE    Optional chmod-600 APT GPG passphrase file
-  DOTENC_RPM_GPG_PASSPHRASE_FILE    Optional chmod-600 RPM GPG passphrase file
+  DOTENC_RPM_GPG_PASSPHRASE_FILE    Required for a protected RPM signing subkey
+  DOTENC_PACKAGING_SECRET_SCRATCH_DIR  Optional chmod-700 workflow-owned scratch
 `
 
 const requiredOption = (
@@ -509,6 +514,22 @@ const assertRegularFile = async (
 	}
 }
 
+const assertPrivateDirectory = async (path: string, label: string): Promise<void> => {
+	let directoryStat
+	try {
+		directoryStat = await lstat(path)
+	} catch (error) {
+		if (isMissingFileError(error)) throw new Error(`${label} does not exist: ${path}`)
+		throw error
+	}
+	if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink()) {
+		throw new Error(`${label} must be a non-symlink directory: ${path}`)
+	}
+	if (process.platform !== "win32" && (directoryStat.mode & 0o077) !== 0) {
+		throw new Error(`${label} must not be accessible by group or other users: ${path}`)
+	}
+}
+
 const requiredEnvironmentPath = (name: string): string => {
 	const value = process.env[name]
 	if (value === undefined || value === "") {
@@ -517,13 +538,19 @@ const requiredEnvironmentPath = (name: string): string => {
 	return resolve(value)
 }
 
-const readOptionalSecretFile = async (name: string): Promise<string | undefined> => {
+const readOptionalSecretFile = async (name: string): Promise<Buffer | undefined> => {
 	const path = process.env[name]
 	if (path === undefined || path === "") return undefined
 	const resolvedPath = resolve(path)
 	await assertRegularFile(resolvedPath, name, true)
-	const value = (await readFile(resolvedPath, "utf8")).replace(/[\r\n]+$/, "")
-	if (value === "") throw new Error(`${name} cannot be empty`)
+	const contents = await readFile(resolvedPath)
+	let end = contents.length
+	while (end > 0 && (contents[end - 1] === 0x0a || contents[end - 1] === 0x0d)) {
+		end -= 1
+	}
+	const value = Buffer.from(contents.subarray(0, end))
+	contents.fill(0)
+	if (value.length === 0) throw new Error(`${name} cannot be empty`)
 	return value
 }
 
@@ -665,6 +692,32 @@ export const parseSecretKeyListing = (listing: string): SecretKeyRecord[] => {
 	return records
 }
 
+const assertSecretSubkeyRecords = (
+	records: SecretKeyRecord[],
+	label: string,
+	primaryFingerprint: string,
+	signingFingerprint: string,
+): void => {
+	const primary = records.find(
+		(record) => record.type === "sec" && record.fingerprint === primaryFingerprint,
+	)
+	if (primary?.secretStorage !== "#") {
+		throw new Error(`${label} primary secret material must be offline (dummy stub only)`)
+	}
+	const usableSecrets = records.filter(
+		(record) => record.type === "ssb" && record.secretStorage !== "#",
+	)
+	if (
+		usableSecrets.length !== 1 ||
+		usableSecrets[0]?.fingerprint !== signingFingerprint ||
+		!usableSecrets[0].capabilities.includes("s")
+	) {
+		throw new Error(
+			`${label} keyring must contain only the declared secret signing subkey`,
+		)
+	}
+}
+
 const validateSecretSubkeyLayout = async (
 	runner: CommandRunner,
 	label: "APT" | "RPM",
@@ -684,41 +737,36 @@ const validateSecretSubkeyLayout = async (
 		],
 		{ env: gpgSecretEnvironment(environment, label) },
 	)
-	const records = parseSecretKeyListing(listing)
-	const primary = records.find(
-		(record) => record.type === "sec" && record.fingerprint === primaryFingerprint,
+	assertSecretSubkeyRecords(
+		parseSecretKeyListing(listing),
+		label,
+		primaryFingerprint,
+		signingFingerprint,
 	)
-	if (primary?.secretStorage !== "#") {
-		throw new Error(`${label} primary secret material must be offline (dummy stub only)`)
-	}
-	const usableSecrets = records.filter(
-		(record) =>
-			record.type === "ssb" &&
-			record.secretStorage !== "#",
-	)
-	if (
-		usableSecrets.length !== 1 ||
-		usableSecrets[0]?.fingerprint !== signingFingerprint ||
-		!usableSecrets[0].capabilities.includes("s")
-	) {
-		throw new Error(
-			`${label} keyring must contain only the declared secret signing subkey`,
-		)
-	}
 }
 
-export const assertSecretSubkeyExportPackets = (packets: string): void => {
+export type SecretSubkeyProtection = "encrypted" | "unencrypted"
+
+export const inspectSecretSubkeyExportPackets = (
+	packets: string,
+): SecretSubkeyProtection => {
 	const primaryPackets = packets.match(/^:secret key packet:/gm) ?? []
 	const subkeyPackets = packets.match(/^:secret sub key packet:/gm) ?? []
 	const primaryOffset = packets.indexOf(":secret key packet:")
 	const subkeyOffset = packets.indexOf(":secret sub key packet:")
-	const primaryPacket = packets.slice(primaryOffset, subkeyOffset)
-	const subkeyPacket = packets.slice(subkeyOffset)
 	if (
 		primaryPackets.length !== 1 ||
 		subkeyPackets.length !== 1 ||
 		primaryOffset < 0 ||
-		subkeyOffset <= primaryOffset ||
+		subkeyOffset <= primaryOffset
+	) {
+		throw new Error(
+			"RPM secret export must contain a dummy offline primary and exactly one usable secret subkey",
+		)
+	}
+	const primaryPacket = packets.slice(primaryOffset, subkeyOffset)
+	const subkeyPacket = packets.slice(subkeyOffset)
+	if (
 		!primaryPacket.includes("gnu-dummy") ||
 		subkeyPacket.includes("gnu-dummy")
 	) {
@@ -726,6 +774,23 @@ export const assertSecretSubkeyExportPackets = (packets: string): void => {
 			"RPM secret export must contain a dummy offline primary and exactly one usable secret subkey",
 		)
 	}
+	const encrypted =
+		/\bS2K\b|\bprotect (?:count|IV):|\[v4 protected\]/.test(subkeyPacket)
+	const unencrypted =
+		/^\s*checksum:/m.test(subkeyPacket) &&
+		[2, 3, 4, 5].every((index) =>
+			new RegExp(`^\\s*skey\\[${index}\\]:`, "m").test(subkeyPacket),
+		)
+	if (encrypted === unencrypted) {
+		throw new Error(
+			"RPM secret signing subkey protection could not be determined from its OpenPGP packets",
+		)
+	}
+	return encrypted ? "encrypted" : "unencrypted"
+}
+
+export const assertSecretSubkeyExportPackets = (packets: string): void => {
+	inspectSecretSubkeyExportPackets(packets)
 }
 
 const validateSecretSubkeyExport = async (
@@ -733,7 +798,7 @@ const validateSecretSubkeyExport = async (
 	path: string,
 	homeDirectory: string,
 	environment: NodeJS.ProcessEnv,
-): Promise<void> => {
+): Promise<SecretSubkeyProtection> => {
 	await mkdir(homeDirectory, { recursive: true, mode: 0o700 })
 	const packets = await runner.capture(
 		toolCommand("gpg"),
@@ -748,7 +813,7 @@ const validateSecretSubkeyExport = async (
 		],
 		{ env: environment },
 	)
-	assertSecretSubkeyExportPackets(packets)
+	return inspectSecretSubkeyExportPackets(packets)
 }
 
 const assertRsa4096 = (key: KeyObject, label: string): void => {
@@ -892,7 +957,7 @@ const gpgSigningArgs = (
 	fingerprint: string,
 	passphraseFileEnvironment: string,
 ): string[] => {
-	const args = ["--no-options", "--batch", "--yes"]
+	const args = ["--no-options", "--batch", "--yes", "--no-tty"]
 	const passphraseFile = process.env[passphraseFileEnvironment]
 	if (passphraseFile !== undefined && passphraseFile !== "") {
 		args.push("--pinentry-mode", "loopback", "--passphrase-file", resolve(passphraseFile))
@@ -926,6 +991,306 @@ const signGpg = async (
 	await runner.run(toolCommand("gpg"), args, {
 		env: gpgSecretEnvironment(environment, purpose),
 	})
+}
+
+export const assertGpgPassphraseChangeStatus = (status: string): void => {
+	const lines = status.split("\n")
+	const successes = lines.filter(
+		(line) => line === "[GNUPG:] SUCCESS keyedit.passwd",
+	)
+	const prompts = lines.filter((line) =>
+		line.startsWith("[GNUPG:] GET_HIDDEN passphrase.enter"),
+	)
+	const acceptedPrompts = lines.filter((line) => line === "[GNUPG:] GOT_IT")
+	if (
+		successes.length !== 1 ||
+		prompts.length !== 2 ||
+		acceptedPrompts.length !== 2 ||
+		lines.some((line) =>
+			/^\[GNUPG:\] (?:BAD_PASSPHRASE|MISSING_PASSPHRASE|ERROR)\b/.test(line),
+		)
+	) {
+		throw new Error(
+			"RPM GPG passphrase did not unlock the exact signing subkey for transient nFPM staging",
+		)
+	}
+}
+
+const scrubDirectory = async (directory: string): Promise<void> => {
+	let entries
+	try {
+		entries = await readdir(directory, { withFileTypes: true })
+	} catch (error) {
+		if (isMissingFileError(error)) return
+		throw error
+	}
+	for (const entry of entries) {
+		const path = join(directory, entry.name)
+		if (entry.isDirectory()) {
+			await scrubDirectory(path)
+		} else if (entry.isFile()) {
+			const fileStat = await lstat(path)
+			if (fileStat.size > 0) {
+				await writeFile(path, Buffer.alloc(Number(fileStat.size)), { flag: "r+" })
+			}
+		}
+	}
+	await rm(directory, { recursive: true, force: true })
+}
+
+type PreparedNfpmRpmKey = {
+	path: string
+	cleanup: () => Promise<void>
+}
+
+const prepareNfpmRpmKey = async (
+	runner: CommandRunner,
+	sourceKey: string,
+	primaryFingerprint: string,
+	signingFingerprint: string,
+	protection: SecretSubkeyProtection,
+	passphrase: Buffer | undefined,
+	gpgHomeRoot: string,
+	secretScratchRoot: string,
+	environment: NodeJS.ProcessEnv,
+): Promise<PreparedNfpmRpmKey> => {
+	if (protection === "unencrypted" && passphrase !== undefined) {
+		throw new Error(
+			"DOTENC_RPM_GPG_PASSPHRASE_FILE was provided for an unencrypted RPM signing subkey",
+		)
+	}
+	if (protection === "encrypted" && passphrase === undefined) {
+		throw new Error(
+			"DOTENC_RPM_GPG_PASSPHRASE_FILE is required for the encrypted RPM signing subkey",
+		)
+	}
+	if (
+		passphrase !== undefined &&
+		(passphrase.includes(0x0a) || passphrase.includes(0x0d))
+	) {
+		throw new Error("RPM GPG passphrase must contain exactly one line")
+	}
+
+	const stagingRoot = join(secretScratchRoot, "nfpm-rpm-secret")
+	const stagingHome = join(stagingRoot, "gnupg")
+	const inspectionHome = join(stagingRoot, "inspect-gnupg")
+	const probeInput = join(stagingRoot, "passphrase-probe")
+	const probeSignature = join(stagingRoot, "passphrase-probe.asc")
+	const commandInput = join(stagingRoot, "change-passphrase.input")
+	const stagedKey = join(stagingRoot, "rpm.secret-subkeys.unprotected.asc")
+	let cleaned = false
+	let stagingCreated = false
+	const cleanup = async (): Promise<void> => {
+		if (cleaned) return
+		if (!stagingCreated) {
+			cleaned = true
+			return
+		}
+		const cleanupErrors: unknown[] = []
+		for (const home of [stagingHome, inspectionHome]) {
+			try {
+				await runner.run(
+					toolCommand("gpgconf"),
+					["--homedir", home, "--kill", "gpg-agent"],
+					{ env: environment },
+				)
+			} catch (error) {
+				cleanupErrors.push(error)
+			}
+		}
+		try {
+			await scrubDirectory(stagingRoot)
+		} catch (error) {
+			cleanupErrors.push(error)
+		}
+		if (cleanupErrors.length > 0) {
+			throw new AggregateError(
+				cleanupErrors,
+				"Unable to fully clean the transient RPM signing material",
+			)
+		}
+		cleaned = true
+	}
+
+	try {
+		await mkdir(stagingRoot, { mode: 0o700 })
+		stagingCreated = true
+		await mkdir(stagingHome, { mode: 0o700 })
+		await mkdir(inspectionHome, { mode: 0o700 })
+		const validateNfpmKeyIdentity = async (keyPath: string): Promise<void> => {
+			await runner.run(
+				toolCommand("gpg"),
+				[
+					"--homedir",
+					inspectionHome,
+					"--no-options",
+					"--batch",
+					"--no-tty",
+					"--quiet",
+					"--import",
+					keyPath,
+				],
+				{ env: environment },
+			)
+			const listing = await runner.capture(
+				toolCommand("gpg"),
+				[
+					"--homedir",
+					inspectionHome,
+					"--no-options",
+					"--batch",
+					"--with-colons",
+					"--with-subkey-fingerprint",
+					"--list-secret-keys",
+					primaryFingerprint,
+				],
+				{ env: environment },
+			)
+			assertSecretSubkeyRecords(
+				parseSecretKeyListing(listing),
+				"nFPM RPM",
+				primaryFingerprint,
+				signingFingerprint,
+			)
+		}
+		if (protection === "unencrypted") {
+			await validateNfpmKeyIdentity(sourceKey)
+			return { path: sourceKey, cleanup }
+		}
+		if (passphrase === undefined) {
+			throw new Error("Encrypted RPM signing subkey passphrase was not loaded")
+		}
+		await writeFile(probeInput, "dotenc nFPM RPM signing-subkey probe\n", {
+			mode: 0o600,
+		})
+		try {
+			await signGpg(
+				runner,
+				probeInput,
+				probeSignature,
+				"RPM",
+				signingFingerprint,
+				"DOTENC_RPM_GPG_PASSPHRASE_FILE",
+				false,
+				environment,
+			)
+		} catch (error) {
+			throw new Error(
+				"RPM GPG passphrase did not unlock the exact signing subkey",
+				{ cause: error },
+			)
+		}
+
+		await runner.run(
+			toolCommand("gpg"),
+			[
+				"--homedir",
+				stagingHome,
+				"--no-options",
+				"--batch",
+				"--no-tty",
+				"--quiet",
+				"--import",
+				sourceKey,
+			],
+			{ env: environment },
+		)
+		const commandSequence = Buffer.alloc(passphrase.length + 2, 0x0a)
+		passphrase.copy(commandSequence)
+		try {
+			await writeFile(commandInput, commandSequence, { mode: 0o600 })
+		} finally {
+			commandSequence.fill(0)
+		}
+		let status: string
+		try {
+			status = await runner.capture(
+				toolCommand("gpg"),
+				[
+					"--homedir",
+					stagingHome,
+					"--no-options",
+					"--batch",
+					"--yes",
+					"--no-tty",
+					"--pinentry-mode",
+					"loopback",
+					"--passphrase-repeat",
+					"0",
+					"--status-fd",
+					"1",
+					"--command-fd",
+					"0",
+					"--change-passphrase",
+					primaryFingerprint,
+				],
+				{
+					env: environment,
+					stdinFile: commandInput,
+					stderr: "ignore",
+					acceptedExitCodes: [0, 2],
+				},
+			)
+		} finally {
+			const commandInputStat = await lstat(commandInput)
+			if (commandInputStat.size > 0) {
+				await writeFile(
+					commandInput,
+					Buffer.alloc(Number(commandInputStat.size)),
+					{ flag: "r+" },
+				)
+			}
+			await rm(commandInput)
+		}
+		assertGpgPassphraseChangeStatus(status)
+
+		await runner.run(
+			toolCommand("gpg"),
+			[
+				"--homedir",
+				stagingHome,
+				"--no-options",
+				"--batch",
+				"--yes",
+				"--no-tty",
+				"--pinentry-mode",
+				"loopback",
+				"--passphrase",
+				"",
+				"--armor",
+				"--output",
+				stagedKey,
+				"--export-secret-subkeys",
+				`${signingFingerprint}!`,
+			],
+			{ env: environment },
+		)
+		await chmod(stagedKey, 0o600)
+		const stagedProtection = await validateSecretSubkeyExport(
+			runner,
+			stagedKey,
+			join(gpgHomeRoot, "inspect-nfpm-rpm-export"),
+			environment,
+		)
+		if (stagedProtection !== "unencrypted") {
+			throw new Error(
+				"Transient nFPM RPM export must contain one unencrypted signing subkey",
+			)
+		}
+
+		await validateNfpmKeyIdentity(stagedKey)
+		return { path: stagedKey, cleanup }
+	} catch (error) {
+		try {
+			await cleanup()
+		} catch (cleanupError) {
+			throw new AggregateError(
+				[error, cleanupError],
+				"Unable to prepare and fully clean the transient RPM signing material",
+			)
+		}
+		throw error
+	}
 }
 
 export type OpenPgpCertificateDigests = {
@@ -1415,7 +1780,6 @@ const buildNativePackages = async (
 	runner: CommandRunner,
 	environment: NodeJS.ProcessEnv,
 	rpmPrivateKey: string,
-	rpmPassphrase: string | undefined,
 	apkPrivateKey: string,
 ): Promise<void> => {
 	const inputDir = options.inputDir
@@ -1512,9 +1876,6 @@ const buildNativePackages = async (
 					),
 					NFPM_RPM_KEY_FILE: rpmPrivateKey,
 					NFPM_RPM_KEY_ID: options.rpmGpgSigningFingerprint.slice(-16),
-					...(rpmPassphrase === undefined
-						? {}
-						: { NFPM_RPM_PASSPHRASE: rpmPassphrase }),
 				},
 			},
 		)
@@ -2057,6 +2418,10 @@ const writeRepositoryConfigs = async (
 	})
 }
 
+type ValidatedBuildInputs = {
+	rpmSecretSubkeyProtection?: SecretSubkeyProtection
+}
+
 const validateBuildInputs = async (
 	options: BuildOptions,
 	rpmPrivateKey: string | undefined,
@@ -2064,7 +2429,8 @@ const validateBuildInputs = async (
 	runner: CommandRunner,
 	gpgHomeRoot: string,
 	environment: NodeJS.ProcessEnv,
-): Promise<void> => {
+): Promise<ValidatedBuildInputs> => {
+	let rpmSecretSubkeyProtection: SecretSubkeyProtection | undefined
 	if (options.inputDir !== undefined) {
 		for (const architecture of ARCHITECTURES) {
 			await assertRegularFile(
@@ -2080,7 +2446,7 @@ const validateBuildInputs = async (
 			throw new Error("RPM private key is required when building packages")
 		}
 		await assertRegularFile(rpmPrivateKey, "RPM private key", true)
-		await validateSecretSubkeyExport(
+		rpmSecretSubkeyProtection = await validateSecretSubkeyExport(
 			runner,
 			rpmPrivateKey,
 			join(gpgHomeRoot, "inspect-rpm-export"),
@@ -2125,7 +2491,6 @@ const validateBuildInputs = async (
 	)
 	await assertApkKeyPair(options.apkPublicKey, apkPrivateKey, options.apkKeyName)
 	for (const environmentName of [
-		"NFPM_RPM_PASSPHRASE_FILE",
 		"DOTENC_APT_GPG_PASSPHRASE_FILE",
 		"DOTENC_RPM_GPG_PASSPHRASE_FILE",
 	]) {
@@ -2134,6 +2499,7 @@ const validateBuildInputs = async (
 			await assertRegularFile(resolve(path), environmentName, true)
 		}
 	}
+	return { rpmSecretSubkeyProtection }
 }
 
 export const buildRepositories = async (
@@ -2146,12 +2512,17 @@ export const buildRepositories = async (
 		options.inputDir === undefined
 			? undefined
 			: requiredEnvironmentPath("NFPM_RPM_KEY_FILE")
-	if (process.env.NFPM_RPM_PASSPHRASE !== undefined) {
-		throw new Error(
-			"Use NFPM_RPM_PASSPHRASE_FILE instead of exporting NFPM_RPM_PASSPHRASE",
-		)
+	for (const environmentName of [
+		"NFPM_RPM_PASSPHRASE",
+		"NFPM_RPM_PASSPHRASE_FILE",
+	]) {
+		if (process.env[environmentName] !== undefined) {
+			throw new Error(
+				`${environmentName} is not accepted; use DOTENC_RPM_GPG_PASSPHRASE_FILE so nFPM receives only a transient unencrypted subkey export`,
+			)
+		}
 	}
-	const rpmPassphrase = await readOptionalSecretFile("NFPM_RPM_PASSPHRASE_FILE")
+	let rpmPassphrase: Buffer | undefined
 	const apkPrivateKey = requiredEnvironmentPath("NFPM_APK_KEY_FILE")
 	const packageEnvironment = commonEnvironment(options.sourceDateEpoch)
 	const metadataEnvironment = commonEnvironment(options.publicationEpoch)
@@ -2163,7 +2534,25 @@ export const buildRepositories = async (
 	const gpgHomeRoot = await mkdtemp("/tmp/dotenc-gpg-")
 	try {
 		await chmod(gpgHomeRoot, 0o700)
-		await validateBuildInputs(
+		if (options.inputDir !== undefined) {
+			rpmPassphrase = await readOptionalSecretFile(
+				"DOTENC_RPM_GPG_PASSPHRASE_FILE",
+			)
+		}
+		const configuredSecretScratch =
+			process.env.DOTENC_PACKAGING_SECRET_SCRATCH_DIR
+		if (configuredSecretScratch === "") {
+			throw new Error("DOTENC_PACKAGING_SECRET_SCRATCH_DIR cannot be empty")
+		}
+		const secretScratchRoot =
+			configuredSecretScratch === undefined
+				? gpgHomeRoot
+				: resolve(configuredSecretScratch)
+		await assertPrivateDirectory(
+			secretScratchRoot,
+			"DOTENC_PACKAGING_SECRET_SCRATCH_DIR",
+		)
+		const validatedInputs = await validateBuildInputs(
 			options,
 			rpmPrivateKey,
 			apkPrivateKey,
@@ -2189,16 +2578,36 @@ export const buildRepositories = async (
 			)
 		} else {
 			if (rpmPrivateKey === undefined) throw new Error("RPM private key is required")
-			await buildNativePackages(
-				options,
-				publicRoot,
-				stagingRoot,
+			if (validatedInputs.rpmSecretSubkeyProtection === undefined) {
+				throw new Error("RPM secret-subkey protection was not validated")
+			}
+			const preparedRpmKey = await prepareNfpmRpmKey(
 				runner,
-				packageEnvironment,
 				rpmPrivateKey,
+				options.rpmGpgPrimaryFingerprint,
+				options.rpmGpgSigningFingerprint,
+				validatedInputs.rpmSecretSubkeyProtection,
 				rpmPassphrase,
-				apkPrivateKey,
-			)
+				gpgHomeRoot,
+				secretScratchRoot,
+				metadataEnvironment,
+			).finally(() => {
+				rpmPassphrase?.fill(0)
+				rpmPassphrase = undefined
+			})
+			try {
+				await buildNativePackages(
+					options,
+					publicRoot,
+					stagingRoot,
+					runner,
+					packageEnvironment,
+					preparedRpmKey.path,
+					apkPrivateKey,
+				)
+			} finally {
+				await preparedRpmKey.cleanup()
+			}
 			await writeAndSignPackageBundleManifest(
 				options,
 				publicRoot,
@@ -2251,6 +2660,7 @@ export const buildRepositories = async (
 		)
 		return manifest
 	} finally {
+		rpmPassphrase?.fill(0)
 		await rm(gpgHomeRoot, { recursive: true, force: true })
 	}
 }

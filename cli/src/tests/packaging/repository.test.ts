@@ -12,6 +12,7 @@ import { tmpdir } from "node:os"
 import { basename, dirname, join } from "node:path"
 import {
 	assertCurrentPublicationEpoch,
+	assertGpgPassphraseChangeStatus,
 	assertGpgvStatus,
 	assertNfpmVersion,
 	assertRpmSignatureStatus,
@@ -26,6 +27,7 @@ import {
 	createPackageBundleManifest,
 	createPublicationManifest,
 	immutableOpenPgpKeyFilename,
+	inspectSecretSubkeyExportPackets,
 	NFPM_VERSION,
 	packageRelativePaths,
 	parseCliOptions,
@@ -153,6 +155,27 @@ describe("repository option and policy primitives", () => {
 		expect(JSON.stringify(plan)).not.toContain("PASSPHRASE=")
 	})
 
+	test("rejects passphrases passed directly to nFPM", async () => {
+		const oldEnvironment = { ...process.env }
+		try {
+			process.env.NFPM_RPM_KEY_FILE = "/tmp/dotenc-test-rpm-key"
+			for (const environmentName of [
+				"NFPM_RPM_PASSPHRASE",
+				"NFPM_RPM_PASSPHRASE_FILE",
+			]) {
+				delete process.env.NFPM_RPM_PASSPHRASE
+				delete process.env.NFPM_RPM_PASSPHRASE_FILE
+				process.env[environmentName] = "must-not-reach-nfpm"
+				await expect(
+					buildRepositories(makeOptions("/tmp/dotenc-test")),
+				).rejects.toThrow(`${environmentName} is not accepted`)
+			}
+		} finally {
+			for (const key of Object.keys(process.env)) delete process.env[key]
+			Object.assign(process.env, oldEnvironment)
+		}
+	})
+
 	test("classifies atomic publication phases and cache policies", () => {
 		expect(
 			classifyPublishPath("apt/pool/main/d/dotenc/dotenc_1.2.3-1_amd64.deb"),
@@ -240,17 +263,62 @@ describe("key listing and signature status validation", () => {
 		).toThrow("declared signing identity")
 	})
 
-	test("accepts the GPG 2.4 offline-primary packet marker", () => {
-		const packets = `:secret key packet:
+	test("distinguishes protected source and unprotected transient RPM subkeys", () => {
+		const encryptedPackets = `:secret key packet:
 \tgnu-dummy, algo: 0
 :secret sub key packet:
 \titer+salt S2K, algo: 7, SHA1 protection`
-		expect(() => assertSecretSubkeyExportPackets(packets)).not.toThrow()
+		expect(inspectSecretSubkeyExportPackets(encryptedPackets)).toBe("encrypted")
+		const unencryptedPackets = `:secret key packet:
+\tgnu-dummy, algo: 0
+:secret sub key packet:
+\tskey[2]: [4096 bits]
+\tskey[3]: [2048 bits]
+\tskey[4]: [2048 bits]
+\tskey[5]: [2048 bits]
+\tchecksum: 1234`
+		expect(inspectSecretSubkeyExportPackets(unencryptedPackets)).toBe(
+			"unencrypted",
+		)
+		expect(() =>
+			assertSecretSubkeyExportPackets(unencryptedPackets),
+		).not.toThrow()
 		expect(() =>
 			assertSecretSubkeyExportPackets(
-				`${packets}\n:secret sub key packet:\n\titer+salt S2K`,
+				`${encryptedPackets}\n:secret sub key packet:\n\titer+salt S2K`,
 			),
 		).toThrow("exactly one usable secret subkey")
+		expect(() =>
+			inspectSecretSubkeyExportPackets(
+				`:secret key packet:\n\tgnu-dummy, algo: 0\n:secret sub key packet:\n\tkeyid: 1234`,
+			),
+		).toThrow("protection could not be determined")
+	})
+
+	test("accepts only the exact GPG passphrase-removal status protocol", () => {
+		const successfulStatus = `[GNUPG:] KEY_CONSIDERED ${RPM_PRIMARY} 0
+[GNUPG:] GET_HIDDEN passphrase.enter
+[GNUPG:] GOT_IT
+[GNUPG:] GET_HIDDEN passphrase.enter
+[GNUPG:] GOT_IT
+[GNUPG:] SUCCESS keyedit.passwd
+[GNUPG:] FAILURE gpg-exit 33554433`
+		expect(() =>
+			assertGpgPassphraseChangeStatus(successfulStatus),
+		).not.toThrow()
+		expect(() =>
+			assertGpgPassphraseChangeStatus(
+				successfulStatus.replace(
+					"[GNUPG:] SUCCESS keyedit.passwd",
+					"[GNUPG:] BAD_PASSPHRASE DEADBEEF",
+				),
+			),
+		).toThrow("did not unlock")
+		expect(() =>
+			assertGpgPassphraseChangeStatus(
+				successfulStatus.replace("[GNUPG:] GOT_IT\n", ""),
+			),
+		).toThrow("did not unlock")
 	})
 
 	test("requires RPM signature output from the declared signing subkey", () => {
@@ -322,7 +390,16 @@ describe("repository artifacts", () => {
 	})
 })
 
-const createFakeRunner = (options: BuildOptions): CommandRunner => {
+type FakeRunnerBehavior = {
+	failRpmBuild?: boolean
+	rpmSourceProtection?: "encrypted" | "unencrypted"
+	transientRpmKeyPaths?: string[]
+}
+
+const createFakeRunner = (
+	options: BuildOptions,
+	behavior: FakeRunnerBehavior = {},
+): CommandRunner => {
 	const publicListing = (primary: string, signing: string) =>
 		`${keyRecord("pub", primary, "c", options.publicationEpoch + 90 * 86400)}\n${keyRecord("sub", signing, "s", options.publicationEpoch + 90 * 86400)}`
 	const secretListing = (primary: string, signing: string) =>
@@ -334,22 +411,38 @@ const createFakeRunner = (options: BuildOptions): CommandRunner => {
 	) => {
 		expect(runOptions?.env?.UNRELATED_CI_SECRET).toBeUndefined()
 		const name = basename(command)
-		const secretGpgOperation =
+		const originalSecretGpgOperation =
 			name === "gpg" &&
-			(args.includes("--list-secret-keys") || args.includes("--local-user"))
-		if (name === "gpg" && !args.includes("--local-user")) {
+			(args.includes("--local-user") ||
+				(args.includes("--list-secret-keys") && !args.includes("--homedir")))
+		const explicitGpgHome = args.includes("--homedir")
+			? args[args.indexOf("--homedir") + 1]
+			: undefined
+		const stagedSecretGpgOperation =
+			name === "gpg" &&
+			explicitGpgHome?.includes("/nfpm-rpm-secret/") === true &&
+			[
+				"--import",
+				"--change-passphrase",
+				"--export-secret-subkeys",
+				"--list-secret-keys",
+			].some((argument) => args.includes(argument))
+		if (name === "gpg") {
 			expect(args).toContain("--no-options")
-			if (args.includes("--list-secret-keys")) {
-				expect(args).not.toContain("--no-autostart")
-			} else {
+			if (!originalSecretGpgOperation && !stagedSecretGpgOperation) {
 				expect(args).toContain("--no-autostart")
 			}
 		}
-		if (name === "gpgv" || (name === "gpg" && !secretGpgOperation)) {
+		if (
+			name === "gpgv" ||
+			(name === "gpg" &&
+				!originalSecretGpgOperation &&
+				!stagedSecretGpgOperation)
+		) {
 			const home = args[args.indexOf("--homedir") + 1]
 			expect(home).toStartWith("/tmp/dotenc-gpg-")
 		}
-		if (secretGpgOperation) {
+		if (originalSecretGpgOperation) {
 			const aptOperation = args.some(
 				(arg) => arg === APT_PRIMARY || arg === `${APT_SIGNING}!`,
 			)
@@ -358,6 +451,9 @@ const createFakeRunner = (options: BuildOptions): CommandRunner => {
 					aptOperation ? "DOTENC_APT_GNUPGHOME" : "DOTENC_RPM_GNUPGHOME"
 				],
 			)
+		} else if (stagedSecretGpgOperation) {
+			expect(explicitGpgHome).toContain("/nfpm-rpm-secret/")
+			expect(runOptions?.env?.GNUPGHOME).toBeUndefined()
 		} else {
 			expect(runOptions?.env?.GNUPGHOME).toBeUndefined()
 		}
@@ -367,6 +463,22 @@ const createFakeRunner = (options: BuildOptions): CommandRunner => {
 			assertSanitized(command, args, runOptions)
 			const name = basename(command)
 			if (name === "nfpm") {
+				if (args.includes("rpm")) {
+					const transientKey = runOptions.env?.NFPM_RPM_KEY_FILE
+					if (behavior.rpmSourceProtection === "unencrypted") {
+						expect(transientKey).toBe(process.env.NFPM_RPM_KEY_FILE)
+					} else {
+						expect(transientKey).toContain("/nfpm-rpm-secret/")
+					}
+					expect(runOptions.env?.NFPM_RPM_PASSPHRASE).toBeUndefined()
+					if (
+						transientKey !== undefined &&
+						behavior.rpmSourceProtection !== "unencrypted"
+					) {
+						behavior.transientRpmKeyPaths?.push(transientKey)
+					}
+					if (behavior.failRpmBuild) throw new Error("fake nFPM RPM failure")
+				}
 				const target = args[args.indexOf("--target") + 1]
 				if (target === undefined) throw new Error("missing fake nFPM target")
 				await mkdir(dirname(target), { recursive: true })
@@ -415,7 +527,8 @@ const createFakeRunner = (options: BuildOptions): CommandRunner => {
 				return
 			}
 			if (name === "gpg") {
-				const target = args[args.indexOf("--output") + 1]
+				const outputIndex = args.indexOf("--output")
+				const target = outputIndex === -1 ? undefined : args[outputIndex + 1]
 				if (target !== undefined) {
 					await mkdir(dirname(target), { recursive: true })
 					await writeFile(target, "gpg output")
@@ -426,6 +539,17 @@ const createFakeRunner = (options: BuildOptions): CommandRunner => {
 			assertSanitized(command, args, runOptions)
 			const name = basename(command)
 			if (name === "nfpm") return `nfpm version ${NFPM_VERSION}`
+			if (name === "gpg" && args.includes("--change-passphrase")) {
+				expect(runOptions.stderr).toBe("ignore")
+				expect(runOptions.acceptedExitCodes).toEqual([0, 2])
+				return `[GNUPG:] KEY_CONSIDERED ${RPM_PRIMARY} 0
+[GNUPG:] GET_HIDDEN passphrase.enter
+[GNUPG:] GOT_IT
+[GNUPG:] GET_HIDDEN passphrase.enter
+[GNUPG:] GOT_IT
+[GNUPG:] SUCCESS keyedit.passwd
+[GNUPG:] FAILURE gpg-exit 33554433`
+			}
 			if (
 				name === "gpg" &&
 				args.includes("--import-options") &&
@@ -442,7 +566,11 @@ const createFakeRunner = (options: BuildOptions): CommandRunner => {
 					: secretListing(RPM_PRIMARY, RPM_SIGNING)
 			}
 			if (name === "gpg" && args.includes("--list-packets")) {
-				return ":secret key packet:\ngnu-dummy, algo: 0\n:secret sub key packet:\niter+salt S2K\n"
+				const path = args.at(-1) ?? ""
+				return path.includes("rpm.secret-subkeys.unprotected.asc") ||
+					behavior.rpmSourceProtection === "unencrypted"
+					? ":secret key packet:\ngnu-dummy, algo: 0\n:secret sub key packet:\nskey[2]: [4096 bits]\nskey[3]: [2048 bits]\nskey[4]: [2048 bits]\nskey[5]: [2048 bits]\nchecksum: 1234\n"
+					: ":secret key packet:\ngnu-dummy, algo: 0\n:secret sub key packet:\niter+salt S2K\n"
 			}
 			if (name === "gpgv") {
 				const isApt = args.some(
@@ -508,22 +636,29 @@ describe("full build and metadata refresh orchestration", () => {
 		options.apkKeyName = `dotenc-${createHash("sha256").update(publicDer).digest("hex")}`
 		const apkPrivatePath = join(root, "apk-private.pem")
 		const rpmPrivatePath = join(root, "rpm-private.asc")
+		const rpmPassphrasePath = join(root, "rpm-passphrase")
 		await writeFile(apkPrivatePath, privateKey, { mode: 0o600 })
 		await writeFile(rpmPrivatePath, "fake secret export", { mode: 0o600 })
+		await writeFile(rpmPassphrasePath, "fake-rpm-passphrase", { mode: 0o600 })
 		await chmod(apkPrivatePath, 0o600)
 		await chmod(rpmPrivatePath, 0o600)
+		await chmod(rpmPassphrasePath, 0o600)
 		const oldEnvironment = { ...process.env }
 		process.env.NFPM_APK_KEY_FILE = apkPrivatePath
 		process.env.NFPM_RPM_KEY_FILE = rpmPrivatePath
 		process.env.DOTENC_APT_GNUPGHOME = join(root, "apt-gnupg")
 		process.env.DOTENC_RPM_GNUPGHOME = join(root, "rpm-gnupg")
+		process.env.DOTENC_RPM_GPG_PASSPHRASE_FILE = rpmPassphrasePath
 		process.env.UNRELATED_CI_SECRET = "must-not-leak"
 		try {
+			const transientRpmKeyPaths: string[] = []
 			const manifest = await buildRepositories(
 				options,
-				createFakeRunner(options),
+				createFakeRunner(options, { transientRpmKeyPaths }),
 			)
 			expect(manifest.objects.some((object) => object.phase === 3)).toBe(true)
+			expect(new Set(transientRpmKeyPaths).size).toBe(1)
+			await expect(access(transientRpmKeyPaths[0] as string)).rejects.toThrow()
 			const bundle = await createPackageBundleManifest(
 				join(options.outputDir, "public"),
 				options,
@@ -533,6 +668,37 @@ describe("full build and metadata refresh orchestration", () => {
 			expect(packageRelativePaths(options)).toHaveLength(6)
 			const sourceSignature = await readFile(
 				join(options.outputDir, "package-bundle-manifest.json.asc"),
+			)
+
+			const failedOptions = {
+				...options,
+				outputDir: join(root, "failed"),
+			}
+			const failedTransientRpmKeyPaths: string[] = []
+			await expect(
+				buildRepositories(
+					failedOptions,
+					createFakeRunner(failedOptions, {
+						failRpmBuild: true,
+						transientRpmKeyPaths: failedTransientRpmKeyPaths,
+					}),
+				),
+			).rejects.toThrow("fake nFPM RPM failure")
+			expect(new Set(failedTransientRpmKeyPaths).size).toBe(1)
+			await expect(
+				access(failedTransientRpmKeyPaths[0] as string),
+			).rejects.toThrow()
+
+			delete process.env.DOTENC_RPM_GPG_PASSPHRASE_FILE
+			const unprotectedOptions = {
+				...options,
+				outputDir: join(root, "unprotected-test-key"),
+			}
+			await buildRepositories(
+				unprotectedOptions,
+				createFakeRunner(unprotectedOptions, {
+					rpmSourceProtection: "unencrypted",
+				}),
 			)
 
 			const refreshOptions: BuildOptions = {
