@@ -324,8 +324,8 @@ export const canonicalizeReport = (value: unknown): EnvironmentDiffReport => {
 	}
 }
 
-const htmlCode = (value: string): string => {
-	const escaped = Array.from(value)
+const displayText = (value: string): string =>
+	Array.from(value)
 		.slice(0, 512)
 		.map((character) => {
 			const codePoint = character.codePointAt(0) ?? 0
@@ -339,6 +339,9 @@ const htmlCode = (value: string): string => {
 			return character
 		})
 		.join("")
+
+const htmlCode = (value: string): string => {
+	const escaped = displayText(value)
 		.replaceAll("&", "&amp;")
 		.replaceAll("<", "&lt;")
 		.replaceAll(">", "&gt;")
@@ -386,15 +389,15 @@ const environmentStatus = (status: EnvironmentDiff["status"]): string => {
 const reasonMessage = (reason: EnvironmentDiffReason | undefined): string =>
 	reason?.message || "The semantic changes could not be verified."
 
-const addChangeList = (
-	builder: MarkdownBuilder,
-	items: string[],
-	symbol: "+" | "~" | "-",
-): boolean => {
-	for (const item of items) {
-		if (!builder.add(`- ${htmlCode(`${symbol} ${item}`)}`)) return false
-	}
-	return true
+const changeLines = (items: string[], symbol: "+" | "~" | "-"): string[] =>
+	items.map((item) => `${symbol} ${item}`)
+
+const addDiffBlock = (builder: MarkdownBuilder, lines: string[]): boolean => {
+	const rendered = lines.map(displayText)
+	let fence = "```"
+	while (rendered.some((line) => line.includes(fence))) fence += "`"
+
+	return builder.add([`${fence}diff`, ...rendered, fence].join("\n"))
 }
 
 const addEnvironment = (
@@ -428,12 +431,13 @@ const addEnvironment = (
 		}
 	} else if (variableChangeCount === 0) {
 		if (!builder.add("No variable-name changes.")) return false
-	} else if (
-		!addChangeList(builder, environment.variables.changed, "~") ||
-		!addChangeList(builder, environment.variables.added, "+") ||
-		!addChangeList(builder, environment.variables.removed, "-")
-	) {
-		return false
+	} else {
+		const lines = [
+			...changeLines(environment.variables.changed, "~"),
+			...changeLines(environment.variables.added, "+"),
+			...changeLines(environment.variables.removed, "-"),
+		]
+		if (!addDiffBlock(builder, lines)) return false
 	}
 
 	if (!builder.add()) return false
@@ -454,25 +458,20 @@ const addEnvironment = (
 	} else if (accessChangeCount === 0) {
 		if (!builder.add("No recipient changes.")) return false
 	} else {
-		for (const rename of environment.access.renames) {
-			if (!builder.add(`- ${htmlCode(`~ ${rename.from} → ${rename.to}`)}`)) {
-				return false
-			}
-		}
-		if (
-			!addChangeList(
-				builder,
+		const lines = [
+			...environment.access.renames.map(
+				(rename) => `~ ${rename.from} → ${rename.to}`,
+			),
+			...changeLines(
 				environment.access.grants.map((grant) => grant.name),
 				"+",
-			) ||
-			!addChangeList(
-				builder,
+			),
+			...changeLines(
 				environment.access.revocations.map((revocation) => revocation.name),
 				"-",
-			)
-		) {
-			return false
-		}
+			),
+		]
+		if (!addDiffBlock(builder, lines)) return false
 	}
 
 	return builder.add()
@@ -490,10 +489,6 @@ export const renderReport = (
 		builder.add(COMMENT_MARKER)
 	}
 	builder.add("## dotenc environment diff")
-	builder.add()
-	builder.add(
-		"Variable values are never shown. Only variable names and recipient metadata are compared.",
-	)
 	builder.add()
 
 	if (report.environments.length === 0) {
@@ -513,10 +508,6 @@ export const renderReport = (
 		)
 		builder.add()
 	}
-	builder.add(
-		"_dotenc never includes values, value hashes, lengths, encrypted data keys, ciphertext, or private-key material in this report._",
-	)
-
 	const markdown = builder.toString()
 	if (byteLength(markdown) > ACTION_LIMITS.maxCommentBytes) {
 		throw new SafeActionError("report_render_limit")

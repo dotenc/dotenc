@@ -492,7 +492,9 @@ executes the action implementation at a reviewed full commit SHA and treats the
 base and head Git objects as untrusted data. The action resolves the event's
 exact commit and tree object IDs, downloads only matching `.env.*.enc` blobs
 through the GitHub API, applies bounded schemas and size limits, and escapes all
-untrusted Markdown. Its token permissions are limited to `contents: read` and
+untrusted Markdown outside code blocks. It neutralizes format controls and
+renders variable and recipient names inside dynamically delimited fenced code
+blocks. Its token permissions are limited to `contents: read` and
 `pull-requests: write`. The hardened example uses the workflow's `GITHUB_TOKEN`
 and enables `fail-on-error`, so a missing or unverified report cannot satisfy a
 required check while verified semantic changes remain informational.

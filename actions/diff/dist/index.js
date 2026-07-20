@@ -12202,14 +12202,15 @@ var canonicalizeReport = (value) => {
     environments: environments.sort((left, right) => compareText2(left.path, right.path))
   };
 };
+var displayText = (value) => Array.from(value).slice(0, 512).map((character) => {
+  const codePoint = character.codePointAt(0) ?? 0;
+  if (codePoint <= 31 || codePoint === 127 || /[\p{C}\p{Zl}\p{Zp}]/u.test(character)) {
+    return `U${codePoint.toString(16).toUpperCase().padStart(4, "0")}`;
+  }
+  return character;
+}).join("");
 var htmlCode = (value) => {
-  const escaped = Array.from(value).slice(0, 512).map((character) => {
-    const codePoint = character.codePointAt(0) ?? 0;
-    if (codePoint <= 31 || codePoint === 127 || /[\p{C}\p{Zl}\p{Zp}]/u.test(character)) {
-      return `U${codePoint.toString(16).toUpperCase().padStart(4, "0")}`;
-    }
-    return character;
-  }).join("").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll("`", "&#96;").replaceAll("[", "&#91;").replaceAll("]", "&#93;").replaceAll("(", "&#40;").replaceAll(")", "&#41;").replaceAll("@", "&#64;");
+  const escaped = displayText(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll("`", "&#96;").replaceAll("[", "&#91;").replaceAll("]", "&#93;").replaceAll("(", "&#40;").replaceAll(")", "&#41;").replaceAll("@", "&#64;");
   return `<code>${escaped}</code>`;
 };
 
@@ -12246,12 +12247,14 @@ var environmentStatus = (status) => {
   return "Environment modified";
 };
 var reasonMessage = (reason2) => reason2?.message || "The semantic changes could not be verified.";
-var addChangeList = (builder, items, symbol) => {
-  for (const item of items) {
-    if (!builder.add(`- ${htmlCode(`${symbol} ${item}`)}`))
-      return false;
-  }
-  return true;
+var changeLines = (items, symbol) => items.map((item) => `${symbol} ${item}`);
+var addDiffBlock = (builder, lines) => {
+  const rendered = lines.map(displayText);
+  let fence = "```";
+  while (rendered.some((line) => line.includes(fence)))
+    fence += "`";
+  return builder.add([`${fence}diff`, ...rendered, fence].join(`
+`));
 };
 var addEnvironment = (builder, environment) => {
   if (!builder.add(`### ${escapeMarkdown(environment.name)}`))
@@ -12275,8 +12278,14 @@ var addEnvironment = (builder, environment) => {
   } else if (variableChangeCount === 0) {
     if (!builder.add("No variable-name changes."))
       return false;
-  } else if (!addChangeList(builder, environment.variables.changed, "~") || !addChangeList(builder, environment.variables.added, "+") || !addChangeList(builder, environment.variables.removed, "-")) {
-    return false;
+  } else {
+    const lines = [
+      ...changeLines(environment.variables.changed, "~"),
+      ...changeLines(environment.variables.added, "+"),
+      ...changeLines(environment.variables.removed, "-")
+    ];
+    if (!addDiffBlock(builder, lines))
+      return false;
   }
   if (!builder.add())
     return false;
@@ -12293,14 +12302,13 @@ var addEnvironment = (builder, environment) => {
     if (!builder.add("No recipient changes."))
       return false;
   } else {
-    for (const rename of environment.access.renames) {
-      if (!builder.add(`- ${htmlCode(`~ ${rename.from} → ${rename.to}`)}`)) {
-        return false;
-      }
-    }
-    if (!addChangeList(builder, environment.access.grants.map((grant) => grant.name), "+") || !addChangeList(builder, environment.access.revocations.map((revocation) => revocation.name), "-")) {
+    const lines = [
+      ...environment.access.renames.map((rename) => `~ ${rename.from} → ${rename.to}`),
+      ...changeLines(environment.access.grants.map((grant) => grant.name), "+"),
+      ...changeLines(environment.access.revocations.map((revocation) => revocation.name), "-")
+    ];
+    if (!addDiffBlock(builder, lines))
       return false;
-    }
   }
   return builder.add();
 };
@@ -12311,8 +12319,6 @@ var renderReport = (report, options = {}) => {
     builder.add(COMMENT_MARKER);
   }
   builder.add("## dotenc environment diff");
-  builder.add();
-  builder.add("Variable values are never shown. Only variable names and recipient metadata are compared.");
   builder.add();
   if (report.environments.length === 0) {
     builder.add("No semantic dotenc environment changes were found. Re-encryption-only changes are ignored.");
@@ -12327,7 +12333,6 @@ var renderReport = (report, options = {}) => {
     builder.add("> Display truncated at the action's safe comment-size limit. The machine-readable report remains available as the action output.");
     builder.add();
   }
-  builder.add("_dotenc never includes values, value hashes, lengths, encrypted data keys, ciphertext, or private-key material in this report._");
   const markdown = builder.toString();
   if (byteLength(markdown) > ACTION_LIMITS.maxCommentBytes) {
     throw new SafeActionError("report_render_limit");

@@ -293,8 +293,9 @@ The supplied workflow maintains that trust boundary:
 - It validates encrypted-file schemas and accepts at most 100 files per side,
   1 MiB per encrypted file, 10 MiB total input, and 1,024 bytes per path. Each
   environment is capped at 256 recipients, 1 MiB of decrypted plaintext in
-  memory, and 4,096 variables. Paths, JSON fields, variable names, and
-  recipient names are escaped before Markdown rendering.
+  memory, and 4,096 variables. Paths and headings are escaped for Markdown;
+  variable and recipient names have format controls neutralized and render only
+  inside dynamically delimited fenced code blocks.
 - It never persists decrypted plaintext and never reports values, hashes,
   lengths, prefixes, private-key material, passphrases, encrypted data keys, or
   ciphertext. Malformed or undecryptable input produces a bounded, sanitized

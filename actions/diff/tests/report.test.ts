@@ -33,7 +33,9 @@ describe("redacted Markdown report", () => {
 						status: "available",
 						grants: [{ name: "ci-production", fingerprint: "fp-ci" }],
 						revocations: [{ name: "contractor-john", fingerprint: "fp-old" }],
-						renames: [],
+						renames: [
+							{ fingerprint: "fp-rename", from: "ci-old", to: "ci-new" },
+						],
 					},
 				},
 			],
@@ -41,11 +43,26 @@ describe("redacted Markdown report", () => {
 
 		const markdown = renderReport(report, { includeMarker: true })
 		expect(markdown.startsWith(COMMENT_MARKER)).toBe(true)
-		expect(markdown).toContain("~ DATABASE_URL")
-		expect(markdown).toContain("+ OPENAI_API_KEY")
-		expect(markdown).toContain("- LEGACY_TOKEN")
-		expect(markdown).toContain("+ ci-production")
-		expect(markdown).toContain("- contractor-john")
+		expect(markdown).toContain(
+			[
+				"```diff",
+				"~ DATABASE_URL",
+				"+ OPENAI_API_KEY",
+				"- LEGACY_TOKEN",
+				"```",
+			].join("\n"),
+		)
+		expect(markdown).toContain(
+			[
+				"```diff",
+				"~ ci-old → ci-new",
+				"+ ci-production",
+				"- contractor-john",
+				"```",
+			].join("\n"),
+		)
+		expect(markdown).not.toContain("Variable values are never shown")
+		expect(markdown).not.toContain("dotenc never includes values")
 		expect(markdown).not.toContain("encryptedDataKey")
 	})
 
@@ -77,10 +94,10 @@ describe("redacted Markdown report", () => {
 		expect(markdown).toContain("+ A.B")
 		expect(markdown).toContain("+ A-B")
 		expect(markdown).toContain("+ 1A")
-		expect(markdown).not.toContain("@team")
+		expect(markdown).toContain("+ @team")
 	})
 
-	test("neutralizes Markdown, HTML, line breaks, and bidi controls", () => {
+	test("keeps untrusted names inside dynamic fences and neutralizes controls", () => {
 		const report: EnvironmentDiffReport = {
 			schemaVersion: 1,
 			environments: [
@@ -90,13 +107,15 @@ describe("redacted Markdown report", () => {
 					status: "modified",
 					variables: {
 						status: "available",
-						added: ["@team/<script>alert(1)</script>\n# heading"],
+						added: ["@team/<script>alert(1)</script>\n# heading```"],
 						changed: [],
 						removed: [],
 					},
 					access: {
 						...emptyAccess,
-						grants: [{ name: "[click](javascript:bad)", fingerprint: "fp" }],
+						grants: [
+							{ name: "[click](javascript:bad)````", fingerprint: "fp" },
+						],
 					},
 				},
 			],
@@ -104,11 +123,18 @@ describe("redacted Markdown report", () => {
 
 		const markdown = renderReport(report)
 		expect(markdown).not.toContain("<img")
-		expect(markdown).not.toContain("<script")
-		expect(markdown).not.toContain("javascript:bad)")
 		expect(markdown).not.toContain("@octocat")
-		expect(markdown).not.toContain("@team")
 		expect(markdown).not.toContain("\n## injected")
+		expect(markdown).toContain(
+			[
+				"````diff",
+				"+ @team/<script>alert(1)</script>U000A# heading```",
+				"````",
+			].join("\n"),
+		)
+		expect(markdown).toContain(
+			["`````diff", "+ [click](javascript:bad)````", "`````"].join("\n"),
+		)
 		expect(markdown).toContain("U000A")
 		expect(markdown).toContain("U202E")
 	})
@@ -134,10 +160,37 @@ describe("redacted Markdown report", () => {
 					},
 					access: emptyAccess,
 				},
+				{
+					path: ".env.staging.enc",
+					name: "staging",
+					status: "modified",
+					variables: {
+						status: "available",
+						added: [],
+						changed: [],
+						removed: [],
+					},
+					access: {
+						status: "unavailable",
+						grants: [],
+						revocations: [],
+						renames: [],
+						reason: {
+							code: "base_recipient_metadata_invalid",
+							message:
+								"Access diff unavailable because the base recipient metadata is invalid.",
+						},
+					},
+				},
 			],
 		}
 
 		expect(reportHasChanges(report)).toBe(true)
-		expect(renderReport(report)).toContain("Variable diff unavailable")
+		const markdown = renderReport(report)
+		expect(markdown).toContain("Variable diff unavailable")
+		expect(markdown).toContain("No recipient changes.")
+		expect(markdown).toContain("No variable-name changes.")
+		expect(markdown).toContain("Access diff unavailable")
+		expect(markdown).not.toContain("```diff")
 	})
 })
