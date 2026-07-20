@@ -154,11 +154,31 @@ export const createCommand = async (
 		process.exit(1)
 	}
 
-	await fs.writeFile(
-		path.join(targetDir, `.env.${environmentName}.enc`),
-		JSON.stringify(environmentJson, null, 2),
-		"utf-8",
-	)
+	const environmentPath = path.join(targetDir, `.env.${environmentName}.enc`)
+
+	try {
+		await fs.writeFile(
+			environmentPath,
+			JSON.stringify(environmentJson, null, 2),
+			{
+				encoding: "utf-8",
+				flag: "wx",
+			},
+		)
+	} catch (error) {
+		if (
+			error instanceof Error &&
+			(error as NodeJS.ErrnoException).code === "EEXIST"
+		) {
+			console.error(
+				`${chalk.red("Error:")} environment ${environmentName} already exists. To edit it, use ${chalk.gray(
+					`dotenc env edit ${environmentName}`,
+				)}`,
+			)
+			process.exit(1)
+		}
+		throw error
+	}
 
 	// Output success message
 	console.log(

@@ -17,6 +17,7 @@
 - 🌍 Supports multiple and extensible environments
 - 👤 Personal encrypted environments per developer
 - 🔄 Automatic data key rotation on edits
+- 🔍 Readable local Git diffs for encrypted environments
 - 🛡️ Supports both RSA and Ed25519 SSH keys
 - 🤖 Ready for the AI era — check out the official [dotenc skill](https://www.skills.sh/dotenc/skills/dotenc)
 
@@ -33,15 +34,56 @@ No external services.
 Uses your existing SSH keys.
 Done.
 
+## Installation
+
+### Homebrew (macOS / Linux)
+
+```bash
+brew tap ivanfilhoz/dotenc
+brew install dotenc
+```
+
+### Scoop (Windows)
+
+```bash
+scoop bucket add dotenc https://github.com/ivanfilhoz/scoop-dotenc
+scoop install dotenc
+```
+
+### npm
+
+```bash
+npm install -g @dotenc/cli
+```
+
+### Standalone binary
+
+Download the latest binary for your platform from the [GitHub Releases](https://github.com/dotenc/dotenc/releases) page.
+
+### Docker / OCI image
+
+```bash
+docker run --rm ghcr.io/dotenc/cli:latest --version
+docker run --rm ghcr.io/dotenc/cli:alpine --version
+```
+
+The default tags use Debian/glibc; `alpine` and `-alpine` tags use Alpine/musl.
+Both variants contain the standalone dotenc binary plus minimal SSH-key runtime
+support for `linux/amd64` and `linux/arm64`. They do not include an application
+runtime or provider CLIs: copy the matching binary into the application's
+existing image. See the [OCI image guide](https://github.com/dotenc/dotenc/blob/main/docs/OCI_IMAGE.md)
+for tags, multi-stage examples, pinning, and security notes.
+
 ## Table of Contents
 
 - [Features](#features)
 - [Getting Started](#getting-started)
+- [Installation](#installation)
 - [Why?](#why)
 - [Security Model](#security-model)
 - [How It Works](#how-it-works)
   - [Project Structure](#project-structure)
-- [Installation](#installation)
+- [Readable local Git diffs](#readable-local-git-diffs)
 - [Basic Usage](#basic-usage)
   - [Setup](#setup)
   - [Creating a new environment](#creating-a-new-environment)
@@ -126,45 +168,17 @@ After setup, your project will look like:
 
 Encrypted files are committed to Git. Public keys are stored inside `.dotenc/`. Each developer gets a personal encrypted environment (e.g., `.env.alice.enc`).
 
-## Installation
+## Readable local Git diffs
 
-### Homebrew (macOS / Linux)
+![dotenc — animated terminal demo showing an encrypted environment rendered as a readable local Git diff](https://raw.githubusercontent.com/dotenc/dotenc/main/assets/demos/git-diff.webp)
 
-```bash
-brew tap ivanfilhoz/dotenc
-brew install dotenc
-```
+### How does Git diff work?
 
-### Scoop (Windows)
+Seamlessly. dotenc connects encrypted environment files to Git's native diff pipeline. When an authorized developer runs `git diff`, dotenc decrypts both revisions locally with their SSH key and shows the change that matters—a variable added, removed, or updated—instead of a wall of regenerated ciphertext.
 
-```bash
-scoop bucket add dotenc https://github.com/ivanfilhoz/scoop-dotenc
-scoop install dotenc
-```
+Only encrypted `.env.*.enc` files are stored and committed. The readable view exists only on the developer's machine, so local reviews stay clear without a manual decrypt-and-re-encrypt workflow—even though every edit rotates the data key and rewrites the ciphertext.
 
-### npm
-
-```bash
-npm install -g @dotenc/cli
-```
-
-### Standalone binary
-
-Download the latest binary for your platform from the [GitHub Releases](https://github.com/dotenc/dotenc/releases) page.
-
-### Docker / OCI image
-
-```bash
-docker run --rm ghcr.io/dotenc/cli:latest --version
-docker run --rm ghcr.io/dotenc/cli:alpine --version
-```
-
-The default tags use Debian/glibc; `alpine` and `-alpine` tags use Alpine/musl.
-Both variants contain the standalone dotenc binary plus minimal SSH-key runtime
-support for `linux/amd64` and `linux/arm64`. They do not include an application
-runtime or provider CLIs: copy the matching binary into the application's
-existing image. See the [OCI image guide](https://github.com/dotenc/dotenc/blob/main/docs/OCI_IMAGE.md)
-for tags, multi-stage examples, pinning, and security notes.
+`dotenc init` configures this automatically. Run it once in every clone. When it detects an existing dotenc project, it configures the clone-local Git driver without changing keys, environments, or access rules.
 
 ## Basic Usage
 
@@ -174,13 +188,15 @@ for tags, multi-stage examples, pinning, and security notes.
 dotenc init
 ```
 
-This will interactively guide you through the setup process:
+In a new project, this interactively guides you through the setup process:
 
 1. Scanning your `~/.ssh/` directory for SSH keys (Ed25519, RSA, etc.);
 2. Prompting for your username (defaults to your system username);
 3. Letting you choose which SSH key to use;
 4. Deriving the public key and storing it in `.dotenc/` (e.g., `.dotenc/alice.pub`);
 5. Creating encrypted `development` and personal environments (e.g., `.env.development.enc`, `.env.alice.enc`).
+
+In an existing clone, `dotenc init` only enables the local Git diff integration. It does not prompt for an identity or recreate keys and environments, so it is safe to run after every clone.
 
 No keys to generate. If you already have an SSH key (and you probably do), you're ready to go.
 

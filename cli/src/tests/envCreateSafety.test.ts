@@ -8,6 +8,7 @@ import {
 	rmSync,
 	writeFileSync,
 } from "node:fs"
+import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { createCommand } from "../commands/env/create"
@@ -63,5 +64,26 @@ describe("createCommand safety", () => {
 		}
 		expect(parsed.keys.length).toBe(1)
 		expect(parsed.keys[0].name).toBe("alice")
+	})
+
+	test("uses an exclusive write so a concurrent file cannot be overwritten", async () => {
+		const collision = Object.assign(new Error("already exists"), {
+			code: "EEXIST",
+		})
+		const writeFileSpy = spyOn(fs, "writeFile").mockRejectedValue(collision)
+
+		try {
+			await expect(createCommand("staging", "alice")).rejects.toThrow(
+				"process.exit(1)",
+			)
+			expect(writeFileSpy).toHaveBeenCalledTimes(1)
+			expect(writeFileSpy.mock.calls[0]?.[2]).toMatchObject({
+				encoding: "utf-8",
+				flag: "wx",
+			})
+			expect(exitSpy).toHaveBeenCalledWith(1)
+		} finally {
+			writeFileSpy.mockRestore()
+		}
 	})
 })

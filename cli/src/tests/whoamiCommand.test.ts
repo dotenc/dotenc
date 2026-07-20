@@ -90,6 +90,9 @@ describe("whoamiCommand", () => {
 		await expect(whoamiCommand()).rejects.toThrow("exit(1)")
 
 		expect(exitSpy).toHaveBeenCalledWith(1)
+		expect(String(logErrorSpy.mock.calls[0]?.[0])).toContain(
+			"ask a project member",
+		)
 		logErrorSpy.mockRestore()
 		exitSpy.mockRestore()
 		cwdSpy.mockRestore()

@@ -36,6 +36,15 @@ const expectedRecordingText: Record<Scene, string[]> = {
 		"dotenc dev node app.js",
 		"Hello from dotenc!",
 	],
+	"git-diff": [
+		"git status --short",
+		"M .env.development.enc",
+		"git diff -- .env.development.enc",
+		"diff --git a/.env.development.enc b/.env.development.enc",
+		"index 1234567..89abcde 100644",
+		"-FEATURE_CHECKOUT=false",
+		"+FEATURE_CHECKOUT=true",
+	],
 }
 
 if (import.meta.main) {
@@ -69,7 +78,7 @@ async function checkScene(scene: Scene) {
 			)
 		}
 	}
-	assertNanoTyping(parsedRecording.records)
+	if (scene === "quickstart") assertNanoTyping(parsedRecording.records)
 
 	const webp = await fs.readFile(assetPath(scene))
 	const { width, height, backgroundColor, loopCount, frameDurations } =

@@ -43,6 +43,11 @@ authoring-only Expect helper types and saves the fake greeting through the
 editor. It invokes the real `dev` command action directly, avoiding the CLI's
 unrelated network update check during authoring.
 
+The git-diff scene silently commits a fake encrypted baseline, rotates and
+re-encrypts it, then runs the real Git textconv flow. Only the visible `git`
+commands are recorded, and randomized blob hashes are normalized before the
+recording is committed.
+
 The committed outputs are:
 
 - `scripts/readme-demos/recordings/*.yml` — sanitized, reviewable Terminalizer

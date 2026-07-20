@@ -194,6 +194,12 @@ All grant and revoke operations are reflected in Git-tracked files, providing a 
 
 When any dotenc command runs, it resolves the **project root** by walking ancestor directories from the current working directory, looking for a `.dotenc/` folder. Key material (public keys) is always read from and written to this resolved root, regardless of where the command was invoked. If no `.dotenc/` folder is found at any ancestor level, the command falls back to the current directory (which applies during `dotenc init` flows).
 
+### Initialization and Clone-Local Git Integration
+
+On first initialization, dotenc registers the selected public key and creates the encrypted development and personal environments. If a plaintext `.env` is migrated, it is removed only after the encrypted development environment has been created successfully. New environment files use exclusive, no-clobber writes, so a file that appears concurrently cannot be overwritten.
+
+When `dotenc init` detects an existing project, it performs Git setup only: it configures `diff.dotenc.textconv` in that clone's local Git configuration and ensures the repository's `*.enc` diff attribute. It does not prompt for or modify identities, keys, encrypted environments, access rules, or a local plaintext `.env`. The Git subprocess result is checked before `.gitattributes` is changed, so a configuration failure aborts without reporting success or leaving a tracked attribute change.
+
 ### Hierarchical Environment Loading
 
 `dotenc run` and `dotenc dev` support a hierarchical merge model for monorepo projects:

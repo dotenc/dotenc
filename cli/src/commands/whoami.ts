@@ -30,7 +30,7 @@ export const whoamiCommand = async () => {
 			console.error(passphraseProtectedKeyError(passphraseProtectedKeys))
 		} else {
 			console.error(
-				'No matching key found in this project. Run "dotenc init" to set up your identity.',
+				'No matching key found in this project. For a new project, run "dotenc init". In an existing project, ask a project member to add your public key and grant access.',
 			)
 		}
 		process.exit(1)

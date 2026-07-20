@@ -52,6 +52,7 @@ describe("devCommand", () => {
 		expect(errSpy).toHaveBeenCalledTimes(1)
 		const [errorMessage] = errSpy.mock.calls[0] as [string]
 		expect(errorMessage).toContain("could not resolve your identity")
+		expect(errorMessage).toContain("ask a project member")
 		errSpy.mockRestore()
 		exitSpy.mockRestore()
 	})

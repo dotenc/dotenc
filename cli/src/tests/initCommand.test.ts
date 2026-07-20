@@ -25,7 +25,12 @@ const choosePrivateKeyPromptMock = mock(async (_message: string) => {
 	}
 })
 const keyAddCommandMock = mock(async (_name: string, _options: unknown) => {})
-const setupGitDiffMock = mock(() => {})
+const setupGitDiffMock = mock((_projectRoot?: string) => {})
+const resolveProjectRootMock = mock(
+	(_startDir: string, _exists: (filePath: string) => boolean): string => {
+		throw new Error("not initialized")
+	},
+)
 const existsSyncMock = mock((_p: unknown) => false)
 const readFileMock = mock(async (_p: unknown, _enc?: unknown) => "")
 const unlinkMock = mock(async (_p: unknown) => {})
@@ -48,6 +53,9 @@ mock.module("../commands/key/add", () => ({
 mock.module("../helpers/setupGitDiff", () => ({
 	setupGitDiff: setupGitDiffMock,
 }))
+mock.module("../helpers/resolveProjectRoot", () => ({
+	resolveProjectRoot: resolveProjectRootMock,
+}))
 mock.module("node:fs", () => ({ ...realFs, existsSync: existsSyncMock }))
 mock.module("node:fs/promises", () => ({
 	...realFsPromises,
@@ -65,6 +73,7 @@ beforeEach(() => {
 	choosePrivateKeyPromptMock.mockClear()
 	keyAddCommandMock.mockClear()
 	setupGitDiffMock.mockClear()
+	resolveProjectRootMock.mockClear()
 	existsSyncMock.mockClear()
 	readFileMock.mockClear()
 	unlinkMock.mockClear()
@@ -87,6 +96,9 @@ beforeEach(() => {
 	})
 	keyAddCommandMock.mockImplementation(async () => {})
 	setupGitDiffMock.mockImplementation(() => {})
+	resolveProjectRootMock.mockImplementation(() => {
+		throw new Error("not initialized")
+	})
 	existsSyncMock.mockImplementation(() => false)
 	readFileMock.mockImplementation(async () => "")
 	unlinkMock.mockImplementation(async () => {})
@@ -126,6 +138,71 @@ describe("initCommand", () => {
 		errSpy.mockRestore()
 		logSpy.mockRestore()
 		exitSpy.mockRestore()
+	})
+
+	test("configures an existing clone without changing project data", async () => {
+		resolveProjectRootMock.mockImplementation(() => CWD)
+		const logs: string[] = []
+		const logSpy = spyOn(console, "log").mockImplementation((message) =>
+			logs.push(String(message)),
+		)
+
+		await initCommand({})
+
+		expect(setupGitDiffMock).toHaveBeenCalledTimes(1)
+		expect(setupGitDiffMock).toHaveBeenCalledWith(CWD)
+		expect(inputNamePromptMock).not.toHaveBeenCalled()
+		expect(choosePrivateKeyPromptMock).not.toHaveBeenCalled()
+		expect(keyAddCommandMock).not.toHaveBeenCalled()
+		expect(createCommandMock).not.toHaveBeenCalled()
+		expect(readFileMock).not.toHaveBeenCalled()
+		expect(unlinkMock).not.toHaveBeenCalled()
+		expect(logs.some((line) => line.includes("Existing dotenc project"))).toBe(
+			true,
+		)
+		expect(
+			logs.some((line) => line.includes("Git diff driver configured")),
+		).toBe(true)
+		expect(
+			logs.some((line) =>
+				line.includes("No keys or environments were changed"),
+			),
+		).toBe(true)
+
+		logSpy.mockRestore()
+	})
+
+	test("warns when first-initialization options are ignored in an existing clone", async () => {
+		resolveProjectRootMock.mockImplementation(() => CWD)
+		const logSpy = spyOn(console, "log").mockImplementation(() => {})
+		const warnSpy = spyOn(console, "warn").mockImplementation(() => {})
+
+		await initCommand({ name: "alice", privateKey: "id_ed25519" })
+
+		expect(warnSpy).toHaveBeenCalledTimes(1)
+		expect(String(warnSpy.mock.calls[0]?.[0])).toContain("were ignored")
+		expect(String(warnSpy.mock.calls[0]?.[0])).toContain("dotenc key add")
+		expect(choosePrivateKeyPromptMock).not.toHaveBeenCalled()
+		expect(keyAddCommandMock).not.toHaveBeenCalled()
+		expect(createCommandMock).not.toHaveBeenCalled()
+
+		logSpy.mockRestore()
+		warnSpy.mockRestore()
+	})
+
+	test("surfaces git setup failures without changing an existing project", async () => {
+		resolveProjectRootMock.mockImplementation(() => CWD)
+		setupGitDiffMock.mockImplementation(() => {
+			throw new Error("git config failed")
+		})
+
+		await expect(initCommand({})).rejects.toThrow("git config failed")
+		expect(inputNamePromptMock).not.toHaveBeenCalled()
+		expect(choosePrivateKeyPromptMock).not.toHaveBeenCalled()
+		expect(keyAddCommandMock).not.toHaveBeenCalled()
+		expect(createCommandMock).not.toHaveBeenCalled()
+		expect(readFileMock).not.toHaveBeenCalled()
+		expect(unlinkMock).not.toHaveBeenCalled()
 	})
 
 	test("migrates .env and creates development + personal environments", async () => {
@@ -179,6 +256,30 @@ describe("initCommand", () => {
 		logSpy.mockRestore()
 		warnSpy.mockRestore()
 		errSpy.mockRestore()
+	})
+
+	test("preserves .env when development environment creation fails", async () => {
+		const envPath = path.join(CWD, ".env")
+		existsSyncMock.mockImplementation(
+			(filePath) => String(filePath) === envPath,
+		)
+		readFileMock.mockImplementation(async () => "API_KEY=keep-me\n")
+		createCommandMock.mockImplementation(async () => {
+			throw new Error("environment creation failed")
+		})
+
+		const cwdSpy = spyOn(process, "cwd").mockReturnValue(CWD)
+		const logSpy = spyOn(console, "log").mockImplementation(() => {})
+
+		await expect(initCommand({ name: "alice" })).rejects.toThrow(
+			"environment creation failed",
+		)
+
+		expect(readFileMock).toHaveBeenCalledWith(envPath, "utf-8")
+		expect(unlinkMock).not.toHaveBeenCalled()
+
+		cwdSpy.mockRestore()
+		logSpy.mockRestore()
 	})
 
 	test("continues when git diff setup fails and skips personal environment for development user", async () => {

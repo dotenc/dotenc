@@ -1,5 +1,11 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
-import { mkdtempSync, readFileSync, existsSync, rmSync } from "node:fs"
+import {
+	existsSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { generateEd25519Key, runCli, createMockEditor } from "../helpers/cli"
@@ -46,6 +52,33 @@ describe("Git Diff Textconv", () => {
 
 		const content = readFileSync(gitattributes, "utf-8")
 		expect(content).toContain("*.enc diff=dotenc")
+	}, TIMEOUT)
+
+	test("init configures an existing clone without changing project data", () => {
+		const developmentPath = path.join(workspace, ".env.development.enc")
+		const personalPath = path.join(workspace, ".env.alice.enc")
+		const plaintextPath = path.join(workspace, ".env")
+		const developmentBefore = readFileSync(developmentPath, "utf-8")
+		const personalBefore = readFileSync(personalPath, "utf-8")
+		const plaintextContent = "LOCAL_ONLY=preserve-me\n"
+		writeFileSync(plaintextPath, plaintextContent, "utf-8")
+
+		git(workspace, ["config", "--unset-all", "diff.dotenc.textconv"])
+		const statusBefore = git(workspace, ["status", "--short"]).stdout
+
+		const result = runCli(home, workspace, ["init"])
+
+		expect(result.exitCode).toBe(0)
+		expect(result.stdout).toContain("Existing dotenc project detected")
+		expect(result.stdout).toContain("Git diff driver configured for this clone")
+		expect(result.stdout).toContain("No keys or environments were changed")
+		expect(readFileSync(developmentPath, "utf-8")).toBe(developmentBefore)
+		expect(readFileSync(personalPath, "utf-8")).toBe(personalBefore)
+		expect(readFileSync(plaintextPath, "utf-8")).toBe(plaintextContent)
+		expect(git(workspace, ["status", "--short"]).stdout).toBe(statusBefore)
+		expect(
+			git(workspace, ["config", "--get", "diff.dotenc.textconv"]).stdout.trim(),
+		).toBe("dotenc textconv")
 	}, TIMEOUT)
 
 	test("create and edit environment", () => {

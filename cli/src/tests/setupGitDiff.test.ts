@@ -1,6 +1,13 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { execSync } from "node:child_process"
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { setupGitDiff } from "../helpers/setupGitDiff"
@@ -50,5 +57,34 @@ describe("setupGitDiff", () => {
 			encoding: "utf-8",
 		}).trim()
 		expect(result).toBe("dotenc textconv")
+	})
+
+	test("targets an explicit project root from a nested directory", () => {
+		const nestedDir = path.join(tmpDir, "packages", "app")
+		mkdirSync(nestedDir, { recursive: true })
+		process.chdir(nestedDir)
+
+		try {
+			setupGitDiff(tmpDir)
+			expect(existsSync(path.join(tmpDir, ".gitattributes"))).toBe(true)
+			expect(existsSync(path.join(nestedDir, ".gitattributes"))).toBe(false)
+		} finally {
+			process.chdir(tmpDir)
+		}
+	})
+
+	test("throws when git cannot configure the local driver", () => {
+		const nonGitDir = mkdtempSync(
+			path.join(os.tmpdir(), "test-gitdiff-no-git-"),
+		)
+
+		try {
+			expect(() => setupGitDiff(nonGitDir)).toThrow(
+				"Make sure this is a Git repository",
+			)
+			expect(existsSync(path.join(nonGitDir, ".gitattributes"))).toBe(false)
+		} finally {
+			rmSync(nonGitDir, { recursive: true, force: true })
+		}
 	})
 })

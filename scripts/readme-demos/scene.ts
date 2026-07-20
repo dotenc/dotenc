@@ -2,6 +2,7 @@ import { spawn } from "node:child_process"
 import fs from "node:fs/promises"
 import path from "node:path"
 import { devCommand } from "../../cli/src/commands/dev"
+import { encryptEnvironment } from "../../cli/src/helpers/encryptEnvironment"
 import { parseSceneSelection, repoRoot, type Scene } from "./lib"
 
 const green = "\u001b[32m"
@@ -22,6 +23,7 @@ const childEnvironment = {
 	HOME: demoHome,
 	USER: "alice",
 	LOGNAME: "alice",
+	GIT_PAGER: "cat",
 	EDITOR: [process.execPath, nanoEditorEntry]
 		.map((argument) => JSON.stringify(argument))
 		.join(" "),
@@ -100,6 +102,10 @@ const generateKey = async (fileName: string, comment: string) => {
 const initializeFixture = async () => {
 	await fs.mkdir(projectDir, { recursive: true, mode: 0o700 })
 	await run("git", ["init", "-q"], { quiet: true })
+	await run("git", ["config", "user.name", "Dotenc Demo"], { quiet: true })
+	await run("git", ["config", "user.email", "demo@dotenc.invalid"], {
+		quiet: true,
+	})
 	await generateKey("id_ed25519", "alice@dotenc-demo.invalid")
 }
 
@@ -127,7 +133,62 @@ const quickstart = async () => {
 	await devCommand("node", ["app.js"])
 }
 
-const scenes: Record<Scene, () => Promise<void>> = { quickstart }
+const gitDiff = async () => {
+	await initializeFixture()
+	await fs.writeFile(
+		path.join(projectDir, ".env"),
+		[
+			"APP_NAME=dotenc-demo",
+			"FEATURE_CHECKOUT=false",
+			"API_URL=https://sandbox.example.test",
+			"LOG_LEVEL=info",
+			"CACHE_TTL=300",
+			"REGION=local",
+			"",
+		].join("\n"),
+		{ mode: 0o600 },
+	)
+	await runCli(["init", "--name", "alice", "--private-key", "id_ed25519"], true)
+
+	// Git invokes the same hidden textconv command configured by `dotenc init`.
+	// Point it at this checkout's CLI because the authoring environment must not
+	// depend on a globally installed dotenc binary.
+	const textconv = [process.execPath, cliEntry, "textconv"]
+		.map((argument) => JSON.stringify(argument))
+		.join(" ")
+	await run("git", ["config", "--local", "diff.dotenc.textconv", textconv], {
+		quiet: true,
+	})
+	await run("git", ["add", "."], { quiet: true })
+	await run("git", ["commit", "-q", "-m", "Add encrypted environment"], {
+		quiet: true,
+	})
+
+	await encryptEnvironment(
+		"development",
+		[
+			"APP_NAME=dotenc-demo",
+			"FEATURE_CHECKOUT=true",
+			"API_URL=https://sandbox.example.test",
+			"LOG_LEVEL=info",
+			"CACHE_TTL=300",
+			"REGION=local",
+			"",
+		].join("\n"),
+		{ baseDir: projectDir },
+	)
+
+	await showCommand("git status --short")
+	await run("git", ["status", "--short"])
+
+	await showCommand("git diff -- .env.development.enc")
+	await run("git", ["diff", "--", ".env.development.enc"])
+}
+
+const scenes: Record<Scene, () => Promise<void>> = {
+	quickstart,
+	"git-diff": gitDiff,
+}
 
 try {
 	await scenes[scene]()

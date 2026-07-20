@@ -5,6 +5,7 @@ import os from "node:os"
 import path from "node:path"
 import chalk from "chalk"
 import pkg from "../../package.json"
+import { resolveProjectRoot } from "../helpers/resolveProjectRoot"
 import { setupGitDiff } from "../helpers/setupGitDiff"
 import { choosePrivateKeyPrompt } from "../prompts/choosePrivateKey"
 import { inputNamePrompt } from "../prompts/inputName"
@@ -31,6 +32,30 @@ export const _resolveDocsUrl = () => {
 }
 
 export const initCommand = async (options: Options) => {
+	const invocationDir = process.cwd()
+	let existingProjectRoot: string | undefined
+
+	try {
+		existingProjectRoot = resolveProjectRoot(invocationDir, existsSync)
+	} catch {
+		// No existing project: continue with first-time initialization below.
+	}
+
+	if (existingProjectRoot) {
+		if (options.name || options.privateKey) {
+			console.warn(
+				`${chalk.yellow("Warning:")} ${chalk.gray("--name")} and ${chalk.gray("--private-key")} only apply when creating a new project and were ignored. Use ${chalk.gray("dotenc key add")} to register another key.`,
+			)
+		}
+		setupGitDiff(existingProjectRoot)
+		console.log(`\n${chalk.green("✔")} Existing dotenc project detected.`)
+		console.log(
+			`${chalk.green("✔")} Git diff driver configured for this clone.`,
+		)
+		console.log("\nNo keys or environments were changed.")
+		return
+	}
+
 	const username =
 		options.name ||
 		(await inputNamePrompt("What's your name?", os.userInfo().username))
@@ -66,7 +91,7 @@ export const initCommand = async (options: Options) => {
 	})
 
 	try {
-		setupGitDiff()
+		setupGitDiff(invocationDir)
 	} catch (_error) {
 		console.warn(
 			`${chalk.yellow("Warning:")} could not set up git diff driver. You can run ${chalk.gray("dotenc init")} again inside a git repository.`,
@@ -78,13 +103,16 @@ export const initCommand = async (options: Options) => {
 
 	if (existsSync(envPath)) {
 		initialContent = await fs.readFile(envPath, "utf-8")
+	}
+
+	await createCommand("development", username, initialContent)
+
+	if (initialContent !== undefined) {
 		await fs.unlink(envPath)
 		console.log(
 			`Migrated ${chalk.gray(".env")} contents to ${chalk.cyan("development")} environment.`,
 		)
 	}
-
-	await createCommand("development", username, initialContent)
 
 	if (username !== "development") {
 		await createCommand(username, username)

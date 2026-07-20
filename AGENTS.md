@@ -4,11 +4,12 @@
 
 `dotenc` is a security-focused monorepo for encrypted `.env` workflows powered by SSH keys.
 
-Agent work here should preserve:
+Product priorities are explicit and ordered:
 
-- security guarantees (no real secrets or private keys in repo/test artifacts)
-- CLI correctness and packaging behavior
-- developer UX across CLI, VS Code extension, and docs
+1. **Security:** preserve the cryptographic and access-control guarantees; never use real secrets or private keys in repository or test artifacts.
+2. **Developer experience:** make secure workflows clear, ergonomic, and unsurprising across the CLI, VS Code extension, and docs.
+
+Never weaken security for convenience. Within those guarantees, treat avoidable friction, surprising behavior, and unnecessary steps as product bugs. Preserve CLI correctness and packaging behavior across both priorities.
 
 ## What (Repo Map)
 

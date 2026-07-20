@@ -3,7 +3,7 @@ import { existsSync } from "node:fs"
 import fs from "node:fs/promises"
 import path from "node:path"
 
-export const scenes = ["quickstart"] as const
+export const scenes = ["quickstart", "git-diff"] as const
 export type Scene = (typeof scenes)[number]
 
 export const demoDir = import.meta.dir
@@ -122,6 +122,10 @@ export const sanitizeRecording = (raw: string, temporaryRoot: string) => {
 		.replace(/^ {2}cwd:.*$/m, "  cwd: .")
 		.replace(/^ {2}frameDelay:.*$/m, "  frameDelay: auto")
 		.replace(/^ {2}maxIdleTime:.*$/m, "  maxIdleTime: 3000")
+		.replace(
+			/index [0-9a-f]+\.\.[0-9a-f]+ 100644/g,
+			"index 1234567..89abcde 100644",
+		)
 		.replace(/^[ \t]+$/gm, "")
 		.replace(/^ {2}- delay: (\d+)$/gm, (_, rawDelay: string) => {
 			// Terminalizer uses the first record's delay for the final GIF frame.

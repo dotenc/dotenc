@@ -47,7 +47,7 @@ program
 	.addOption(
 		new Option("-k, --private-key <name>", "the SSH key to use for dotenc"),
 	)
-	.description("initialize a dotenc project in the current directory")
+	.description("initialize a dotenc project or configure an existing clone")
 	.action(initCommand)
 
 const env = program.command("env").description("manage environments")

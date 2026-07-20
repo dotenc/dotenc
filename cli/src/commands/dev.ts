@@ -13,7 +13,7 @@ export const devCommand = async (
 
 	if (keyNames.length === 0) {
 		console.error(
-			`${chalk.red("Error:")} could not resolve your identity. Run ${chalk.gray("dotenc init")} first.`,
+			`${chalk.red("Error:")} could not resolve your identity. For a new project, run ${chalk.gray("dotenc init")}. In an existing project, ask a project member to add your public key and grant access.`,
 		)
 		process.exit(1)
 	}

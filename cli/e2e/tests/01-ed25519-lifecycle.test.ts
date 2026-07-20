@@ -1,5 +1,11 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
-import { mkdtempSync, readFileSync, existsSync, rmSync } from "node:fs"
+import {
+	existsSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { generateEd25519Key, runCli, createMockEditor } from "../helpers/cli"
@@ -22,9 +28,21 @@ describe("Ed25519 Lifecycle", () => {
 	})
 
 	test("init creates project files", () => {
-		runCli(home, workspace, ["init", "--name", "alice"])
+		const migratedContent = "MIGRATED_SECRET=fake-e2e-value\n"
+		writeFileSync(path.join(workspace, ".env"), migratedContent, "utf-8")
+
+		const result = runCli(home, workspace, ["init", "--name", "alice"])
+
+		expect(result.exitCode).toBe(0)
 		expect(existsSync(path.join(workspace, ".dotenc", "alice.pub"))).toBe(true)
 		expect(existsSync(path.join(workspace, ".env.alice.enc"))).toBe(true)
+		expect(existsSync(path.join(workspace, ".env"))).toBe(false)
+		expect(
+			runCli(home, workspace, [
+				"textconv",
+				".env.development.enc",
+			]).stdout,
+		).toBe(migratedContent)
 	}, TIMEOUT)
 
 	test("create generates encrypted env with ed25519 key", () => {
