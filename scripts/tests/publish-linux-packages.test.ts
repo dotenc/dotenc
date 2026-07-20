@@ -141,11 +141,19 @@ describe("Linux package publication manifest", () => {
 			releaseWorkflow,
 			"validate-aur-package-secrets",
 		)
+		const imageJob = workflowJob(releaseWorkflow, "publish-cli-image")
 
 		for (const job of [linuxJob, aurJob]) {
-			expect(job).toContain("if: github.event_name == 'workflow_dispatch'")
+			expect(job).toContain(
+				"github.event_name == 'workflow_dispatch' &&\n      inputs.validate_package_secrets == true",
+			)
 			expect(job).toContain("    secrets: inherit")
 		}
+		expect(releaseWorkflow).toMatch(
+			/workflow_dispatch:\n\s+inputs:\n\s+validate_package_secrets:[\s\S]*?default: false/,
+		)
+		expect(imageJob).toContain("inputs.validate_package_secrets != true")
+		expect(linuxJob).toContain("      contents: write")
 		expect(linuxJob).toContain("      validate_only: true")
 		expect(aurJob).toContain("      publish: false")
 	})
