@@ -983,9 +983,20 @@ jobs:
         run: |
           set -euo pipefail
 
-          debian_image="debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818"
-          almalinux_image="almalinux:9@sha256:d2515c769e7b73f95c4fde38c0a505336ff38f14990c0b7253b77060a049a743"
-          alpine_image="alpine:3.22.3@sha256:55ae5d250caebc548793f321534bc6a8ef1d116f334f18f4ada1b2daad3251b2"
+          # Pin each platform manifest separately. Docker cannot cache two
+          # child platforms under one multi-arch digest reference in this job.
+          debian_images=(
+            "debian:bookworm-slim@sha256:63a496b5d3b99214b39f5ed70eb71a61e590a77979c79cbee4faf991f8c0783e"
+            "debian:bookworm-slim@sha256:9b67294679b30e5d6ab257b40594feeb4a4b81f7fcf4131f4decf0d6a212a9b0"
+          )
+          almalinux_images=(
+            "almalinux:9@sha256:28db580abb508f7ccbc0ac6d53e1d8da9d42a26c77fa3dcc26ac2726673fbe3e"
+            "almalinux:9@sha256:2c999b3bd705fad8b115741d9036ae2499148ba162752f09f2f4ab62b0c07320"
+          )
+          alpine_images=(
+            "alpine:3.22.3@sha256:e0baf8c394150ac5a14925e179100519f5e37c53547f647acbd9f8eb3e5c4528"
+            "alpine:3.22.3@sha256:42148bde0efbaf68c898a31697c37422abec27c85ffb9cbb1d07278dc3639050"
+          )
           platforms=(linux/amd64 linux/arm64)
           rpm_arches=(x86_64 aarch64)
           # AlmaLinux 9 rpmkeys renders the signing key ID as the low 32 bits.
@@ -999,6 +1010,9 @@ jobs:
           for index in 0 1; do
             platform=${platforms[$index]}
             rpm_arch=${rpm_arches[$index]}
+            debian_image=${debian_images[$index]}
+            almalinux_image=${almalinux_images[$index]}
+            alpine_image=${alpine_images[$index]}
 
             docker run --rm --platform "$platform" \
               --volume "$REPOSITORY_DIR/public:/repo:ro" \
