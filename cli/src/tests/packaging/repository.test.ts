@@ -391,7 +391,10 @@ describe("repository artifacts", () => {
 })
 
 type FakeRunnerBehavior = {
+	failGpgconfCleanup?: boolean
+	failRpmProbe?: boolean
 	failRpmBuild?: boolean
+	invalidInspectedRpmIdentity?: boolean
 	rpmSourceProtection?: "encrypted" | "unencrypted"
 	transientRpmKeyPaths?: string[]
 }
@@ -462,6 +465,17 @@ const createFakeRunner = (
 		async run(command, args, runOptions = {}) {
 			assertSanitized(command, args, runOptions)
 			const name = basename(command)
+			if (name === "gpgconf" && behavior.failGpgconfCleanup) {
+				throw new Error("fake transient GPG agent cleanup failure")
+			}
+			if (
+				name === "gpg" &&
+				behavior.failRpmProbe &&
+				args.includes(`${RPM_SIGNING}!`) &&
+				args.includes("--detach-sign")
+			) {
+				throw new Error("fake RPM passphrase probe failure")
+			}
 			if (name === "nfpm") {
 				if (args.includes("rpm")) {
 					const transientKey = runOptions.env?.NFPM_RPM_KEY_FILE
@@ -561,6 +575,15 @@ const createFakeRunner = (
 					: publicListing(RPM_PRIMARY, RPM_SIGNING)
 			}
 			if (name === "gpg" && args.includes("--list-secret-keys")) {
+				const explicitHome = args.includes("--homedir")
+					? args[args.indexOf("--homedir") + 1]
+					: undefined
+				if (
+					behavior.invalidInspectedRpmIdentity &&
+					explicitHome?.includes("/nfpm-rpm-secret/inspect-gnupg") === true
+				) {
+					return secretListing(RPM_PRIMARY, APT_SIGNING)
+				}
 				return args.at(-1) === APT_PRIMARY
 					? secretListing(APT_PRIMARY, APT_SIGNING)
 					: secretListing(RPM_PRIMARY, RPM_SIGNING)
@@ -690,6 +713,86 @@ describe("full build and metadata refresh orchestration", () => {
 			).rejects.toThrow()
 
 			delete process.env.DOTENC_RPM_GPG_PASSPHRASE_FILE
+			const missingPassphraseOptions = {
+				...options,
+				outputDir: join(root, "missing-rpm-passphrase"),
+			}
+			await expect(
+				buildRepositories(
+					missingPassphraseOptions,
+					createFakeRunner(missingPassphraseOptions),
+				),
+			).rejects.toThrow(
+				"DOTENC_RPM_GPG_PASSPHRASE_FILE is required for the encrypted RPM signing subkey",
+			)
+
+			process.env.DOTENC_RPM_GPG_PASSPHRASE_FILE = rpmPassphrasePath
+			const unexpectedPassphraseOptions = {
+				...options,
+				outputDir: join(root, "unexpected-rpm-passphrase"),
+			}
+			await expect(
+				buildRepositories(
+					unexpectedPassphraseOptions,
+					createFakeRunner(unexpectedPassphraseOptions, {
+						rpmSourceProtection: "unencrypted",
+					}),
+				),
+			).rejects.toThrow(
+				"DOTENC_RPM_GPG_PASSPHRASE_FILE was provided for an unencrypted RPM signing subkey",
+			)
+
+			const multilinePassphrasePath = join(root, "rpm-multiline-passphrase")
+			await writeFile(multilinePassphrasePath, "fake\npassphrase", {
+				mode: 0o600,
+			})
+			await chmod(multilinePassphrasePath, 0o600)
+			process.env.DOTENC_RPM_GPG_PASSPHRASE_FILE = multilinePassphrasePath
+			const multilinePassphraseOptions = {
+				...options,
+				outputDir: join(root, "multiline-rpm-passphrase"),
+			}
+			await expect(
+				buildRepositories(
+					multilinePassphraseOptions,
+					createFakeRunner(multilinePassphraseOptions),
+				),
+			).rejects.toThrow("RPM GPG passphrase must contain exactly one line")
+
+			process.env.DOTENC_RPM_GPG_PASSPHRASE_FILE = rpmPassphrasePath
+			const probeCleanupFailureOptions = {
+				...options,
+				outputDir: join(root, "probe-cleanup-failure"),
+			}
+			await expect(
+				buildRepositories(
+					probeCleanupFailureOptions,
+					createFakeRunner(probeCleanupFailureOptions, {
+						failGpgconfCleanup: true,
+						failRpmProbe: true,
+					}),
+				),
+			).rejects.toThrow(
+				"Unable to prepare and fully clean the transient RPM signing material",
+			)
+
+			delete process.env.DOTENC_RPM_GPG_PASSPHRASE_FILE
+			const mismatchedUnprotectedOptions = {
+				...options,
+				outputDir: join(root, "mismatched-unprotected-test-key"),
+			}
+			await expect(
+				buildRepositories(
+					mismatchedUnprotectedOptions,
+					createFakeRunner(mismatchedUnprotectedOptions, {
+						invalidInspectedRpmIdentity: true,
+						rpmSourceProtection: "unencrypted",
+					}),
+				),
+			).rejects.toThrow(
+				"nFPM RPM keyring must contain only the declared secret signing subkey",
+			)
+
 			const unprotectedOptions = {
 				...options,
 				outputDir: join(root, "unprotected-test-key"),
