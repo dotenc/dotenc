@@ -5,6 +5,12 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      validate_package_secrets:
+        description: Validate Linux and AUR secrets without publishing packages
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   check-version:
@@ -252,7 +258,8 @@ jobs:
       always() &&
       needs.check-version.result == 'success' &&
       (
-        github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'workflow_dispatch' &&
+        inputs.validate_package_secrets != true) ||
         (
           needs.check-version.outputs.bumped == 'true' &&
           needs.build-and-release.result == 'success'
@@ -353,10 +360,12 @@ jobs:
   validate-linux-package-secrets:
     name: Validate Linux package secrets
     needs: check-version
-    if: github.event_name == 'workflow_dispatch'
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.validate_package_secrets == true
     permissions:
       actions: read
-      contents: read
+      contents: write
     uses: ./.github/workflows/publish-linux-packages.yml
     secrets: inherit
     with:
@@ -366,7 +375,9 @@ jobs:
   validate-aur-package-secrets:
     name: Validate AUR package secrets
     needs: check-version
-    if: github.event_name == 'workflow_dispatch'
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.validate_package_secrets == true
     permissions:
       actions: read
       contents: read
