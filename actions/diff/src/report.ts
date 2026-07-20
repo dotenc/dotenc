@@ -386,6 +386,17 @@ const environmentStatus = (status: EnvironmentDiff["status"]): string => {
 	return "Environment modified"
 }
 
+const isDataKeyRotation = (environment: EnvironmentDiff): boolean =>
+	environment.status === "modified" &&
+	environment.variables.status === "available" &&
+	environment.variables.added.length === 0 &&
+	environment.variables.changed.length === 0 &&
+	environment.variables.removed.length === 0 &&
+	environment.access.status === "available" &&
+	environment.access.grants.length === 0 &&
+	environment.access.revocations.length === 0 &&
+	environment.access.renames.length === 0
+
 const reasonMessage = (reason: EnvironmentDiffReason | undefined): string =>
 	reason?.message || "The semantic changes could not be verified."
 
@@ -408,12 +419,13 @@ const addEnvironment = (
 	if (!builder.add()) return false
 	if (
 		!builder.add(
-			`_${environmentStatus(environment.status)} · ${htmlCode(environment.path)}_`,
+			`_${isDataKeyRotation(environment) ? "Data key rotated" : environmentStatus(environment.status)} · ${htmlCode(environment.path)}_`,
 		)
 	) {
 		return false
 	}
 	if (!builder.add()) return false
+	if (isDataKeyRotation(environment)) return true
 	if (!builder.add("#### Variables")) return false
 	if (!builder.add()) return false
 
@@ -481,6 +493,8 @@ export const renderReport = (
 	report: EnvironmentDiffReport,
 	options: { includeMarker?: boolean } = {},
 ): string => {
+	if (report.environments.length === 0) return ""
+
 	const reservedFooterBytes = 1024
 	const builder = new MarkdownBuilder(
 		ACTION_LIMITS.maxCommentBytes - reservedFooterBytes,
@@ -491,15 +505,8 @@ export const renderReport = (
 	builder.add("## dotenc environment diff")
 	builder.add()
 
-	if (report.environments.length === 0) {
-		builder.add(
-			"No semantic dotenc environment changes were found. Re-encryption-only changes are ignored.",
-		)
-		builder.add()
-	} else {
-		for (const environment of report.environments) {
-			if (!addEnvironment(builder, environment)) break
-		}
+	for (const environment of report.environments) {
+		if (!addEnvironment(builder, environment)) break
 	}
 
 	if (builder.truncated) {

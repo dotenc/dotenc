@@ -1,3 +1,4 @@
+import { isUtf8 } from "node:buffer"
 import crypto from "node:crypto"
 
 /**
@@ -79,8 +80,14 @@ export async function decryptData(key: Buffer, input: Buffer, aad?: Buffer) {
 			decipher.update(ciphertext),
 			decipher.final(),
 		])
-
-		return decrypted.toString()
+		try {
+			if (!isUtf8(decrypted)) {
+				throw new Error("Decrypted content is not valid UTF-8.")
+			}
+			return decrypted.toString("utf-8")
+		} finally {
+			decrypted.fill(0)
+		}
 	} catch (error) {
 		if (
 			error instanceof Error &&

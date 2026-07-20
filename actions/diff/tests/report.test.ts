@@ -15,6 +15,49 @@ const emptyAccess = {
 }
 
 describe("redacted Markdown report", () => {
+	test("renders nothing for a true no-op", () => {
+		const report: EnvironmentDiffReport = {
+			schemaVersion: 1,
+			environments: [],
+		}
+
+		expect(renderReport(report)).toBe("")
+		expect(renderReport(report, { includeMarker: true })).toBe("")
+		expect(reportHasChanges(report)).toBe(false)
+	})
+
+	test("renders a verified data-key-only rotation compactly", () => {
+		const report = canonicalizeReport({
+			schemaVersion: 1,
+			environments: [
+				{
+					path: ".env.production.enc",
+					name: "production",
+					status: "modified",
+					variables: {
+						status: "available",
+						added: [],
+						changed: [],
+						removed: [],
+					},
+					access: emptyAccess,
+				},
+			],
+		})
+
+		const markdown = renderReport(report)
+		expect(markdown).toContain("### production")
+		expect(markdown).toContain(
+			"_Data key rotated · <code>.env.production.enc</code>_",
+		)
+		expect(markdown).not.toContain("#### Variables")
+		expect(markdown).not.toContain("#### Access")
+		expect(markdown).not.toContain("No variable-name changes")
+		expect(markdown).not.toContain("No recipient changes")
+		expect(markdown).not.toContain("```diff")
+		expect(reportHasChanges(report)).toBe(true)
+	})
+
 	test("renders the target variable and access classifications", () => {
 		const report: EnvironmentDiffReport = {
 			schemaVersion: 1,

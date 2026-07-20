@@ -427,11 +427,18 @@ CLI:
   blobs without checking out the pull request. It accepts only the dedicated
   `DOTENC_PRIVATE_KEY_BASE64` identity (plus the existing optional passphrase),
   does not scan the runner's `~/.ssh`, and keeps decrypted dotenv content inside
-  the process. Its report contains variable names and visible recipient metadata
-  only; it never contains values, value hashes, lengths, prefixes, encrypted
-  data keys, or ciphertext. The passphrase-protected OpenSSH fallback gives
-  `ssh-keygen` an allowlisted environment, so unrelated workflow secrets are not
-  inherited by that child process.
+  the process. Authenticated decrypted content must be valid UTF-8; malformed
+  plaintext is rejected before dotenv parsing or comparison. For content-key
+  comparison, it unwraps only the data-key copy for that dedicated recipient;
+  it does not decrypt or verify every recipient's encrypted wrapper. Base and
+  head data keys are compared in memory with
+  `timingSafeEqual` and explicitly zeroed afterward. Neither a data key nor any
+  hash, fingerprint, or other derived identifier of a data key is emitted. The
+  public-key fingerprints in the access report identify recipients only. The
+  report never contains values, value hashes, lengths, prefixes, encrypted data
+  keys, or ciphertext. The passphrase-protected OpenSSH fallback gives
+  `ssh-keygen` an allowlisted environment, so unrelated workflow secrets are
+  not inherited by that child process.
 
 `dotenc tools install-github-diffs` is a creation-only installer for this
 privileged diff workflow. It requires an authenticated GitHub CLI session,
@@ -498,6 +505,18 @@ blocks. Its token permissions are limited to `contents: read` and
 `pull-requests: write`. The hardened example uses the workflow's `GITHUB_TOKEN`
 and enables `fail-on-error`, so a missing or unverified report cannot satisfy a
 required check while verified semantic changes remain informational.
+
+A verified semantic no-op, including formatting-only edits or same-key
+ciphertext and wrapper churn, produces no job summary or pull-request comment.
+When comments are enabled, the action removes every stale marker comment it
+verifies is its own; cleanup failure fails the check. Conversely, if the
+dedicated recipient unwraps different base and head data keys while valid UTF-8
+plaintext bytes, the effective environment format version, and recipient
+metadata are unchanged, the action retains a compact `Data key rotated` entry
+only when every encrypted wrapper blob also changed. A comparison failure or an
+unchanged wrapper alongside different keys fails safely. This proves only what
+the dedicated recipient unwrapped; it does not prove that every other recipient
+wrapper contains that same key.
 
 Grant the diff identity only to environments whose variable-name changes CI is
 allowed to disclose. A contributor can trigger this workflow and observe the

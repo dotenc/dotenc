@@ -49,17 +49,39 @@ environments those jobs need.
 ## Redacted pull-request diffs
 
 `dotenc/diff-action@v1` compares the encrypted environments at the pull
-request's exact base and head commits. It posts or updates one pull-request
-comment and writes the same report to the job summary. Variable values never
-appear in either report: only variable names are classified as added, changed,
-or removed. Access changes are compared by public-key fingerprint, so grants,
-revocations, and recipient renames are visible even when a side cannot be
-decrypted.
+request's exact base and head commits. For a non-empty report, it posts or
+updates one pull-request comment and writes the same report to the job summary.
+Variable values never appear in either report: only variable names are
+classified as added, changed, or removed. Access changes are compared by
+public-key fingerprint, so grants, revocations, and recipient renames are
+visible even when a side cannot be decrypted.
 
-The action ignores ciphertext and encrypted data-key churn when plaintext and
-recipient access are semantically unchanged. Its versioned JSON `report`
-output is intended for local hooks and future integrations as well as GitHub.
-A semantic change is informational, so the action does not fail the check by
+For a verified semantic no-op, including formatting-only dotenv edits or
+same-key ciphertext-only churn, the action writes neither a job summary nor a
+new pull-request comment. If comments are enabled and stale marker comments
+exist, the action deletes every comment it verifies is its own GitHub Actions
+bot comment. It never replaces or deletes a copied marker in another user's
+comment. Cleanup failure is an integrity error and fails the check even when
+`fail-on-error` is false, so an obsolete report cannot remain behind a green
+run.
+
+When decrypted plaintext is byte-identical valid UTF-8 and the effective
+environment format version and recipient metadata are unchanged, the action
+unwraps and compares the dedicated diff recipient's base and head data-key
+copies. Equal keys make ciphertext and encrypted-wrapper churn a silent no-op.
+Different keys produce one compact `Data key rotated` entry only when every
+recipient's encrypted wrapper blob also changed. A key comparison failure or an
+unchanged wrapper alongside different keys fails safely instead of claiming
+either a no-op or a rotation.
+
+The action does not decrypt or verify the contents of every recipient's
+encrypted wrapper. The two 32-byte keys it can unwrap are compared in memory
+with `timingSafeEqual` and explicitly zeroed afterward. No data key, or hash,
+fingerprint, or other derived identifier of a data key, is written to the
+report, summary, comment, outputs, or logs. Public-key fingerprints in access
+changes identify recipients, not data keys. The versioned JSON `report` output
+is intended for local hooks and future integrations as well as GitHub. A
+semantic change is informational, so the action does not fail the check by
 default.
 
 Discovery is recursive, so environments under monorepo subdirectories are
@@ -146,6 +168,12 @@ The `report` output sets `schemaVersion` to `1`. Each environment entry has
 - `access`: a status, `grants`, `revocations`, and `renames`, with an optional
   sanitized `reason`. Grant and revocation identities contain only `name` and
   public-key `fingerprint`; renames contain `fingerprint`, `from`, and `to`.
+
+Schema v1 represents a verified data-key-only rotation without adding a secret
+or derived key identifier: the environment has `status: "modified"`, both
+`variables.status` and `access.status` are `"available"`, and all six variable
+and access change arrays are empty. The rendered report labels this compact
+state `Data key rotated`.
 
 The GitHub Action and the independent
 `createEnvironmentDiffReport(input, options?)` engine use this same schema. It
@@ -300,6 +328,10 @@ The supplied workflow maintains that trust boundary:
   lengths, prefixes, private-key material, passphrases, encrypted data keys, or
   ciphertext. Malformed or undecryptable input produces a bounded, sanitized
   status instead of raw input.
+- It unwraps only the base and head data-key copies encrypted for the dedicated
+  diff recipient, compares those keys in memory with `timingSafeEqual`, and
+  explicitly zeroes them. It does not verify every recipient wrapper and emits
+  no data key or hash, fingerprint, or other derived identifier of a data key.
 
 Semantic changed/unchanged classification necessarily reveals an equality
 signal about each reported value. A pull-request author can use the committed
@@ -324,18 +356,26 @@ untrusted work to a separate unprivileged `pull_request` workflow with no
 secrets or write token.
 
 The action identifies its comment with a hidden marker and updates that comment
-on `synchronize`, so repeated runs do not create comment spam. If either side
-cannot be decrypted, independently verifiable recipient changes are still
-shown and the variable section is marked unavailable with a sanitized reason.
+on `synchronize`, so repeated non-empty runs do not create comment spam. A
+verified semantic no-op creates no summary or comment; when comments are
+enabled, the action removes every stale marker comment that it verifies it owns.
+If either side cannot be decrypted, independently verifiable recipient changes
+are still shown and the variable section is marked unavailable with a sanitized
+reason.
 
 The action outputs `report` (versioned redacted JSON), `has-changes`, and the
-`comment-url` when a comment was created or updated. Set `comment: "false"` to
-write only the job summary. `has-changes` is `true` for changed or unverified
-environments, `false` only for a verified empty report, and empty if the action
+`comment-url` when a comment was created or updated. For a non-empty report, set
+`comment: "false"` to write only the job summary. A verified empty report leaves
+`comment-url` empty because that run publishes no report surface. The output is
+also empty whenever the run publishes no comment, including when the `comment`
+input is `"false"`. `has-changes` is `true` for changed or unverified
+environments, `false` for a verified semantic no-op, and empty if the action
 fails before producing a report; `report` is also empty in that total-failure
-case. The hardened workflow sets `fail-on-error: "true"` so unavailable input,
-decryption, API, output, or comment failures cannot become a green required
-check. Ordinary verified semantic changes remain informational and never fail.
+case. The hardened workflow
+sets `fail-on-error: "true"` so unavailable input, decryption, API, output, or
+comment failures cannot become a green required check. Stale-comment cleanup
+failure always fails because leaving an obsolete report behind a green run is
+unsafe. Ordinary verified semantic changes remain informational and never fail.
 The public action keeps `fail-on-error: "false"` as its general-purpose default.
 
 ## Actions

@@ -19,7 +19,9 @@ import { byteLength, parseBoolean, SafeActionError } from "./safety"
 
 type ActionClient = Pick<
 	GitHubClient,
-	"getEncryptedEnvironmentComparison" | "upsertPullRequestComment"
+	| "deletePullRequestComment"
+	| "getEncryptedEnvironmentComparison"
+	| "upsertPullRequestComment"
 >
 
 export type RuntimeDependencies = {
@@ -96,6 +98,8 @@ export const runAction = async (
 	let client: ActionClient | undefined
 	let compactReport = ""
 	let hasChanges: boolean | undefined
+	let validEmptyReport = false
+	let emptyCommentCleanupFailed = false
 	let commentUrl = ""
 	let validCommentPublished = false
 
@@ -155,19 +159,34 @@ export const runAction = async (
 			throw new SafeActionError("report_output_limit")
 		}
 		compactReport = serializedReport
-
-		const markdown = renderReport(report)
-		await dependencies.io.writeSummary(markdown)
-		summaryWritten = true
-
 		hasChanges = reportHasChanges(report)
-		if (commentEnabled) {
-			commentUrl = await client.upsertPullRequestComment(
-				context.pullRequestNumber,
-				COMMENT_MARKER,
-				renderReport(report, { includeMarker: true }),
-			)
-			validCommentPublished = true
+		validEmptyReport = !hasChanges
+
+		if (validEmptyReport) {
+			if (commentEnabled) {
+				try {
+					await client.deletePullRequestComment(
+						context.pullRequestNumber,
+						COMMENT_MARKER,
+					)
+				} catch (error) {
+					emptyCommentCleanupFailed = true
+					throw error
+				}
+			}
+		} else {
+			const markdown = renderReport(report)
+			await dependencies.io.writeSummary(markdown)
+			summaryWritten = true
+
+			if (commentEnabled) {
+				commentUrl = await client.upsertPullRequestComment(
+					context.pullRequestNumber,
+					COMMENT_MARKER,
+					renderReport(report, { includeMarker: true }),
+				)
+				validCommentPublished = true
+			}
 		}
 
 		outputsAttempted = true
@@ -186,7 +205,7 @@ export const runAction = async (
 		return { ok: true, shouldFail: false }
 	} catch {
 		clearDedicatedKeys(dependencies.environment)
-		if (!summaryWritten) {
+		if (!summaryWritten && !validEmptyReport) {
 			try {
 				await dependencies.io.writeSummary(renderUnavailableReport())
 			} catch {
@@ -194,7 +213,13 @@ export const runAction = async (
 			}
 		}
 
-		if (commentEnabled && context && client && !validCommentPublished) {
+		if (
+			commentEnabled &&
+			context &&
+			client &&
+			!validCommentPublished &&
+			!validEmptyReport
+		) {
 			try {
 				commentUrl = await client.upsertPullRequestComment(
 					context.pullRequestNumber,
@@ -220,10 +245,11 @@ export const runAction = async (
 			}
 		}
 
+		const shouldFail = failOnError || emptyCommentCleanupFailed
 		dependencies.io.annotate(
-			failOnError ? "error" : "warning",
+			shouldFail ? "error" : "warning",
 			"The redacted dotenc diff could not be completed safely. No secret content was emitted.",
 		)
-		return { ok: false, shouldFail: failOnError }
+		return { ok: false, shouldFail }
 	}
 }
