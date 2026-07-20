@@ -323,6 +323,178 @@ describe("GitHub object API client", () => {
 		)
 	})
 
+	test("removes duplicate owned marker comments before updating the primary", async () => {
+		const requests: Array<{ url: string; method: string }> = []
+		const fetchImpl: FetchLike = async (input, init) => {
+			const method = init?.method ?? "GET"
+			requests.push({ url: String(input), method })
+			if (method === "GET") {
+				return jsonResponse([
+					{
+						id: 123,
+						body: `${COMMENT_MARKER}\nprimary`,
+						user: { login: "github-actions[bot]", type: "Bot" },
+					},
+					{
+						id: 456,
+						body: `${COMMENT_MARKER}\nduplicate`,
+						user: { login: "github-actions[bot]", type: "Bot" },
+					},
+				])
+			}
+			if (method === "DELETE") return new Response(null, { status: 204 })
+			return jsonResponse({
+				html_url: "https://github.com/dotenc/example/pull/7#issuecomment-123",
+			})
+		}
+		const client = new GitHubClient({
+			token: "github-token",
+			repository: "dotenc/example",
+			fetchImpl,
+		})
+
+		await client.upsertPullRequestComment(
+			7,
+			COMMENT_MARKER,
+			`${COMMENT_MARKER}\nnew`,
+		)
+		expect(requests.map((request) => request.method)).toEqual([
+			"GET",
+			"DELETE",
+			"PATCH",
+		])
+		expect(requests[1].url).toEndWith(
+			"/repos/dotenc/example/issues/comments/456",
+		)
+		expect(requests[2].url).toEndWith(
+			"/repos/dotenc/example/issues/comments/123",
+		)
+	})
+
+	test("deletes the exact bot-authored marker comment", async () => {
+		const requests: Array<{ url: string; method: string; body?: string }> = []
+		const fetchImpl: FetchLike = async (input, init) => {
+			const method = init?.method ?? "GET"
+			requests.push({
+				url: String(input),
+				method,
+				body: init?.body as string | undefined,
+			})
+			if (method === "GET") {
+				return jsonResponse([
+					{
+						id: 123,
+						body: `${COMMENT_MARKER}\nold`,
+						user: { login: "github-actions[bot]", type: "Bot" },
+					},
+				])
+			}
+			return new Response(null, { status: 204 })
+		}
+		const client = new GitHubClient({
+			token: "github-token",
+			repository: "dotenc/example",
+			fetchImpl,
+		})
+
+		expect(await client.deletePullRequestComment(7, COMMENT_MARKER)).toBe(true)
+		expect(requests.map((request) => request.method)).toEqual(["GET", "DELETE"])
+		expect(requests[1].url).toEndWith(
+			"/repos/dotenc/example/issues/comments/123",
+		)
+		expect(requests[1].body).toBeUndefined()
+	})
+
+	test("deletes every duplicate bot-authored marker comment", async () => {
+		const requests: Array<{ url: string; method: string }> = []
+		const fetchImpl: FetchLike = async (input, init) => {
+			const method = init?.method ?? "GET"
+			requests.push({ url: String(input), method })
+			if (method === "GET") {
+				return jsonResponse([
+					{
+						id: 123,
+						body: `${COMMENT_MARKER}\nold one`,
+						user: { login: "github-actions[bot]", type: "Bot" },
+					},
+					{
+						id: 456,
+						body: `${COMMENT_MARKER}\nold two`,
+						user: { login: "github-actions[bot]", type: "Bot" },
+					},
+					{
+						id: 789,
+						body: COMMENT_MARKER,
+						user: { login: "attacker", type: "User" },
+					},
+				])
+			}
+			return new Response(null, { status: 204 })
+		}
+		const client = new GitHubClient({
+			token: "github-token",
+			repository: "dotenc/example",
+			fetchImpl,
+		})
+
+		expect(await client.deletePullRequestComment(7, COMMENT_MARKER)).toBe(true)
+		expect(requests.map((request) => request.method)).toEqual([
+			"GET",
+			"DELETE",
+			"DELETE",
+		])
+		expect(requests.slice(1).map((request) => request.url)).toEqual([
+			"https://api.github.com/repos/dotenc/example/issues/comments/123",
+			"https://api.github.com/repos/dotenc/example/issues/comments/456",
+		])
+	})
+
+	test("does not delete a marker copied into an untrusted user's comment", async () => {
+		const methods: string[] = []
+		const client = new GitHubClient({
+			token: "github-token",
+			repository: "dotenc/example",
+			fetchImpl: async (_input, init) => {
+				methods.push(init?.method ?? "GET")
+				return jsonResponse([
+					{
+						id: 55,
+						body: COMMENT_MARKER,
+						user: { login: "attacker", type: "User" },
+					},
+				])
+			},
+		})
+
+		expect(await client.deletePullRequestComment(7, COMMENT_MARKER)).toBe(false)
+		expect(methods).toEqual(["GET"])
+	})
+
+	test("requires a sanitized 204 response when deleting a marker comment", async () => {
+		const sentinel = "SENTINEL_UNTRUSTED_DELETE_RESPONSE"
+		const client = new GitHubClient({
+			token: "github-token",
+			repository: "dotenc/example",
+			fetchImpl: async (_input, init) =>
+				(init?.method ?? "GET") === "GET"
+					? jsonResponse([
+							{
+								id: 123,
+								body: COMMENT_MARKER,
+								user: { login: "github-actions[bot]", type: "Bot" },
+							},
+						])
+					: new Response(sentinel, { status: 200 }),
+		})
+
+		try {
+			await client.deletePullRequestComment(7, COMMENT_MARKER)
+			throw new Error("expected request to fail")
+		} catch (error) {
+			expect(String(error)).not.toContain(sentinel)
+		}
+	})
+
 	test("does not overwrite a marker copied into an untrusted user's comment", async () => {
 		const methods: string[] = []
 		const fetchImpl: FetchLike = async (_input, init) => {

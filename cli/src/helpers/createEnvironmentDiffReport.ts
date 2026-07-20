@@ -17,7 +17,10 @@ import {
 } from "../schemas/environmentDiffReport"
 import { decryptData } from "./crypto"
 import { decryptDataKey } from "./decryptDataKey"
-import { decryptEnvironmentData } from "./decryptEnvironment"
+import {
+	decryptEnvironmentData,
+	environmentDataKeysEqual,
+} from "./decryptEnvironment"
 import { getPrivateKeys } from "./getPrivateKeys"
 import { parseEnv } from "./parseEnv"
 
@@ -54,11 +57,21 @@ export type EnvironmentDiffDecryptor = (
 	environment: Environment,
 ) => Promise<string>
 
+export type EnvironmentDiffDataKeyComparator = (
+	base: Environment,
+	head: Environment,
+) => Promise<boolean>
+
 export type CreateEnvironmentDiffReportOptions = {
 	/** Restrict key discovery to the dedicated environment key in trusted CI. */
 	privateKeySource?: "all" | "environment"
 	/** Test/integration seam; errors are always converted to static report reasons. */
 	decryptEnvironment?: EnvironmentDiffDecryptor
+	/**
+	 * Test/integration seam that returns true only when the unwrapped data keys
+	 * are equal. A custom decryptor without this comparator cannot prove rotation.
+	 */
+	dataKeysEqual?: EnvironmentDiffDataKeyComparator
 }
 
 type ValidatedInputFile = EncryptedEnvironmentInput & { name: string }
@@ -72,7 +85,7 @@ type ParsedEnvironmentSide = {
 
 type VariableMap = Map<string, string>
 type VariableReadResult =
-	| { status: "available"; variables: VariableMap }
+	| { status: "available"; plaintext: string; variables: VariableMap }
 	| {
 			status: "unavailable"
 			kind: "environment" | "decryption" | "plaintext"
@@ -631,9 +644,12 @@ const parsePlaintextVariables = (plaintext: unknown): VariableMap => {
 	return variables
 }
 
-const createDefaultDecryptor = (
+const createDefaultCrypto = (
 	privateKeySource: "all" | "environment",
-): EnvironmentDiffDecryptor => {
+): {
+	decryptEnvironment: EnvironmentDiffDecryptor
+	dataKeysEqual: EnvironmentDiffDataKeyComparator
+} => {
 	let privateKeysPromise: ReturnType<typeof getPrivateKeys> | undefined
 	const loadPrivateKeys = () => {
 		privateKeysPromise ??= getPrivateKeys({
@@ -644,12 +660,19 @@ const createDefaultDecryptor = (
 		return privateKeysPromise
 	}
 
-	return (environmentName, environment) =>
-		decryptEnvironmentData(environmentName, environment, {
-			getPrivateKeys: loadPrivateKeys,
-			decryptDataKey,
-			decryptData,
-		})
+	return {
+		decryptEnvironment: (environmentName, environment) =>
+			decryptEnvironmentData(environmentName, environment, {
+				getPrivateKeys: loadPrivateKeys,
+				decryptDataKey,
+				decryptData,
+			}),
+		dataKeysEqual: (base, head) =>
+			environmentDataKeysEqual(base, head, {
+				getPrivateKeys: loadPrivateKeys,
+				decryptDataKey,
+			}),
+	}
 }
 
 const readVariables = async (
@@ -657,7 +680,9 @@ const readVariables = async (
 	environmentName: string,
 	decryptEnvironment: EnvironmentDiffDecryptor,
 ): Promise<VariableReadResult> => {
-	if (!parsed) return { status: "available", variables: new Map() }
+	if (!parsed) {
+		return { status: "available", plaintext: "", variables: new Map() }
+	}
 	if (parsed.environment.status === "invalid") {
 		return { status: "unavailable", kind: "environment" }
 	}
@@ -675,6 +700,7 @@ const readVariables = async (
 	try {
 		return {
 			status: "available",
+			plaintext,
 			variables: parsePlaintextVariables(plaintext),
 		}
 	} catch {
@@ -816,6 +842,100 @@ const hasAccessChanges = (diff: AccessDiff) =>
 	diff.revocations.length > 0 ||
 	diff.renames.length > 0
 
+const hasUnchangedRotationMetadata = (
+	base: ParsedEnvironmentSide | undefined,
+	head: ParsedEnvironmentSide | undefined,
+): boolean => {
+	if (
+		!base ||
+		!head ||
+		base.environment.status !== "valid" ||
+		head.environment.status !== "valid"
+	) {
+		return false
+	}
+
+	const baseEnvironment = base.environment.value
+	const headEnvironment = head.environment.value
+	if (
+		(baseEnvironment.version ?? 1) !== (headEnvironment.version ?? 1) ||
+		baseEnvironment.keys.length !== headEnvironment.keys.length
+	) {
+		return false
+	}
+
+	const headByFingerprint = new Map(
+		headEnvironment.keys.map((recipient) => [recipient.fingerprint, recipient]),
+	)
+	return baseEnvironment.keys.every((baseRecipient) => {
+		const headRecipient = headByFingerprint.get(baseRecipient.fingerprint)
+		return (
+			headRecipient !== undefined &&
+			headRecipient.name === baseRecipient.name &&
+			headRecipient.algorithm === baseRecipient.algorithm
+		)
+	})
+}
+
+const haveAllRecipientWrappersChanged = (
+	base: Environment,
+	head: Environment,
+): boolean => {
+	const headByFingerprint = new Map(
+		head.keys.map((recipient) => [recipient.fingerprint, recipient]),
+	)
+	return base.keys.every(
+		(baseRecipient) =>
+			headByFingerprint.get(baseRecipient.fingerprint)?.encryptedDataKey !==
+			baseRecipient.encryptedDataKey,
+	)
+}
+
+const isVerifiedDataKeyOnlyChange = async (
+	baseParsed: ParsedEnvironmentSide | undefined,
+	headParsed: ParsedEnvironmentSide | undefined,
+	baseVariables: VariableReadResult,
+	headVariables: VariableReadResult,
+	dataKeysEqual: EnvironmentDiffDataKeyComparator | undefined,
+): Promise<boolean> => {
+	if (
+		!dataKeysEqual ||
+		baseVariables.status !== "available" ||
+		headVariables.status !== "available" ||
+		baseVariables.plaintext !== headVariables.plaintext ||
+		!hasUnchangedRotationMetadata(baseParsed, headParsed) ||
+		!baseParsed ||
+		!headParsed ||
+		baseParsed.environment.status !== "valid" ||
+		headParsed.environment.status !== "valid"
+	) {
+		return false
+	}
+
+	let keysAreEqual: boolean
+	try {
+		keysAreEqual = await dataKeysEqual(
+			baseParsed.environment.value,
+			headParsed.environment.value,
+		)
+	} catch {
+		throw new Error("Data key comparison could not be completed safely.")
+	}
+	if (keysAreEqual !== true && keysAreEqual !== false) {
+		throw new Error("Data key comparison could not be completed safely.")
+	}
+	if (keysAreEqual) return false
+	if (
+		!haveAllRecipientWrappersChanged(
+			baseParsed.environment.value,
+			headParsed.environment.value,
+		)
+	) {
+		throw new Error("Data key rotation could not be verified safely.")
+	}
+	return true
+}
+
 /**
  * Builds a redacted, GitHub-independent semantic report. Plaintext values never
  * leave this function and caught error messages are never reflected in output.
@@ -830,9 +950,15 @@ export const createEnvironmentDiffReport = async (
 	const paths = [...new Set([...baseByPath.keys(), ...headByPath.keys()])].sort(
 		compareText,
 	)
+	const defaultCrypto = options.decryptEnvironment
+		? undefined
+		: createDefaultCrypto(options.privateKeySource ?? "all")
 	const decryptEnvironment =
-		options.decryptEnvironment ??
-		createDefaultDecryptor(options.privateKeySource ?? "all")
+		options.decryptEnvironment ?? defaultCrypto?.decryptEnvironment
+	if (!decryptEnvironment) {
+		throw new Error("Environment diff decryptor is unavailable.")
+	}
+	const dataKeysEqual = options.dataKeysEqual ?? defaultCrypto?.dataKeysEqual
 	const environments: EnvironmentDiff[] = []
 
 	for (const filePath of paths) {
@@ -859,7 +985,14 @@ export const createEnvironmentDiffReport = async (
 			!hasVariableChanges(variables) &&
 			!hasAccessChanges(access)
 		) {
-			continue
+			const verifiedDataKeyOnlyChange = await isVerifiedDataKeyOnlyChange(
+				baseParsed,
+				headParsed,
+				baseVariables,
+				headVariables,
+				dataKeysEqual,
+			)
+			if (!verifiedDataKeyOnlyChange) continue
 		}
 
 		environments.push({

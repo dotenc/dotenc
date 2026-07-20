@@ -76,6 +76,10 @@ export type AccessDiff = {
 	reason?: EnvironmentDiffReason
 }
 
+/**
+ * A modified environment whose available variable/access change arrays are all
+ * empty is reserved for a cryptographically verified data-key-only rotation.
+ */
 export type EnvironmentDiff = {
 	path: string
 	name: string

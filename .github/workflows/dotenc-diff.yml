@@ -22,7 +22,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Compare encrypted environments
-        uses: dotenc/dotenc/actions/diff@57cfc9ae7d2063d873206f0cd3e56df3faf1c0d3
+        uses: dotenc/dotenc/actions/diff@ff6cf97a0323bc70ee10207e6555ba4d2e3b0be2
         with:
           github-token: ${{ github.token }}
           fail-on-error: "true"

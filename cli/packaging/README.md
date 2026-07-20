@@ -19,8 +19,10 @@ production form is:
 ```sh
 DOTENC_APT_GNUPGHOME="$APT_CI_GNUPGHOME" \
 DOTENC_RPM_GNUPGHOME="$RPM_CI_GNUPGHOME" \
+DOTENC_APT_GPG_PASSPHRASE_FILE="$KEYS/apt.passphrase" \
+DOTENC_RPM_GPG_PASSPHRASE_FILE="$KEYS/rpm.passphrase" \
+DOTENC_PACKAGING_SECRET_SCRATCH_DIR="$SIGNING_SCRATCH" \
 NFPM_RPM_KEY_FILE="$KEYS/rpm.secret-subkeys.asc" \
-NFPM_RPM_PASSPHRASE_FILE="$KEYS/rpm.passphrase" \
 NFPM_APK_KEY_FILE="$KEYS/apk.rsa.pem" \
 bun cli/packaging/repository.ts \
   --version "$VERSION" \
@@ -38,10 +40,30 @@ bun cli/packaging/repository.ts \
   --apk-key-name "$APK_KEY_NAME"
 ```
 
-Omit `NFPM_RPM_PASSPHRASE_FILE` when the test key has no passphrase. The
-builder deliberately rejects a clear `NFPM_RPM_PASSPHRASE` environment value.
-Only stable `X.Y.Z` versions are accepted; distro-specific prerelease ordering
-is intentionally outside this MVP.
+Create `SIGNING_SCRATCH` as an existing mode-`0700` directory. In production,
+`NFPM_RPM_KEY_FILE` is the durable, passphrase-protected export containing only
+a dummy offline-primary stub and the exact RPM signing subkey. The builder
+requires its mode-`0600` passphrase file through
+`DOTENC_RPM_GPG_PASSPHRASE_FILE`. It deliberately rejects both
+`NFPM_RPM_PASSPHRASE` and `NFPM_RPM_PASSPHRASE_FILE`; nFPM never receives the
+passphrase.
+
+nFPM `2.47.0` cannot unlock a protected secret subkey when its primary secret
+packet is the required dummy/offline stub. The builder therefore signs an
+ephemeral probe with the exact RPM signing-subkey fingerprint, creates an
+isolated mode-`0700` working directory under
+`DOTENC_PACKAGING_SECRET_SCRATCH_DIR`, and removes protection only from that
+working copy. It validates and passes nFPM a mode-`0600` export containing the
+same dummy primary and exact unprotected signing subkey. That transient export
+is scrubbed immediately after native package generation and on every failure;
+the production workflow's exit trap is a second cleanup boundary. It is never
+an artifact, cache input, container layer, or publication input. The original
+RPM GPG home stays protected and is used later, with
+`DOTENC_RPM_GPG_PASSPHRASE_FILE`, to sign repository metadata.
+
+Disposable unprotected test exports do not require a passphrase file. Only
+stable `X.Y.Z` versions are accepted; distro-specific prerelease ordering is
+intentionally outside this MVP.
 
 Use separate, subkey-only `DOTENC_APT_GNUPGHOME` and
 `DOTENC_RPM_GNUPGHOME` directories in production. `GNUPGHOME` remains a local
@@ -50,7 +72,7 @@ passes it only to the exact GPG secret-key listing and signing subprocesses;
 nFPM and repository/package tools never inherit it.
 
 The build requires nFPM `2.47.0` exactly, plus `apt-ftparchive`, `gzip`,
-`createrepo_c`, `gpg`, `gpgv`, `rpm`, `rpmkeys`, `dpkg-deb`, `apk`,
+`createrepo_c`, `gpg`, `gpgconf`, `gpgv`, `rpm`, `rpmkeys`, `dpkg-deb`, `apk`,
 `abuild-gzsplit`, and `abuild-sign`. On an Ubuntu runner, provide pinned Alpine
 container wrappers with `DOTENC_APK_COMMAND`, `DOTENC_ABUILD_GZSPLIT_COMMAND`,
 and `DOTENC_ABUILD_SIGN_COMMAND`; each override is an executable path, not a
@@ -77,8 +99,9 @@ digests, version, suite, component, and immutable source epoch. Its required
 adjacent `package-bundle-manifest.json.asc` is signed by the exact APT signing
 subkey. Refresh verifies that signature and all six digests before trusting the
 bundle, then preserves both manifest files byte-for-byte. Refresh mode skips
-nFPM and does not require `NFPM_RPM_KEY_FILE`; it still requires the APK private
-key to sign the new index.
+nFPM, does not require `NFPM_RPM_KEY_FILE`, and never creates the transient
+unprotected RPM export; it still requires the protected RPM keyring for metadata
+signing and the APK private key to sign the new index.
 
 ## Local test keys
 
@@ -132,7 +155,12 @@ APK_KEY_NAME="dotenc-$APK_DIGEST"
 Read the APT and RPM fingerprints from `gpg --with-colons --list-keys` in their
 respective CI keyrings, set
 `NFPM_RPM_KEY_FILE="$KEYS/rpm.secret-subkeys.asc"`, and run the build command
-above. A successful build has already verified:
+above without either `DOTENC_APT_GPG_PASSPHRASE_FILE` or
+`DOTENC_RPM_GPG_PASSPHRASE_FILE`; omit the optional secret-scratch assignment
+unless its directory was created first. This direct form is acceptable only
+because the disposable test exports were created with empty passphrases;
+production uses the protected-source and transient-copy flow described above.
+A successful build has already verified:
 
 - APT `InRelease` with isolated `gpgv` and the exact signing subkey;
 - the detached signature on `package-bundle-manifest.json` with that same exact

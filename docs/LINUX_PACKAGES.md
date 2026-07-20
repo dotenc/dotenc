@@ -235,37 +235,55 @@ Its currently provisioned configuration contract is:
 | Secret | `CLOUDFLARE_CACHE_PURGE_TOKEN` | Token limited to cache purge for the `dotenc.org` zone |
 | Secret | `PACKAGE_APT_GPG_PRIVATE_KEY_BASE64` | Base64 of an ASCII-armored APT secret-signing-subkey export with only a dummy primary-key stub |
 | Secret | `PACKAGE_APT_GPG_PASSPHRASE` | Passphrase for the APT signing subkey |
-| Secret | `PACKAGE_RPM_GPG_PRIVATE_KEY_BASE64` | Base64 of an ASCII-armored RPM secret-signing-subkey export with only a dummy primary-key stub |
+| Secret | `PACKAGE_RPM_GPG_PRIVATE_KEY_BASE64` | Base64 of a passphrase-protected, ASCII-armored RPM secret-signing-subkey export with only a dummy primary-key stub |
 | Secret | `PACKAGE_RPM_GPG_PASSPHRASE` | Passphrase for the RPM signing subkey |
 | Secret | `PACKAGE_APK_PRIVATE_KEY_BASE64` | Base64 of the unencrypted RSA-4096 Alpine private key in PEM format |
 
 The Cloudflare/R2 values and secrets live in the protected `linux-packages`
 environment; `LINUX_PACKAGES_ENABLED` is deliberately a repository-level
 variable so its job-level condition can be evaluated before GitHub enters that
-environment. Production package-signing secrets were provisioned on 2026-07-20,
-but GitHub exposes only their presence and update timestamps to operators;
-their structure, identities, and passphrases remain pending a controlled CI
-validation. The manual dispatch's default `validate_only=true` mode is the only
-path allowed to enter the environment while the publication gate is disabled;
-it never receives R2 or cache-purge secrets in an executing step and every
-external publication step is skipped. `LINUX_PACKAGES_ENABLED` must remain
-disabled until that validation and every other launch criterion pass. The
-workflow decodes each base64 value only into an ephemeral, mode-`0600` file and
-requires both OpenPGP passphrase secrets to be non-empty.
+environment. GitHub exposes only secret presence and update timestamps to
+operators; the controlled workflow policy-checks key structure, exact signing
+identities, and passphrases without printing their values. The manual dispatch's
+default `validate_only=true` mode is the only path allowed to enter the
+environment while the publication gate is disabled; it never receives R2 or
+cache-purge secrets in an executing step and every external publication step is
+skipped. `LINUX_PACKAGES_ENABLED` must remain disabled until that validation and
+every other launch criterion pass. The workflow decodes each base64 value only
+into an ephemeral, mode-`0600` file and requires both OpenPGP passphrase secrets
+to be non-empty.
+
 APT and RPM imports use separate ephemeral homes exposed only to their GPG
 operations through `DOTENC_APT_GNUPGHOME` and `DOTENC_RPM_GNUPGHOME`; CI rejects
-a usable primary secret or any extra usable secret subkey. The package builder
-receives the RPM and APK files through `NFPM_RPM_KEY_FILE` and
-`NFPM_APK_KEY_FILE`; only the RPM signer supports the optional
-`NFPM_RPM_PASSPHRASE_FILE`. APT and RPM metadata signing read separate
-mode-`0600` passphrase files through `DOTENC_APT_GPG_PASSPHRASE_FILE` and
-`DOTENC_RPM_GPG_PASSPHRASE_FILE`. Only the nFPM RPM child receives the
-passphrase value read from its file. The Alpine key must be unencrypted because
-`abuild-sign` is non-interactive. Alpine tools are prepared before the key is
-mounted; the signer container receives only the repository workspace and its
-read-only key directory and runs without a network. Public certificates and key
-paths are not secrets. Never upload either offline OpenPGP primary key merely to
-unblock a run.
+a usable primary secret or any extra usable secret subkey. APT and RPM metadata
+signing read separate mode-`0600` passphrase files through
+`DOTENC_APT_GPG_PASSPHRASE_FILE` and
+`DOTENC_RPM_GPG_PASSPHRASE_FILE`. The RPM GPG home stays protected and is used
+later to sign `repomd.xml`; it is never replaced by the unprotected nFPM copy.
+
+`NFPM_RPM_KEY_FILE` names the durable, protected RPM secret-subkey export.
+nFPM `2.47.0` cannot unlock its encrypted signing subkey beneath the required
+dummy/offline primary. For native package builds, the repository builder uses
+`DOTENC_RPM_GPG_PASSPHRASE_FILE` to sign an ephemeral probe with the exact
+signing-subkey fingerprint, then creates a mode-`0700` staging directory inside
+the workflow-owned signing directory supplied through
+`DOTENC_PACKAGING_SECRET_SCRATCH_DIR`. It removes protection only in that
+isolated copy, validates that a mode-`0600` export still contains the dummy
+primary and exactly the declared signing subkey, and passes only that transient
+file to the RPM nFPM child. Both `NFPM_RPM_PASSPHRASE` and
+`NFPM_RPM_PASSPHRASE_FILE` are rejected, so nFPM receives no passphrase. The
+builder scrubs the transient home, probe, command input, and export immediately
+after native package generation and on failure, before package-manifest or
+repository-metadata signing and before any publication step. The workflow exit
+trap repeats cleanup if the process terminates unexpectedly. Metadata-only
+refreshes skip nFPM and never materialize the unprotected export.
+
+The package builder receives the Alpine key through `NFPM_APK_KEY_FILE`. It must
+be unencrypted because `abuild-sign` is non-interactive. Alpine tools are
+prepared before the key is mounted; the signer container receives only the
+repository workspace and its read-only key directory and runs without a
+network. Public certificates and key paths are not secrets. Never upload either
+offline OpenPGP primary key merely to unblock a run.
 
 The environment is restricted to `main`. The active `Protect main` repository
 ruleset requires a pull request with the six CI jobs passing, blocks deletion
@@ -283,8 +301,9 @@ Use separate keys so a compromise has a limited blast radius:
 - Keep the independent APT and RPM OpenPGP primary keys offline. Use them for
   certification, rotation, and revocation only.
 - Give CI exactly one RSA-4096 signing subkey from each trust root, as a
-  secret-subkey-only export. Prefer an expiry date and scheduled rotation over
-  a perpetual online key.
+  secret-subkey-only export. The production RPM export must remain
+  passphrase-protected. Prefer an expiry date and scheduled rotation over a
+  perpetual online key.
 - Use a separate Alpine RSA key. Do not derive it from, or share storage with,
   the OpenPGP CI subkey.
 - Store encrypted offline backups in at least two administratively independent
@@ -295,6 +314,10 @@ Use separate keys so a compromise has a limited blast radius:
   breaking the scheduled freshness guarantee. Import keys into an ephemeral
   keyring, set restrictive file permissions, and destroy the workspace after
   signing.
+- Keep the nFPM compatibility export confined to its mode-`0700` staging
+  directory, expose only its mode-`0600` file to the RPM nFPM child, and scrub it
+  immediately after package generation. The original RPM keyring must remain
+  protected for metadata signing.
 - Publish only public keys under `/keys/`. Private keys, passphrases, revocation
   secrets, and unencrypted exports must never enter R2, GitHub artifacts,
   Actions caches, container layers, logs, or this repository.

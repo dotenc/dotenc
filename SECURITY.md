@@ -262,7 +262,9 @@ of the installation methods listed above.
 The planned trust model separates authenticity from delivery:
 
 - APT and RPM use independent OpenPGP v4 RSA trust roots. Each primary key
-  remains offline; CI receives only that ecosystem's RSA-4096 signing subkey.
+  remains offline; CI receives only that ecosystem's RSA-4096 signing-subkey
+  export with a dummy primary-secret stub. The production RPM export remains
+  passphrase-protected at rest.
 - APT signs `InRelease`, which authenticates repository indexes and the hashes
   of `.deb` files. The `.deb` files do not carry separate dotenc repository
   signatures.
@@ -293,9 +295,22 @@ The planned trust model separates authenticity from delivery:
 - Private signing keys must never be published to the package host, included in
   packages, stored in repository history, or exposed through workflow logs,
   artifacts, or caches.
-- APT and RPM signing run in separate ephemeral GPG homes. Alpine signing runs
-  in a network-disabled container whose tools are prepared before its read-only
-  key mount is attached; the R2 publication step receives no signing secrets.
+- APT and RPM signing run in separate ephemeral GPG homes. The durable RPM
+  signing-subkey export and its metadata-signing GPG home remain protected by
+  `DOTENC_RPM_GPG_PASSPHRASE_FILE`. nFPM `2.47.0` cannot unlock a protected
+  subkey beneath the required dummy/offline primary, so the builder first proves
+  that passphrase by signing an ephemeral probe with the exact RPM subkey. It
+  then creates an isolated mode-`0700` working directory, removes protection
+  only from a copy, validates a mode-`0600` export containing the same dummy
+  primary and exact signing subkey, and gives only that transient export to the
+  nFPM RPM child. nFPM receives no passphrase. The builder scrubs the working
+  copy immediately after native package generation and on failure, before
+  metadata signing or publication; the workflow exit trap supplies a second
+  cleanup boundary. The unprotected copy must never enter logs, artifacts,
+  caches, container layers, or publication inputs.
+- Alpine signing runs in a network-disabled container whose tools are prepared
+  before its read-only key mount is attached; the R2 publication step receives
+  no signing secrets.
 
 The repository objects are stored in the private-write
 `dotenc-packages` Cloudflare R2 bucket and exposed through the
@@ -412,11 +427,18 @@ CLI:
   blobs without checking out the pull request. It accepts only the dedicated
   `DOTENC_PRIVATE_KEY_BASE64` identity (plus the existing optional passphrase),
   does not scan the runner's `~/.ssh`, and keeps decrypted dotenv content inside
-  the process. Its report contains variable names and visible recipient metadata
-  only; it never contains values, value hashes, lengths, prefixes, encrypted
-  data keys, or ciphertext. The passphrase-protected OpenSSH fallback gives
-  `ssh-keygen` an allowlisted environment, so unrelated workflow secrets are not
-  inherited by that child process.
+  the process. Authenticated decrypted content must be valid UTF-8; malformed
+  plaintext is rejected before dotenv parsing or comparison. For content-key
+  comparison, it unwraps only the data-key copy for that dedicated recipient;
+  it does not decrypt or verify every recipient's encrypted wrapper. Base and
+  head data keys are compared in memory with
+  `timingSafeEqual` and explicitly zeroed afterward. Neither a data key nor any
+  hash, fingerprint, or other derived identifier of a data key is emitted. The
+  public-key fingerprints in the access report identify recipients only. The
+  report never contains values, value hashes, lengths, prefixes, encrypted data
+  keys, or ciphertext. The passphrase-protected OpenSSH fallback gives
+  `ssh-keygen` an allowlisted environment, so unrelated workflow secrets are
+  not inherited by that child process.
 
 `dotenc tools install-github-diffs` is a creation-only installer for this
 privileged diff workflow. It requires an authenticated GitHub CLI session,
@@ -477,10 +499,24 @@ executes the action implementation at a reviewed full commit SHA and treats the
 base and head Git objects as untrusted data. The action resolves the event's
 exact commit and tree object IDs, downloads only matching `.env.*.enc` blobs
 through the GitHub API, applies bounded schemas and size limits, and escapes all
-untrusted Markdown. Its token permissions are limited to `contents: read` and
+untrusted Markdown outside code blocks. It neutralizes format controls and
+renders variable and recipient names inside dynamically delimited fenced code
+blocks. Its token permissions are limited to `contents: read` and
 `pull-requests: write`. The hardened example uses the workflow's `GITHUB_TOKEN`
 and enables `fail-on-error`, so a missing or unverified report cannot satisfy a
 required check while verified semantic changes remain informational.
+
+A verified semantic no-op, including formatting-only edits or same-key
+ciphertext and wrapper churn, produces no job summary or pull-request comment.
+When comments are enabled, the action removes every stale marker comment it
+verifies is its own; cleanup failure fails the check. Conversely, if the
+dedicated recipient unwraps different base and head data keys while valid UTF-8
+plaintext bytes, the effective environment format version, and recipient
+metadata are unchanged, the action retains a compact `Data key rotated` entry
+only when every encrypted wrapper blob also changed. A comparison failure or an
+unchanged wrapper alongside different keys fails safely. This proves only what
+the dedicated recipient unwrapped; it does not prove that every other recipient
+wrapper contains that same key.
 
 Grant the diff identity only to environments whose variable-name changes CI is
 allowed to disclose. A contributor can trigger this workflow and observe the

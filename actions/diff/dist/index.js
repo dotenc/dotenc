@@ -5722,7 +5722,7 @@ var require_dist = __commonJS((exports2) => {
 });
 
 // actions/diff/src/runtime.ts
-var import_node_buffer3 = require("node:buffer");
+var import_node_buffer4 = require("node:buffer");
 
 // node_modules/zod/v3/external.js
 var exports_external = {};
@@ -9728,6 +9728,7 @@ var ENVIRONMENT_DIFF_LIMITS = {
 };
 
 // cli/src/helpers/crypto.ts
+var import_node_buffer = require("node:buffer");
 var import_node_crypto = __toESM(require("node:crypto"));
 var ALGORITHM = "aes-256-gcm";
 var IV_LENGTH = 12;
@@ -9752,7 +9753,14 @@ async function decryptData(key, input, aad) {
       decipher.update(ciphertext),
       decipher.final()
     ]);
-    return decrypted.toString();
+    try {
+      if (!import_node_buffer.isUtf8(decrypted)) {
+        throw new Error("Decrypted content is not valid UTF-8.");
+      }
+      return decrypted.toString("utf-8");
+    } finally {
+      decrypted.fill(0);
+    }
   } catch (error) {
     if (error instanceof Error && error.message.includes("unable to authenticate")) {
       throw new Error(`Failed to decrypt file. This could be because:
@@ -9770,7 +9778,7 @@ var import_node_crypto2 = __toESM(require("node:crypto"));
 // cli/src/helpers/ecies.ts
 var import_eciesjs = __toESM(require_dist(), 1);
 import_eciesjs.ECIES_CONFIG.ellipticCurve = "ed25519";
-var eciesDecrypt = (privateKey, data) => Buffer.from(import_eciesjs.decrypt(privateKey, data));
+var eciesDecrypt = (privateKey, data) => import_eciesjs.decrypt(privateKey, data);
 
 // cli/src/helpers/decryptDataKey.ts
 var decryptDataKey = (keyInfo, encryptedDataKey) => {
@@ -9793,6 +9801,9 @@ var decryptDataKey = (keyInfo, encryptedDataKey) => {
     privDer.fill(0);
   }
 };
+
+// cli/src/helpers/decryptEnvironment.ts
+var import_node_crypto7 = require("node:crypto");
 
 // node_modules/chalk/source/vendor/ansi-styles/index.js
 var ANSI_BACKGROUND_OFFSET = 10;
@@ -10967,7 +10978,7 @@ var defaultDecryptEnvironmentDataDeps = {
   decryptDataKey,
   decryptData
 };
-var decryptEnvironmentData = async (environmentName, environment, deps = defaultDecryptEnvironmentDataDeps) => {
+var unwrapEnvironmentDataKey = async (environment, deps) => {
   const { keys: availablePrivateKeys, passphraseProtectedKeys } = await deps.getPrivateKeys();
   if (!availablePrivateKeys.length) {
     if (passphraseProtectedKeys.length > 0) {
@@ -10995,9 +11006,32 @@ var decryptEnvironmentData = async (environmentName, environment, deps = default
   } catch (error) {
     throw new Error("Failed to decrypt the data key.", { cause: error });
   }
+  if (dataKey.byteLength !== 32) {
+    dataKey.fill(0);
+    throw new Error("Failed to decrypt the data key.");
+  }
+  return dataKey;
+};
+var environmentDataKeysEqual = async (base, head, deps = defaultDecryptEnvironmentDataDeps) => {
+  let baseDataKey;
+  let headDataKey;
+  try {
+    baseDataKey = await unwrapEnvironmentDataKey(base, deps);
+    headDataKey = await unwrapEnvironmentDataKey(head, deps);
+    return import_node_crypto7.timingSafeEqual(baseDataKey, headDataKey);
+  } finally {
+    baseDataKey?.fill(0);
+    headDataKey?.fill(0);
+  }
+};
+var decryptEnvironmentData = async (environmentName, environment, deps = defaultDecryptEnvironmentDataDeps) => {
+  const dataKey = await unwrapEnvironmentDataKey(environment, deps);
   const aad = (environment.version ?? 1) >= 2 ? Buffer.from(environmentName, "utf-8") : undefined;
-  const decryptedContent = await deps.decryptData(dataKey, Buffer.from(environment.encryptedContent, "base64"), aad);
-  return decryptedContent;
+  try {
+    return await deps.decryptData(dataKey, Buffer.from(environment.encryptedContent, "base64"), aad);
+  } finally {
+    dataKey.fill(0);
+  }
 };
 var defaultDecryptEnvironmentDeps = {
   ...defaultDecryptEnvironmentDataDeps,
@@ -11386,7 +11420,7 @@ var parsePlaintextVariables = (plaintext) => {
   }
   return variables;
 };
-var createDefaultDecryptor = (privateKeySource) => {
+var createDefaultCrypto = (privateKeySource) => {
   let privateKeysPromise;
   const loadPrivateKeys = () => {
     privateKeysPromise ??= getPrivateKeys({
@@ -11396,15 +11430,22 @@ var createDefaultDecryptor = (privateKeySource) => {
     });
     return privateKeysPromise;
   };
-  return (environmentName, environment) => decryptEnvironmentData(environmentName, environment, {
-    getPrivateKeys: loadPrivateKeys,
-    decryptDataKey,
-    decryptData
-  });
+  return {
+    decryptEnvironment: (environmentName, environment) => decryptEnvironmentData(environmentName, environment, {
+      getPrivateKeys: loadPrivateKeys,
+      decryptDataKey,
+      decryptData
+    }),
+    dataKeysEqual: (base, head) => environmentDataKeysEqual(base, head, {
+      getPrivateKeys: loadPrivateKeys,
+      decryptDataKey
+    })
+  };
 };
 var readVariables = async (parsed, environmentName, decryptEnvironment) => {
-  if (!parsed)
-    return { status: "available", variables: new Map };
+  if (!parsed) {
+    return { status: "available", plaintext: "", variables: new Map };
+  }
   if (parsed.environment.status === "invalid") {
     return { status: "unavailable", kind: "environment" };
   }
@@ -11417,6 +11458,7 @@ var readVariables = async (parsed, environmentName, decryptEnvironment) => {
   try {
     return {
       status: "available",
+      plaintext,
       variables: parsePlaintextVariables(plaintext)
     };
   } catch {
@@ -11509,12 +11551,56 @@ var createAccessDiff = (base, head) => {
 };
 var hasVariableChanges = (diff) => diff.added.length > 0 || diff.changed.length > 0 || diff.removed.length > 0;
 var hasAccessChanges = (diff) => diff.grants.length > 0 || diff.revocations.length > 0 || diff.renames.length > 0;
+var hasUnchangedRotationMetadata = (base, head) => {
+  if (!base || !head || base.environment.status !== "valid" || head.environment.status !== "valid") {
+    return false;
+  }
+  const baseEnvironment = base.environment.value;
+  const headEnvironment = head.environment.value;
+  if ((baseEnvironment.version ?? 1) !== (headEnvironment.version ?? 1) || baseEnvironment.keys.length !== headEnvironment.keys.length) {
+    return false;
+  }
+  const headByFingerprint = new Map(headEnvironment.keys.map((recipient) => [recipient.fingerprint, recipient]));
+  return baseEnvironment.keys.every((baseRecipient) => {
+    const headRecipient = headByFingerprint.get(baseRecipient.fingerprint);
+    return headRecipient !== undefined && headRecipient.name === baseRecipient.name && headRecipient.algorithm === baseRecipient.algorithm;
+  });
+};
+var haveAllRecipientWrappersChanged = (base, head) => {
+  const headByFingerprint = new Map(head.keys.map((recipient) => [recipient.fingerprint, recipient]));
+  return base.keys.every((baseRecipient) => headByFingerprint.get(baseRecipient.fingerprint)?.encryptedDataKey !== baseRecipient.encryptedDataKey);
+};
+var isVerifiedDataKeyOnlyChange = async (baseParsed, headParsed, baseVariables, headVariables, dataKeysEqual) => {
+  if (!dataKeysEqual || baseVariables.status !== "available" || headVariables.status !== "available" || baseVariables.plaintext !== headVariables.plaintext || !hasUnchangedRotationMetadata(baseParsed, headParsed) || !baseParsed || !headParsed || baseParsed.environment.status !== "valid" || headParsed.environment.status !== "valid") {
+    return false;
+  }
+  let keysAreEqual;
+  try {
+    keysAreEqual = await dataKeysEqual(baseParsed.environment.value, headParsed.environment.value);
+  } catch {
+    throw new Error("Data key comparison could not be completed safely.");
+  }
+  if (keysAreEqual !== true && keysAreEqual !== false) {
+    throw new Error("Data key comparison could not be completed safely.");
+  }
+  if (keysAreEqual)
+    return false;
+  if (!haveAllRecipientWrappersChanged(baseParsed.environment.value, headParsed.environment.value)) {
+    throw new Error("Data key rotation could not be verified safely.");
+  }
+  return true;
+};
 var createEnvironmentDiffReport = async (input, options = {}) => {
   const validated = validateInput(input);
   const baseByPath = new Map(validated.base.map((file) => [file.path, file]));
   const headByPath = new Map(validated.head.map((file) => [file.path, file]));
   const paths = [...new Set([...baseByPath.keys(), ...headByPath.keys()])].sort(compareText);
-  const decryptEnvironment = options.decryptEnvironment ?? createDefaultDecryptor(options.privateKeySource ?? "all");
+  const defaultCrypto = options.decryptEnvironment ? undefined : createDefaultCrypto(options.privateKeySource ?? "all");
+  const decryptEnvironment = options.decryptEnvironment ?? defaultCrypto?.decryptEnvironment;
+  if (!decryptEnvironment) {
+    throw new Error("Environment diff decryptor is unavailable.");
+  }
+  const dataKeysEqual = options.dataKeysEqual ?? defaultCrypto?.dataKeysEqual;
   const environments = [];
   for (const filePath of paths) {
     const baseFile = baseByPath.get(filePath);
@@ -11534,7 +11620,9 @@ var createEnvironmentDiffReport = async (input, options = {}) => {
     const variables = createVariableDiff(baseVariables, headVariables);
     const access = createAccessDiff(baseParsed, headParsed);
     if (status === "modified" && variables.status === "available" && access.status === "available" && !hasVariableChanges(variables) && !hasAccessChanges(access)) {
-      continue;
+      const verifiedDataKeyOnlyChange = await isVerifiedDataKeyOnlyChange(baseParsed, headParsed, baseVariables, headVariables, dataKeysEqual);
+      if (!verifiedDataKeyOnlyChange)
+        continue;
     }
     environments.push({
       path: filePath,
@@ -11554,7 +11642,7 @@ var createEnvironmentDiffReport = async (input, options = {}) => {
 var import_promises4 = __toESM(require("node:fs/promises"));
 
 // actions/diff/src/safety.ts
-var import_node_buffer = require("node:buffer");
+var import_node_buffer2 = require("node:buffer");
 
 class SafeActionError extends Error {
   code;
@@ -11565,7 +11653,7 @@ class SafeActionError extends Error {
   }
 }
 var isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
-var byteLength = (value) => import_node_buffer.Buffer.byteLength(value, "utf8");
+var byteLength = (value) => import_node_buffer2.Buffer.byteLength(value, "utf8");
 var assertBoundedString = (value, maxBytes, code) => {
   if (typeof value !== "string" || byteLength(value) > maxBytes) {
     throw new SafeActionError(code);
@@ -11710,8 +11798,8 @@ var readPullRequestEvent = async (eventPath, limits = ACTION_LIMITS) => {
 };
 
 // actions/diff/src/github.ts
-var import_node_buffer2 = require("node:buffer");
-var import_node_crypto7 = require("node:crypto");
+var import_node_buffer3 = require("node:buffer");
+var import_node_crypto8 = require("node:crypto");
 var API_VERSION = "2022-11-28";
 var environmentPathPattern = /^\.env\..+\.enc$/;
 var isEnvironmentPath = (filePath) => {
@@ -11737,7 +11825,7 @@ var decodeBase64 = (value) => {
   if (!normalized || !/^[a-z0-9+/]*={0,2}$/i.test(normalized) || normalized.length % 4 === 1) {
     throw new SafeActionError("invalid_blob");
   }
-  const decoded = import_node_buffer2.Buffer.from(normalized, "base64");
+  const decoded = import_node_buffer3.Buffer.from(normalized, "base64");
   const inputWithoutPadding = normalized.replace(/=+$/, "");
   const roundTrip = decoded.toString("base64").replace(/=+$/, "");
   if (inputWithoutPadding !== roundTrip) {
@@ -11746,7 +11834,7 @@ var decodeBase64 = (value) => {
   return decoded;
 };
 var verifyGitBlob = (expectedSha, content) => {
-  const actualSha = import_node_crypto7.createHash("sha1").update(`blob ${content.byteLength}\x00`, "utf8").update(content).digest("hex");
+  const actualSha = import_node_crypto8.createHash("sha1").update(`blob ${content.byteLength}\x00`, "utf8").update(content).digest("hex");
   if (actualSha !== expectedSha.toLowerCase()) {
     throw new SafeActionError("blob_identity_mismatch");
   }
@@ -11779,7 +11867,7 @@ var readBoundedResponse = async (response, maxBytes) => {
   } finally {
     reader.releaseLock();
   }
-  return import_node_buffer2.Buffer.concat(chunks, total);
+  return import_node_buffer3.Buffer.concat(chunks, total);
 };
 
 class GitHubApiError extends SafeActionError {
@@ -11837,6 +11925,15 @@ class GitHubClient {
     return `/repos/${encodeURIComponent(this.#owner)}/${encodeURIComponent(this.#repo)}`;
   }
   async#requestJson(pathname, maxResponseBytes, init = {}) {
+    const response = await this.#request(pathname, init);
+    const body = await readBoundedResponse(response, maxResponseBytes);
+    try {
+      return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
+    } catch {
+      throw new SafeActionError("invalid_github_response");
+    }
+  }
+  async#request(pathname, init = {}) {
     let response;
     try {
       response = await this.#fetch(this.#endpoint(pathname), {
@@ -11861,12 +11958,17 @@ class GitHubClient {
       } catch {}
       throw new GitHubApiError(response.status);
     }
-    const body = await readBoundedResponse(response, maxResponseBytes);
-    try {
-      return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
-    } catch {
+    return response;
+  }
+  async#requestNoContent(pathname, init) {
+    const response = await this.#request(pathname, init);
+    if (response.status !== 204) {
+      try {
+        await response.body?.cancel();
+      } catch {}
       throw new SafeActionError("invalid_github_response");
     }
+    await readBoundedResponse(response, 0);
   }
   async#getTreeSha(commitSha) {
     const response = await this.#requestJson(`${this.#repositoryPath()}/git/commits/${commitSha}`, this.#limits.commitResponseBytes);
@@ -11977,11 +12079,11 @@ class GitHubClient {
     ]);
     return { base, head };
   }
-  async upsertPullRequestComment(pullRequestNumber, marker, body) {
-    if (!Number.isSafeInteger(pullRequestNumber) || pullRequestNumber < 1 || !marker || !body.startsWith(marker) || byteLength(body) > this.#limits.maxCommentBytes) {
+  async#findPullRequestCommentIds(pullRequestNumber, marker) {
+    if (!Number.isSafeInteger(pullRequestNumber) || pullRequestNumber < 1 || !marker || byteLength(marker) > this.#limits.maxCommentBytes) {
       throw new SafeActionError("invalid_comment");
     }
-    let existingCommentId;
+    const commentIds = new Set;
     for (let page = 1;page <= this.#limits.maxCommentPages; page += 1) {
       const response = await this.#requestJson(`${this.#repositoryPath()}/issues/${pullRequestNumber}/comments?per_page=${this.#limits.commentsPerPage}&page=${page}`, this.#limits.commentResponseBytes);
       if (!Array.isArray(response) || response.length > this.#limits.commentsPerPage) {
@@ -11989,17 +12091,28 @@ class GitHubClient {
       }
       for (const comment of response) {
         if (isRecord(comment) && Number.isSafeInteger(comment.id) && comment.id > 0 && typeof comment.body === "string" && comment.body.startsWith(marker) && isRecord(comment.user) && comment.user.type === "Bot" && comment.user.login === "github-actions[bot]") {
-          existingCommentId = comment.id;
-          break;
+          commentIds.add(comment.id);
         }
       }
-      if (existingCommentId !== undefined)
-        break;
-      if (response.length < this.#limits.commentsPerPage)
-        break;
+      if (response.length < this.#limits.commentsPerPage) {
+        return [...commentIds];
+      }
       if (page === this.#limits.maxCommentPages) {
         throw new SafeActionError("comment_page_limit");
       }
+    }
+    return [...commentIds];
+  }
+  async#deletePullRequestCommentById(commentId) {
+    await this.#requestNoContent(`${this.#repositoryPath()}/issues/comments/${commentId}`, { method: "DELETE" });
+  }
+  async upsertPullRequestComment(pullRequestNumber, marker, body) {
+    if (!body.startsWith(marker) || byteLength(body) > this.#limits.maxCommentBytes) {
+      throw new SafeActionError("invalid_comment");
+    }
+    const [existingCommentId, ...duplicateCommentIds] = await this.#findPullRequestCommentIds(pullRequestNumber, marker);
+    for (const commentId of duplicateCommentIds) {
+      await this.#deletePullRequestCommentById(commentId);
     }
     const result = await this.#requestJson(existingCommentId === undefined ? `${this.#repositoryPath()}/issues/${pullRequestNumber}/comments` : `${this.#repositoryPath()}/issues/comments/${existingCommentId}`, this.#limits.commentWriteResponseBytes, {
       method: existingCommentId === undefined ? "POST" : "PATCH",
@@ -12020,6 +12133,15 @@ class GitHubClient {
       throw new SafeActionError("invalid_comment_response");
     }
     return htmlUrl;
+  }
+  async deletePullRequestComment(pullRequestNumber, marker) {
+    const existingCommentIds = await this.#findPullRequestCommentIds(pullRequestNumber, marker);
+    if (existingCommentIds.length === 0)
+      return false;
+    for (const commentId of existingCommentIds) {
+      await this.#deletePullRequestCommentById(commentId);
+    }
+    return true;
   }
 }
 
@@ -12202,14 +12324,15 @@ var canonicalizeReport = (value) => {
     environments: environments.sort((left, right) => compareText2(left.path, right.path))
   };
 };
+var displayText = (value) => Array.from(value).slice(0, 512).map((character) => {
+  const codePoint = character.codePointAt(0) ?? 0;
+  if (codePoint <= 31 || codePoint === 127 || /[\p{C}\p{Zl}\p{Zp}]/u.test(character)) {
+    return `U${codePoint.toString(16).toUpperCase().padStart(4, "0")}`;
+  }
+  return character;
+}).join("");
 var htmlCode = (value) => {
-  const escaped = Array.from(value).slice(0, 512).map((character) => {
-    const codePoint = character.codePointAt(0) ?? 0;
-    if (codePoint <= 31 || codePoint === 127 || /[\p{C}\p{Zl}\p{Zp}]/u.test(character)) {
-      return `U${codePoint.toString(16).toUpperCase().padStart(4, "0")}`;
-    }
-    return character;
-  }).join("").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll("`", "&#96;").replaceAll("[", "&#91;").replaceAll("]", "&#93;").replaceAll("(", "&#40;").replaceAll(")", "&#41;").replaceAll("@", "&#64;");
+  const escaped = displayText(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll("`", "&#96;").replaceAll("[", "&#91;").replaceAll("]", "&#93;").replaceAll("(", "&#40;").replaceAll(")", "&#41;").replaceAll("@", "&#64;");
   return `<code>${escaped}</code>`;
 };
 
@@ -12245,24 +12368,29 @@ var environmentStatus = (status) => {
     return "Environment deleted";
   return "Environment modified";
 };
+var isDataKeyRotation = (environment) => environment.status === "modified" && environment.variables.status === "available" && environment.variables.added.length === 0 && environment.variables.changed.length === 0 && environment.variables.removed.length === 0 && environment.access.status === "available" && environment.access.grants.length === 0 && environment.access.revocations.length === 0 && environment.access.renames.length === 0;
 var reasonMessage = (reason2) => reason2?.message || "The semantic changes could not be verified.";
-var addChangeList = (builder, items, symbol) => {
-  for (const item of items) {
-    if (!builder.add(`- ${htmlCode(`${symbol} ${item}`)}`))
-      return false;
-  }
-  return true;
+var changeLines = (items, symbol) => items.map((item) => `${symbol} ${item}`);
+var addDiffBlock = (builder, lines) => {
+  const rendered = lines.map(displayText);
+  let fence = "```";
+  while (rendered.some((line) => line.includes(fence)))
+    fence += "`";
+  return builder.add([`${fence}diff`, ...rendered, fence].join(`
+`));
 };
 var addEnvironment = (builder, environment) => {
   if (!builder.add(`### ${escapeMarkdown(environment.name)}`))
     return false;
   if (!builder.add())
     return false;
-  if (!builder.add(`_${environmentStatus(environment.status)} · ${htmlCode(environment.path)}_`)) {
+  if (!builder.add(`_${isDataKeyRotation(environment) ? "Data key rotated" : environmentStatus(environment.status)} · ${htmlCode(environment.path)}_`)) {
     return false;
   }
   if (!builder.add())
     return false;
+  if (isDataKeyRotation(environment))
+    return true;
   if (!builder.add("#### Variables"))
     return false;
   if (!builder.add())
@@ -12275,8 +12403,14 @@ var addEnvironment = (builder, environment) => {
   } else if (variableChangeCount === 0) {
     if (!builder.add("No variable-name changes."))
       return false;
-  } else if (!addChangeList(builder, environment.variables.changed, "~") || !addChangeList(builder, environment.variables.added, "+") || !addChangeList(builder, environment.variables.removed, "-")) {
-    return false;
+  } else {
+    const lines = [
+      ...changeLines(environment.variables.changed, "~"),
+      ...changeLines(environment.variables.added, "+"),
+      ...changeLines(environment.variables.removed, "-")
+    ];
+    if (!addDiffBlock(builder, lines))
+      return false;
   }
   if (!builder.add())
     return false;
@@ -12293,18 +12427,19 @@ var addEnvironment = (builder, environment) => {
     if (!builder.add("No recipient changes."))
       return false;
   } else {
-    for (const rename of environment.access.renames) {
-      if (!builder.add(`- ${htmlCode(`~ ${rename.from} → ${rename.to}`)}`)) {
-        return false;
-      }
-    }
-    if (!addChangeList(builder, environment.access.grants.map((grant) => grant.name), "+") || !addChangeList(builder, environment.access.revocations.map((revocation) => revocation.name), "-")) {
+    const lines = [
+      ...environment.access.renames.map((rename) => `~ ${rename.from} → ${rename.to}`),
+      ...changeLines(environment.access.grants.map((grant) => grant.name), "+"),
+      ...changeLines(environment.access.revocations.map((revocation) => revocation.name), "-")
+    ];
+    if (!addDiffBlock(builder, lines))
       return false;
-    }
   }
   return builder.add();
 };
 var renderReport = (report, options = {}) => {
+  if (report.environments.length === 0)
+    return "";
   const reservedFooterBytes = 1024;
   const builder = new MarkdownBuilder(ACTION_LIMITS.maxCommentBytes - reservedFooterBytes);
   if (options.includeMarker) {
@@ -12312,22 +12447,14 @@ var renderReport = (report, options = {}) => {
   }
   builder.add("## dotenc environment diff");
   builder.add();
-  builder.add("Variable values are never shown. Only variable names and recipient metadata are compared.");
-  builder.add();
-  if (report.environments.length === 0) {
-    builder.add("No semantic dotenc environment changes were found. Re-encryption-only changes are ignored.");
-    builder.add();
-  } else {
-    for (const environment of report.environments) {
-      if (!addEnvironment(builder, environment))
-        break;
-    }
+  for (const environment of report.environments) {
+    if (!addEnvironment(builder, environment))
+      break;
   }
   if (builder.truncated) {
     builder.add("> Display truncated at the action's safe comment-size limit. The machine-readable report remains available as the action output.");
     builder.add();
   }
-  builder.add("_dotenc never includes values, value hashes, lengths, encrypted data keys, ciphertext, or private-key material in this report._");
   const markdown = builder.toString();
   if (byteLength(markdown) > ACTION_LIMITS.maxCommentBytes) {
     throw new SafeActionError("report_render_limit");
@@ -12378,6 +12505,8 @@ var runAction = async (dependencies = defaultDependencies) => {
   let client;
   let compactReport = "";
   let hasChanges;
+  let validEmptyReport = false;
+  let emptyCommentCleanupFailed = false;
   let commentUrl = "";
   let validCommentPublished = false;
   try {
@@ -12405,17 +12534,29 @@ var runAction = async (dependencies = defaultDependencies) => {
       clearDedicatedKeys(dependencies.environment);
     }
     const serializedReport = JSON.stringify(report);
-    if (/[\r\n]/.test(serializedReport) || import_node_buffer3.Buffer.byteLength(serializedReport, "utf8") > ACTION_LIMITS.maxReportOutputBytes) {
+    if (/[\r\n]/.test(serializedReport) || import_node_buffer4.Buffer.byteLength(serializedReport, "utf8") > ACTION_LIMITS.maxReportOutputBytes) {
       throw new SafeActionError("report_output_limit");
     }
     compactReport = serializedReport;
-    const markdown = renderReport(report);
-    await dependencies.io.writeSummary(markdown);
-    summaryWritten = true;
     hasChanges = reportHasChanges(report);
-    if (commentEnabled) {
-      commentUrl = await client.upsertPullRequestComment(context.pullRequestNumber, COMMENT_MARKER, renderReport(report, { includeMarker: true }));
-      validCommentPublished = true;
+    validEmptyReport = !hasChanges;
+    if (validEmptyReport) {
+      if (commentEnabled) {
+        try {
+          await client.deletePullRequestComment(context.pullRequestNumber, COMMENT_MARKER);
+        } catch (error) {
+          emptyCommentCleanupFailed = true;
+          throw error;
+        }
+      }
+    } else {
+      const markdown = renderReport(report);
+      await dependencies.io.writeSummary(markdown);
+      summaryWritten = true;
+      if (commentEnabled) {
+        commentUrl = await client.upsertPullRequestComment(context.pullRequestNumber, COMMENT_MARKER, renderReport(report, { includeMarker: true }));
+        validCommentPublished = true;
+      }
     }
     outputsAttempted = true;
     await dependencies.io.setOutput("report", compactReport);
@@ -12428,12 +12569,12 @@ var runAction = async (dependencies = defaultDependencies) => {
     return { ok: true, shouldFail: false };
   } catch {
     clearDedicatedKeys(dependencies.environment);
-    if (!summaryWritten) {
+    if (!summaryWritten && !validEmptyReport) {
       try {
         await dependencies.io.writeSummary(renderUnavailableReport());
       } catch {}
     }
-    if (commentEnabled && context && client && !validCommentPublished) {
+    if (commentEnabled && context && client && !validCommentPublished && !validEmptyReport) {
       try {
         commentUrl = await client.upsertPullRequestComment(context.pullRequestNumber, COMMENT_MARKER, `${COMMENT_MARKER}
 ${renderUnavailableReport()}`);
@@ -12447,8 +12588,9 @@ ${renderUnavailableReport()}`);
         await dependencies.io.setOutput("comment-url", commentUrl);
       } catch {}
     }
-    dependencies.io.annotate(failOnError ? "error" : "warning", "The redacted dotenc diff could not be completed safely. No secret content was emitted.");
-    return { ok: false, shouldFail: failOnError };
+    const shouldFail = failOnError || emptyCommentCleanupFailed;
+    dependencies.io.annotate(shouldFail ? "error" : "warning", "The redacted dotenc diff could not be completed safely. No secret content was emitted.");
+    return { ok: false, shouldFail };
   }
 };
 

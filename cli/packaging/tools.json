@@ -8,6 +8,7 @@
 		"createrepo_c",
 		"dpkg-deb",
 		"gpg",
+		"gpgconf",
 		"gpgv",
 		"gzip",
 		"rpm",
