@@ -224,7 +224,8 @@ The **Additional Authenticated Data (AAD)** used during AES-256-GCM encryption i
 
 ## Installation Script Trust Model
 
-The VS Code extension offers an installation helper that downloads and runs the dotenc install script:
+The README and VS Code extension offer an installation helper that downloads
+and runs the dotenc install script:
 
 ```bash
 curl -fsSL https://dotenc.org/install.sh | sh
@@ -235,6 +236,22 @@ This is a standard pattern used by many developer tools (Homebrew, Rust, Node.js
 - **HTTPS only** — the connection is encrypted and the server's identity is verified by TLS certificate
 - **User-initiated** — the script runs only when you explicitly trigger the install action; nothing runs automatically
 - **Domain controlled by the project** — `dotenc.org` is under project ownership
+- **Pinned Linux repository bootstrap** — before configuring APT, RPM, or APK,
+  the script downloads an immutable public-key object and verifies its exact
+  SHA-256. It then renders signature-enforcing repository configuration locally
+  before installing dotenc.
+- **Safe privilege selection** — native Linux repositories are selected only
+  when the process is root, passwordless `sudo` succeeds, or an interactive
+  terminal can accept a `sudo` prompt. Noninteractive callers such as the VS
+  Code extension fall back to Homebrew or npm rather than hanging on a prompt.
+- **Interactive AUR delegation** — the script delegates `dotenc-bin` only to an
+  already installed `yay` or `paru` helper with a controlling terminal. It does
+  not build an AUR recipe as root or silently confirm the transaction.
+
+The embedded hashes protect the first package-manager trust root if
+`packages.dotenc.org` alone is compromised. They cannot protect against a
+compromise of `dotenc.org` that changes the installer itself; reviewing or
+pinning the script before execution remains the stronger bootstrap choice.
 
 If you prefer to audit the script before running it, download it first:
 
@@ -244,10 +261,10 @@ curl -fsSL https://dotenc.org/install.sh -o install.sh
 sh install.sh
 ```
 
-Alternatively, install through the signed APT, RPM, or APK repositories, AUR,
-Homebrew, Scoop, npm, the `ghcr.io/dotenc/cli` OCI image, or a standalone binary
-from the [GitHub Releases](https://github.com/dotenc/dotenc/releases) page.
-None of these methods use the install script.
+Alternatively, follow the direct commands in the
+[installation guide](docs/INSTALLATION.md) for APT, RPM, APK, AUR, Homebrew,
+Scoop, npm, the `ghcr.io/dotenc/cli` OCI image, or a standalone binary. Those
+manual paths do not execute the install script.
 
 ---
 
@@ -285,11 +302,12 @@ The trust model separates authenticity from delivery:
   closed on downgrades or unexpected repository state.
 - Package managers verify those signatures against explicitly installed dotenc
   public keys. HTTPS alone is not the package authenticity boundary.
-- The README pins the SHA-256 of each exact APT, RPM, and APK bootstrap key
-  outside the package host, verifies downloaded key bytes before privileged
-  installation, and renders signature-enforcing repository configuration
-  locally. Compromise of `packages.dotenc.org` alone therefore cannot substitute
-  a first-install trust root without failing that digest check.
+- The installer and the [installation guide](docs/INSTALLATION.md) pin the
+  SHA-256 of each exact APT, RPM, and APK bootstrap key outside the package
+  host, verify downloaded key bytes before privileged repository configuration,
+  and render signature-enforcing configuration locally. Compromise of
+  `packages.dotenc.org` alone therefore cannot substitute a first-install trust
+  root without failing that digest check.
 - A first package publication accepts Linux binaries only from the immutable
   Actions artifact created earlier in the same release run; manual and
   scheduled invocations are refresh-only. Later refreshes authenticate the

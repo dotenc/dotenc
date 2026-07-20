@@ -59,8 +59,8 @@ The first production release uses these independently generated identities:
 | RPM | `C1FF EF75 0095 80AB 4A9E DDE8 7486 A84C 0C27 D6A2` | `2259 4CF5 8985 9987 FEDF E3EF 4905 AD34 F67B E8A7` | 2026-07-20 through 2028-07-19; [exact certificate](https://packages.dotenc.org/keys/dotenc-rpm-C1FFEF75009580AB4A9EDDE87486A84C0C27D6A2-2600233af0c9acab0f047d2f0c1fbda5d5970187a41a67eecdd85240b983309b.asc) |
 | APK | RSA-4096 SPKI SHA-256 `600d1cdeb051ccba069f4c444aa76d9094caf23b3aea0a29f1a84e2bf3204128` | Same RSA identity | No embedded expiry; [exact public key](https://packages.dotenc.org/keys/dotenc-600d1cdeb051ccba069f4c444aa76d9094caf23b3aea0a29f1a84e2bf3204128.rsa.pub), PEM SHA-256 `6b8e09be9c96801f9434f8b8e7c622cedcf6c343eb50483509dcd18a3b5b4b50` |
 
-Copy-paste installation commands are maintained in the
-[README installation section](https://github.com/dotenc/dotenc#installation).
+Copy-paste installation commands are maintained in the user-facing
+[installation guide](INSTALLATION.md).
 The live package-manager configuration files are
 [`apt/dotenc.sources`](https://packages.dotenc.org/apt/dotenc.sources),
 [`rpm/dotenc.repo`](https://packages.dotenc.org/rpm/dotenc.repo), and
