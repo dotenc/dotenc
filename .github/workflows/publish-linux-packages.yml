@@ -877,14 +877,25 @@ jobs:
             exit 1
           fi
 
+          release_date=$(awk -F': ' '$1 == "Date" { print $2; exit }' "$verification_dir/apt-release")
+          if [[ -z "$release_date" ]]; then
+            echo "APT Release metadata is missing Date" >&2
+            exit 1
+          fi
+          release_date_epoch=$(date --utc --date "$release_date" +%s)
+          if [[ "$release_date_epoch" != "$PUBLICATION_EPOCH" ]]; then
+            echo "APT Release Date does not match the publication epoch" >&2
+            exit 1
+          fi
+
           valid_until=$(awk -F': ' '$1 == "Valid-Until" { print $2; exit }' "$verification_dir/apt-release")
           if [[ -z "$valid_until" ]]; then
             echo "APT Release metadata is missing Valid-Until" >&2
             exit 1
           fi
           valid_until_epoch=$(date --utc --date "$valid_until" +%s)
-          if (( valid_until_epoch < now_epoch + 518400 )); then
-            echo "APT Valid-Until must leave at least six days for clients" >&2
+          if (( valid_until_epoch != PUBLICATION_EPOCH + 14 * 24 * 60 * 60 )); then
+            echo "APT Valid-Until must be exactly 14 days after the publication epoch" >&2
             exit 1
           fi
 
