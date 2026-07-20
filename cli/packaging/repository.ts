@@ -39,6 +39,7 @@ const DEFAULT_BASE_URL = "https://packages.dotenc.org"
 const DEFAULT_SUITE = "stable"
 const DEFAULT_COMPONENT = "main"
 const APT_VALID_DAYS = 14
+const APT_VALID_SECONDS = APT_VALID_DAYS * 24 * 60 * 60
 const PACKAGE_BUNDLE_MANIFEST = "package-bundle-manifest.json"
 
 const VERSION_PATTERN =
@@ -1380,8 +1381,10 @@ const buildAptRepository = async (
 	const releaseFile = join(releaseStagingDirectory, "Release")
 	const releaseDate = new Date(options.publicationEpoch * 1000).toUTCString()
 	const validUntil = new Date(
-		(options.publicationEpoch + APT_VALID_DAYS * 24 * 60 * 60) * 1000,
+		(options.publicationEpoch + APT_VALID_SECONDS) * 1000,
 	).toUTCString()
+	// apt-ftparchive only creates the field when ValidTime is nonzero. The
+	// explicit value then anchors it to the validated publication clock.
 	await runner.run(
 		toolCommand("aptFtparchive"),
 		[
@@ -1407,6 +1410,8 @@ const buildAptRepository = async (
 			`APT::FTPArchive::Release::Signed-By=${options.aptGpgPrimaryFingerprint}`,
 			"-o",
 			`APT::FTPArchive::Release::Date=${releaseDate}`,
+			"-o",
+			`APT::FTPArchive::Release::ValidTime=${APT_VALID_SECONDS}`,
 			"-o",
 			`APT::FTPArchive::Release::Valid-Until=${validUntil}`,
 			"-o",

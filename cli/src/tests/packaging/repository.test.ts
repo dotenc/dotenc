@@ -397,6 +397,7 @@ type FakeRunnerBehavior = {
 	invalidInspectedRpmIdentity?: boolean
 	rpmSourceProtection?: "encrypted" | "unencrypted"
 	transientRpmKeyPaths?: string[]
+	aptReleaseArguments?: string[]
 }
 
 const createFakeRunner = (
@@ -520,6 +521,9 @@ const createFakeRunner = (
 			if (name === "apt-ftparchive" || name === "gzip") {
 				if (runOptions.stdoutFile === undefined)
 					throw new Error("missing stdout file")
+				if (name === "apt-ftparchive" && args.includes("release")) {
+					behavior.aptReleaseArguments?.push(...args)
+				}
 				await mkdir(dirname(runOptions.stdoutFile), { recursive: true })
 				await writeFile(runOptions.stdoutFile, `${name} output`)
 				return
@@ -675,11 +679,23 @@ describe("full build and metadata refresh orchestration", () => {
 		process.env.UNRELATED_CI_SECRET = "must-not-leak"
 		try {
 			const transientRpmKeyPaths: string[] = []
+			const aptReleaseArguments: string[] = []
 			const manifest = await buildRepositories(
 				options,
-				createFakeRunner(options, { transientRpmKeyPaths }),
+				createFakeRunner(options, {
+					transientRpmKeyPaths,
+					aptReleaseArguments,
+				}),
 			)
 			expect(manifest.objects.some((object) => object.phase === 3)).toBe(true)
+			expect(aptReleaseArguments).toContain(
+				"APT::FTPArchive::Release::ValidTime=1209600",
+			)
+			expect(aptReleaseArguments).toContain(
+				`APT::FTPArchive::Release::Valid-Until=${new Date(
+					(options.publicationEpoch + 14 * 24 * 60 * 60) * 1000,
+				).toUTCString()}`,
+			)
 			expect(new Set(transientRpmKeyPaths).size).toBe(1)
 			await expect(access(transientRpmKeyPaths[0] as string)).rejects.toThrow()
 			const bundle = await createPackageBundleManifest(
