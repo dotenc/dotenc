@@ -2,12 +2,13 @@
 
 > [!IMPORTANT]
 > **Pre-launch status (2026-07-20):** the R2 bucket, custom domain, Cloudflare
-> edge controls, and production signing secrets are provisioned, but the
-> repositories are **not yet public or usable**. CI has not yet validated the
-> signing-secret contents. A manual, non-publishing validation mode is ready to
-> perform that check after this workflow reaches `main`; no first signed
-> repository publication has completed. Do not advertise APT, RPM, or APK
-> installation until the launch criteria below pass.
+> edge controls, and production signing secrets are provisioned. The protected
+> non-publishing validation has policy-checked the production keys, built and
+> signed every package variant, verified the signed roots, and installed from
+> clean APT, RPM, and APK repositories on both supported architectures. The
+> repositories are still **not public or usable** because no first signed
+> publication has completed. Do not advertise APT, RPM, or APK installation
+> until the remaining launch criteria below pass.
 
 This document is the operator and security runbook for the official dotenc
 Linux package repositories served from `https://packages.dotenc.org`.
