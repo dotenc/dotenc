@@ -19,6 +19,7 @@ import {
 } from "../commands/tools/install-github-diffs"
 import { getKeyFingerprint } from "../helpers/getKeyFingerprint"
 import {
+	_runInstallerProcess,
 	GITHUB_DIFF_DEFAULT_KEY_NAME,
 	GITHUB_DIFF_SECRET_NAME,
 	GITHUB_DIFF_WORKFLOW_PATH,
@@ -270,6 +271,47 @@ afterEach(() => {
 })
 
 describe("installGithubDiffs", () => {
+	test("bounds installer subprocess failures with static diagnostics", async () => {
+		const cwd = process.cwd()
+
+		await expect(
+			_runInstallerProcess("dotenc-test-command-that-does-not-exist", [], {
+				cwd,
+				timeoutMs: 1_000,
+			}),
+		).rejects.toThrow("could not be started")
+
+		await expect(
+			_runInstallerProcess(process.execPath, ["-e", "process.exit(7)"], {
+				cwd,
+			}),
+		).rejects.toThrow("exited with code 7")
+
+		await expect(
+			_runInstallerProcess(
+				process.execPath,
+				["-e", 'process.stdout.write("x".repeat(512))'],
+				{ cwd, maxOutputBytes: 32 },
+			),
+		).rejects.toThrow("produced too much output")
+
+		await expect(
+			_runInstallerProcess(
+				process.execPath,
+				["-e", 'process.stderr.write("provider-sensitive".repeat(32))'],
+				{ cwd, maxOutputBytes: 32 },
+			),
+		).rejects.toThrow("produced too much output")
+
+		await expect(
+			_runInstallerProcess(
+				process.execPath,
+				["-e", "setInterval(() => {}, 1_000)"],
+				{ cwd, timeoutMs: 25 },
+			),
+		).rejects.toThrow("timed out")
+	})
+
 	test("performs a minimal non-interactive install through the command wrapper without exposing the private identity", async () => {
 		const fixture = createRepository()
 		const github = createGithub()
@@ -500,6 +542,38 @@ describe("installGithubDiffs", () => {
 
 		await expect(
 			installGithubDiffs(
+				{ all: true, cwd: fixture.root, yes: true },
+				testDependencies.dependencies,
+			),
+		).rejects.toThrow("Non-interactive installation requires --action-ref")
+
+		await expect(
+			installGithubDiffs(
+				{
+					actionRef: ACTION_SHA,
+					cwd: fixture.root,
+					environment: [".env.untracked.enc"],
+					yes: true,
+				},
+				testDependencies.dependencies,
+			),
+		).rejects.toThrow("Encrypted environment is not tracked")
+
+		await expect(
+			installGithubDiffs(
+				{
+					actionRef: ACTION_SHA,
+					all: true,
+					cwd: fixture.root,
+					repo: "invalid",
+					yes: true,
+				},
+				testDependencies.dependencies,
+			),
+		).rejects.toThrow("--repo must use the owner/repository format")
+
+		await expect(
+			installGithubDiffs(
 				{
 					actionRef: ACTION_SHA,
 					all: true,
@@ -519,6 +593,128 @@ describe("installGithubDiffs", () => {
 		expect(
 			existsSync(repositoryPath(fixture.root, GITHUB_DIFF_WORKFLOW_PATH)),
 		).toBe(false)
+	})
+
+	test("rejects malformed GitHub metadata and unavailable reviewed action commits", async () => {
+		const runCase = async (
+			override: (
+				args: string[],
+			) => string | undefined | Promise<string | undefined>,
+			expected: string,
+			options: { actionRef?: string; interactive?: boolean } = {
+				actionRef: ACTION_SHA,
+			},
+		) => {
+			const fixture = createRepository()
+			const github = createGithub()
+			const testDependencies = createDependencies({
+				github,
+				interactive: options.interactive,
+			})
+			const base = github.runGh
+			testDependencies.dependencies.runGh = async (args, runOptions) =>
+				(await override(args)) ?? base(args, runOptions)
+
+			await expect(
+				installGithubDiffs(
+					{
+						actionRef: options.actionRef,
+						all: true,
+						cwd: fixture.root,
+						yes: true,
+					},
+					testDependencies.dependencies,
+				),
+			).rejects.toThrow(expected)
+			expect(secretSetCall(github)).toBeUndefined()
+		}
+
+		await runCase(async (args) => {
+			if (args[0] === "repo" && args[1] === "view") {
+				throw new Error("provider diagnostics must stay private")
+			}
+			return undefined
+		}, "Could not resolve the authenticated GitHub repository")
+
+		await runCase(async (args) => {
+			if (args[0] === "repo" && args[1] === "view") return "not-json"
+		}, "GitHub CLI returned invalid repository metadata")
+
+		await runCase(async (args) => {
+			if (args[0] === "repo" && args[1] === "view") {
+				return JSON.stringify({
+					nameWithOwner: "acme/example",
+					url: "https://github.com/acme/example",
+				})
+			}
+		}, "GitHub CLI returned invalid repository metadata")
+
+		await runCase(async (args) => {
+			if (args[0] === "repo" && args[1] === "view") {
+				return JSON.stringify({
+					isFork: false,
+					nameWithOwner: "acme/example",
+					url: "not-a-url",
+				})
+			}
+		}, "GitHub CLI returned invalid repository metadata")
+
+		await runCase(async (args) => {
+			if (args[0] === "secret" && args[1] === "list") return "not-json"
+		}, "Could not inspect GitHub Actions repository secrets")
+
+		await runCase(async (args) => {
+			if (
+				args[0] === "api" &&
+				args[1]?.startsWith(
+					"repos/dotenc/dotenc/contents/actions/diff/action.yml?ref=",
+				)
+			) {
+				throw new Error("reviewed commit is unavailable")
+			}
+			return undefined
+		}, "reviewed commit does not expose the official actions/diff implementation")
+
+		await runCase(
+			async (args) => {
+				if (args[0] === "api" && args[1] === "repos/dotenc/dotenc/commits/v1") {
+					throw new Error("v1 resolution failed")
+				}
+				return undefined
+			},
+			"Could not resolve the official dotenc diff action v1 commit",
+			{ interactive: true },
+		)
+
+		expect(() => renderGithubDiffWorkflow("v1")).toThrow(
+			"full 40-character commit SHA",
+		)
+	})
+
+	test("refuses a dirty selected environment", async () => {
+		const fixture = createRepository()
+		const environmentPath = repositoryPath(fixture.root, ".env.production.enc")
+		writeFileSync(
+			environmentPath,
+			Buffer.concat([
+				fixture.originals.get(".env.production.enc") as Buffer,
+				Buffer.from("\n"),
+			]),
+		)
+		const github = createGithub()
+
+		await expect(
+			installGithubDiffs(
+				{
+					actionRef: ACTION_SHA,
+					cwd: fixture.root,
+					environment: [".env.production.enc"],
+					yes: true,
+				},
+				createDependencies({ github }).dependencies,
+			),
+		).rejects.toThrow("must be tracked and clean")
+		expect(secretSetCall(github)).toBeUndefined()
 	})
 
 	test("exercises the public command wrapper while retaining early validation errors", async () => {
