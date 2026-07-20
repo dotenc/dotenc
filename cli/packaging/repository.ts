@@ -2211,6 +2211,12 @@ export const CACHE_POLICIES = {
 	},
 } as const
 
+export const LINUX_KEY_ALIAS_PATHS = {
+	apt: "keys/linux/apt",
+	rpm: "keys/linux/rpm",
+	apk: "keys/linux/apk",
+} as const
+
 const isSignedRoot = (path: string): boolean =>
 	/(?:^|\/)InRelease$/.test(path) ||
 	/(?:^|\/)repodata\/repomd\.xml$/.test(path) ||
@@ -2251,6 +2257,13 @@ export const classifyPublishPath = (
 
 export const contentTypeForPath = (path: string): string => {
 	if (/\.(?:deb|rpm|apk)$/.test(path)) return "application/octet-stream"
+	if (
+		path === LINUX_KEY_ALIAS_PATHS.apt ||
+		path === LINUX_KEY_ALIAS_PATHS.rpm
+	) {
+		return "application/pgp-keys"
+	}
+	if (path === LINUX_KEY_ALIAS_PATHS.apk) return "application/x-pem-file"
 	if (path.endsWith(".asc")) {
 		return path.startsWith("keys/")
 			? "application/pgp-keys"
@@ -2403,6 +2416,16 @@ const writePublicKeys = async (
 	]) {
 		await copyFile(options.apkPublicKey, join(keysDirectory, filename))
 		await chmod(join(keysDirectory, filename), 0o644)
+	}
+	for (const [source, aliasPath] of [
+		[options.aptGpgPublicKey, LINUX_KEY_ALIAS_PATHS.apt],
+		[options.rpmGpgPublicKey, LINUX_KEY_ALIAS_PATHS.rpm],
+		[options.apkPublicKey, LINUX_KEY_ALIAS_PATHS.apk],
+	] as const) {
+		const destination = join(publicRoot, aliasPath)
+		await mkdir(dirname(destination), { recursive: true, mode: 0o755 })
+		await copyFile(source, destination)
+		await chmod(destination, 0o644)
 	}
 }
 

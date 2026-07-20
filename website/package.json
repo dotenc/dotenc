@@ -6,7 +6,8 @@
 	"scripts": {
 		"dev": "bun run src/serve.ts",
 		"build": "bun run src/build.ts",
-		"build:css": "bunx @tailwindcss/cli -i src/styles/main.css -o dist/styles.css --minify"
+		"build:css": "bunx @tailwindcss/cli -i src/styles/main.css -o dist/styles.css --minify",
+		"test:installer": "bun test ./tests/install.test.ts"
 	},
 	"devDependencies": {
 		"@tailwindcss/cli": "^4.1.0"

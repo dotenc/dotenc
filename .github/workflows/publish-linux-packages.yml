@@ -1212,6 +1212,10 @@ jobs:
           edge_objects=(
             keys/dotenc-apt.asc
             keys/dotenc-rpm.asc
+            keys/dotenc-apk.rsa.pub
+            keys/linux/apt
+            keys/linux/rpm
+            keys/linux/apk
             "keys/$APK_KEY_NAME.rsa.pub"
             apt/dotenc.sources
             rpm/dotenc.repo
@@ -1262,6 +1266,30 @@ jobs:
             exit 1
           }
 
+          assert_content_type() {
+            local object_path=$1
+            local expected=$2
+            local header_file="$edge_dir/content-type-${object_path//\//_}.headers"
+            local status content_type
+
+            status=$(curl --fail --show-error --silent \
+              --proto '=https' \
+              --tlsv1.2 \
+              --dump-header "$header_file" \
+              --output /dev/null \
+              --write-out '%{http_code}' \
+              "$PACKAGES_BASE_URL/$object_path")
+            content_type=$(tr -d '\r' < "$header_file" |
+              awk -F: 'tolower($1) == "content-type" {
+                value = $0
+                sub(/^[^:]*:[[:space:]]*/, "", value)
+              } END { print tolower(value) }')
+            if [[ "$status" != "200" || "$content_type" != "$expected" ]]; then
+              echo "Content-Type contract failed for $object_path: HTTP ${status:-unknown}, Content-Type ${content_type:-missing}" >&2
+              exit 1
+            fi
+          }
+
           immutable_cache_control="public, max-age=31536000, s-maxage=31536000, immutable, no-transform"
           mutable_cache_control="public, max-age=60, s-maxage=300, must-revalidate, no-transform"
 
@@ -1300,6 +1328,10 @@ jobs:
           mutable_roots=(
             keys/dotenc-apt.asc
             keys/dotenc-rpm.asc
+            keys/dotenc-apk.rsa.pub
+            keys/linux/apt
+            keys/linux/rpm
+            keys/linux/apk
             apt/dotenc.sources
             rpm/dotenc.repo
             apk/dotenc.repositories
@@ -1314,6 +1346,9 @@ jobs:
           for object_path in "${mutable_roots[@]}"; do
             assert_cache_control "$object_path" "$mutable_cache_control"
           done
+          assert_content_type keys/linux/apt application/pgp-keys
+          assert_content_type keys/linux/rpm application/pgp-keys
+          assert_content_type keys/linux/apk application/x-pem-file
 
           range_headers="$edge_dir/package-range.headers"
           range_body="$edge_dir/package-range.body"
@@ -1338,7 +1373,7 @@ jobs:
           mkdir -m 0700 "$edge_dir/gnupg"
           GNUPGHOME="$edge_dir/gnupg" gpg --batch --yes --dearmor \
             --output "$edge_dir/apt.gpg" \
-            "$edge_dir/keys/dotenc-apt.asc"
+            "$edge_dir/keys/linux/apt"
           apt_status=$(gpgv \
             --status-fd 1 \
             --keyring "$edge_dir/apt.gpg" \
@@ -1354,7 +1389,7 @@ jobs:
 
           GNUPGHOME="$edge_dir/gnupg" gpg --batch --yes --dearmor \
             --output "$edge_dir/rpm.gpg" \
-            "$edge_dir/keys/dotenc-rpm.asc"
+            "$edge_dir/keys/linux/rpm"
           for rpm_arch in x86_64 aarch64; do
             rpm_status=$(gpgv \
               --status-fd 1 \
@@ -1372,7 +1407,7 @@ jobs:
 
           mkdir -m 0700 "$edge_dir/apk-keys"
           install -m 0644 \
-            "$edge_dir/keys/$APK_KEY_NAME.rsa.pub" \
+            "$edge_dir/keys/linux/apk" \
             "$edge_dir/apk-keys/$APK_KEY_NAME.rsa.pub"
           docker run --rm \
             --network none \

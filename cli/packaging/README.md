@@ -173,7 +173,9 @@ A successful build has already verified:
 ## Outputs and publication order
 
 - `public/` contains only the allowed `apt/`, `rpm/`, `apk/`, and `keys/`
-  namespaces.
+  namespaces. It includes immutable key objects, the legacy aliases, and the
+  human-facing `keys/linux/apt`, `keys/linux/rpm`, and `keys/linux/apk`
+  aliases as byte-for-byte copies of the validated public keys.
 - `package-bundle-manifest.json` and its ASCII detached `.asc` signature are the
   authenticated, deterministic six-package rollback and metadata-refresh
   bundle contract.
@@ -190,10 +192,10 @@ closed.
 
 APT/RPM immutable public-certificate object names include both the primary
 fingerprint and SHA-256 of the exact certificate bytes; generated bootstrap
-configs use those objects. Stable aliases remain convenience links only. APT's
-`Valid-Until` limits stale-metadata replay to 14 days. RPM and APK metadata do
-not provide an equivalent expiry field, so their freshness depends on the
-scheduled publisher and Cloudflare purge/monitoring controls.
+configs use those objects. Stable aliases remain convenience object paths only.
+APT's `Valid-Until` limits stale-metadata replay to 14 days. RPM and APK
+metadata do not provide an equivalent expiry field, so their freshness depends
+on the scheduled publisher and Cloudflare purge/monitoring controls.
 
 ## Arch Linux / AUR recipe
 

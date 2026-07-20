@@ -41,6 +41,12 @@ jobs:
           scripts/alpine-package-tool.sh
           scripts/verify-packages-edge.sh
 
+      - name: Validate website installer
+        run: |
+          sh -n website/public/install.sh
+          shellcheck -s sh website/public/install.sh
+          bun run --cwd website test:installer
+
       - name: Test redacted diff action
         run: bun run actions:test-diff
 

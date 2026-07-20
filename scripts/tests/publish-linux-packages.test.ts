@@ -187,6 +187,27 @@ describe("Linux package publication manifest", () => {
 		expect(workflow).not.toContain("almalinux:9-minimal")
 	})
 
+	test("verifies short Linux key aliases at the public edge", () => {
+		const workflow = readFileSync(
+			path.resolve(
+				import.meta.dir,
+				"../../.github/workflows/publish-linux-packages.yml",
+			),
+			"utf8",
+		)
+
+		for (const [aliasPath, contentType] of [
+			["keys/linux/apt", "application/pgp-keys"],
+			["keys/linux/rpm", "application/pgp-keys"],
+			["keys/linux/apk", "application/x-pem-file"],
+		] as const) {
+			expect(workflow).toContain(`assert_content_type ${aliasPath} ${contentType}`)
+		}
+		expect(workflow).toContain('"$edge_dir/keys/linux/apt"')
+		expect(workflow).toContain('"$edge_dir/keys/linux/rpm"')
+		expect(workflow).toContain('"$edge_dir/keys/linux/apk"')
+	})
+
 	test("pins distinct install images for each validated architecture", () => {
 		const workflow = readFileSync(
 			path.resolve(
@@ -296,6 +317,34 @@ describe("Linux package publication manifest", () => {
 		)
 		const parsed = parseManifest(writeManifest(builderManifest))
 		expect(validateLocalFiles(root, parsed.objects).size).toBe(1)
+	})
+
+	test("accepts nested mutable signing-key aliases", async () => {
+		const { root, writeManifest } = fixture()
+		const aliasPaths = ["keys/linux/apt", "keys/linux/rpm", "keys/linux/apk"]
+		for (const aliasPath of aliasPaths) {
+			const source = path.join(root, "public", aliasPath)
+			mkdirSync(path.dirname(source), { recursive: true })
+			writeFileSync(source, `public key for ${aliasPath}`)
+		}
+		const builderManifest = await createPublicationManifest(
+			path.join(root, "public"),
+			"https://packages.dotenc.org",
+			1_768_737_600,
+		)
+		const parsed = parseManifest(writeManifest(builderManifest))
+		for (const aliasPath of aliasPaths) {
+			expect(
+				parsed.objects.find((object) => object.path === aliasPath),
+			).toMatchObject({
+				policy: "key",
+				phase: 2,
+				cacheControl: mutableCacheControl,
+				writeMode: "overwrite",
+				immutable: false,
+			})
+		}
+		expect(validateLocalFiles(root, parsed.objects).size).toBe(4)
 	})
 
 	test("accepts a valid manifest and matching local object", () => {

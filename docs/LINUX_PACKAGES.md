@@ -59,8 +59,21 @@ The first production release uses these independently generated identities:
 | RPM | `C1FF EF75 0095 80AB 4A9E DDE8 7486 A84C 0C27 D6A2` | `2259 4CF5 8985 9987 FEDF E3EF 4905 AD34 F67B E8A7` | 2026-07-20 through 2028-07-19; [exact certificate](https://packages.dotenc.org/keys/dotenc-rpm-C1FFEF75009580AB4A9EDDE87486A84C0C27D6A2-2600233af0c9acab0f047d2f0c1fbda5d5970187a41a67eecdd85240b983309b.asc) |
 | APK | RSA-4096 SPKI SHA-256 `600d1cdeb051ccba069f4c444aa76d9094caf23b3aea0a29f1a84e2bf3204128` | Same RSA identity | No embedded expiry; [exact public key](https://packages.dotenc.org/keys/dotenc-600d1cdeb051ccba069f4c444aa76d9094caf23b3aea0a29f1a84e2bf3204128.rsa.pub), PEM SHA-256 `6b8e09be9c96801f9434f8b8e7c622cedcf6c343eb50483509dcd18a3b5b4b50` |
 
-Copy-paste installation commands are maintained in the
-[README installation section](https://github.com/dotenc/dotenc#installation).
+Human-facing installation commands use these stable aliases:
+
+| Ecosystem | Alias | Exact-byte SHA-256 |
+| --- | --- | --- |
+| APT | [`keys/linux/apt`](https://packages.dotenc.org/keys/linux/apt) | `108333389e16fc3dbdb09938308639951ea6df5fb8f482eba562cafbc353c58f` |
+| RPM | [`keys/linux/rpm`](https://packages.dotenc.org/keys/linux/rpm) | `2600233af0c9acab0f047d2f0c1fbda5d5970187a41a67eecdd85240b983309b` |
+| APK | [`keys/linux/apk`](https://packages.dotenc.org/keys/linux/apk) | `6b8e09be9c96801f9434f8b8e7c622cedcf6c343eb50483509dcd18a3b5b4b50` |
+
+Each alias is a small duplicate R2 object, not a redirect or filesystem
+symlink. It is mutable so a planned key rotation can preserve the public URL,
+but clients must verify the independently documented checksum or fingerprint.
+The immutable objects above remain the audit and rollback source of truth.
+
+Copy-paste installation commands are maintained in the user-facing
+[installation guide](INSTALLATION.md).
 The live package-manager configuration files are
 [`apt/dotenc.sources`](https://packages.dotenc.org/apt/dotenc.sources),
 [`rpm/dotenc.repo`](https://packages.dotenc.org/rpm/dotenc.repo), and
@@ -164,7 +177,7 @@ object metadata.
 | Class | Examples | `Cache-Control` |
 | --- | --- | --- |
 | Immutable | Versioned `.deb`, `.rpm`, and `.apk` files; APT `by-hash` objects; checksum-named repository metadata; OpenPGP certificates named by primary fingerprint plus exact certificate digest; fingerprint-named APK public keys | `public, max-age=31536000, s-maxage=31536000, immutable, no-transform` |
-| Mutable | APT `InRelease` and unhashed indexes; RPM `repodata/repomd.xml`; APK index roots; unversioned repository configs and key aliases | `public, max-age=60, s-maxage=300, must-revalidate, no-transform` |
+| Mutable | APT `InRelease` and unhashed indexes; RPM `repodata/repomd.xml`; APK index roots; unversioned repository configs; `/keys/linux/{apt,rpm,apk}` and legacy key aliases | `public, max-age=60, s-maxage=300, must-revalidate, no-transform` |
 | Negative response | Allowed-path `404` and `410` responses | Client-visible `max-age=0, must-revalidate`; separate Cloudflare status-code TTL of 30 seconds |
 
 `max-age` controls browsers and package-manager HTTP caches; `s-maxage`
@@ -187,8 +200,10 @@ Rules for object metadata:
   fingerprint and the SHA-256 digest of the exact published certificate bytes.
   The fingerprint identifies the trust root; the digest lets a renewed
   certificate or changed subkey set coexist without overwriting the old object.
-  APK public-key objects use the SHA-256 fingerprint of the public SPKI DER. An
-  unversioned key URL is only a mutable bootstrap alias.
+  APK public-key objects use the SHA-256 fingerprint of the public SPKI DER.
+  Unversioned key URLs are mutable bootstrap aliases only; publish them from the
+  same validated source bytes, purge every exact alias path, and restore them
+  from a known immutable object during rollback.
 - Do not use query parameters for versions, cache busting, signatures, or
   repository selection. They are deliberately rejected.
 
@@ -220,9 +235,9 @@ check; the detached OpenPGP signature is the durable refresh trust input.
    installs before publication.
 3. Upload new immutable package objects, content-addressed metadata, and
    fingerprinted public keys with create-only semantics.
-4. Upload mutable metadata dependencies that are not yet reachable from a
-   public root, deferring each RPM `repomd.xml.asc` until its matching root is
-   ready.
+4. Upload mutable key aliases and metadata dependencies that are not yet
+   reachable from a public root, deferring each RPM `repomd.xml.asc` until its
+   matching root is ready.
 5. For each RPM architecture, upload `repomd.xml.asc` and immediately upload
    its matching `repomd.xml`. R2 cannot replace this detached-signature pair
    atomically, so keeping the two writes consecutive minimizes—but cannot
@@ -231,9 +246,10 @@ check; the detached OpenPGP signature is the durable refresh trust input.
    never see metadata that references an object that has not finished uploading.
 7. Purge exact URLs for every changed mutable root and for every newly created
    URL that could have a cached `404`/`410` response.
-8. Fetch and compare the published configs, immutable bootstrap keys, package
-   bytes, and signed repository roots through `packages.dotenc.org`; verify
-   positive and negative cache behavior, range requests, and signing identities.
+8. Fetch and compare the published configs, immutable bootstrap keys, mutable
+   aliases, package bytes, and signed repository roots through
+   `packages.dotenc.org`; verify content types, positive and negative cache
+   behavior, range requests, and signing identities.
 
 Purge exact URLs only. A hostname-wide purge throws away immutable cache
 coverage, raises R2 read load, and expands the effect of an operator mistake.

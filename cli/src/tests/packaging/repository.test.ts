@@ -28,6 +28,7 @@ import {
 	createPublicationManifest,
 	immutableOpenPgpKeyFilename,
 	inspectSecretSubkeyExportPackets,
+	LINUX_KEY_ALIAS_PATHS,
 	NFPM_VERSION,
 	packageRelativePaths,
 	parseCliOptions,
@@ -191,6 +192,9 @@ describe("repository option and policy primitives", () => {
 		expect(
 			classifyPublishPath(`keys/dotenc-${"a".repeat(64)}.rsa.pub`),
 		).toEqual({ policy: "immutable", phase: 1 })
+		for (const path of Object.values(LINUX_KEY_ALIAS_PATHS)) {
+			expect(classifyPublishPath(path)).toEqual({ policy: "key", phase: 2 })
+		}
 		expect(classifyPublishPath("rpm/x86_64/repodata/repomd.xml.asc")).toEqual({
 			policy: "metadata",
 			phase: 2,
@@ -212,6 +216,15 @@ describe("repository option and policy primitives", () => {
 		)
 		expect(contentTypeForPath("keys/dotenc-apt.asc")).toBe(
 			"application/pgp-keys",
+		)
+		expect(contentTypeForPath(LINUX_KEY_ALIAS_PATHS.apt)).toBe(
+			"application/pgp-keys",
+		)
+		expect(contentTypeForPath(LINUX_KEY_ALIAS_PATHS.rpm)).toBe(
+			"application/pgp-keys",
+		)
+		expect(contentTypeForPath(LINUX_KEY_ALIAS_PATHS.apk)).toBe(
+			"application/x-pem-file",
 		)
 		expect(contentTypeForPath("rpm/x/repodata/repomd.xml.asc")).toBe(
 			"application/pgp-signature",
@@ -688,6 +701,37 @@ describe("full build and metadata refresh orchestration", () => {
 				}),
 			)
 			expect(manifest.objects.some((object) => object.phase === 3)).toBe(true)
+			for (const [aliasPath, sourcePath, contentType] of [
+				[
+					LINUX_KEY_ALIAS_PATHS.apt,
+					options.aptGpgPublicKey,
+					"application/pgp-keys",
+				],
+				[
+					LINUX_KEY_ALIAS_PATHS.rpm,
+					options.rpmGpgPublicKey,
+					"application/pgp-keys",
+				],
+				[
+					LINUX_KEY_ALIAS_PATHS.apk,
+					options.apkPublicKey,
+					"application/x-pem-file",
+				],
+			] as const) {
+				expect(
+					await readFile(join(options.outputDir, "public", aliasPath)),
+				).toEqual(await readFile(sourcePath))
+				expect(
+					manifest.objects.find((object) => object.path === aliasPath),
+				).toMatchObject({
+					contentType,
+					policy: "key",
+					phase: 2,
+					cacheControl: CACHE_POLICIES.key.cacheControl,
+					writeMode: "overwrite",
+					immutable: false,
+				})
+			}
 			expect(aptReleaseArguments).toContain(
 				"APT::FTPArchive::Release::ValidTime=1209600",
 			)
