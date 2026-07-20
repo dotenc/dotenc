@@ -162,7 +162,7 @@ describe("AUR recipe rendering", () => {
 })
 
 describe("AUR publication workflow", () => {
-	test("defaults manual runs to validation and keeps SSH publication gated", async () => {
+	test("validates SSH read-only and keeps manual publication gated", async () => {
 		const workflow = await readFile(
 			resolve(
 				import.meta.dir,
@@ -174,11 +174,16 @@ describe("AUR publication workflow", () => {
 		expect(workflow).toMatch(
 			/workflow_dispatch:[\s\S]*?publish:[\s\S]*?default: false/,
 		)
+		expect(workflow).toContain("github.event_name == 'workflow_dispatch'")
 		expect(workflow).toContain("vars.AUR_PACKAGES_ENABLED == 'true'")
 		expect(workflow).toContain(
 			"SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4",
 		)
 		expect(workflow).toContain("unset AUR_SSH_PRIVATE_KEY_BASE64")
+		expect(workflow).toContain('ssh -F "$ssh_config" -T aur.archlinux.org help')
+		expect(workflow).toContain(
+			'[[ "$PUBLISH_REQUESTED" != "true" || "$AUR_PACKAGES_ENABLED" != "true" ]]',
+		)
 		expect(workflow).toContain("push origin HEAD:master")
 		expect(workflow).not.toMatch(/git[^\n]*push[^\n]*--force/)
 	})

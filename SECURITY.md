@@ -276,8 +276,10 @@ The planned trust model separates authenticity from delivery:
   that identity only as an unencrypted base64-encoded environment secret,
   verifies the server's Ed25519 key against the fingerprint published by AUR,
   and uses strict host-key checking. The key is exposed only after an
-  unprivileged, digest-pinned Arch build/install validation succeeds; pushes
-  are non-forced and fail closed on downgrades or unexpected repository state.
+  unprivileged, digest-pinned Arch build/install validation succeeds. Manual
+  validation authenticates with AUR's read-only `help` command, then exits
+  without cloning when publication is disabled. Pushes are non-forced and fail
+  closed on downgrades or unexpected repository state.
 - Package managers verify those signatures against explicitly installed dotenc
   public keys. HTTPS alone is not the package authenticity boundary.
 - A first package publication accepts Linux binaries only from the immutable

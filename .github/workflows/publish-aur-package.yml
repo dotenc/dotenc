@@ -253,12 +253,12 @@ jobs:
           retention-days: 1
 
   publish:
-    name: Publish dotenc-bin ${{ inputs.version }}
+    name: Validate AUR SSH / publish dotenc-bin ${{ inputs.version }}
     needs: validate
     if: >-
       needs.validate.result == 'success' &&
-      inputs.publish == true &&
-      vars.AUR_PACKAGES_ENABLED == 'true'
+      (github.event_name == 'workflow_dispatch' ||
+      (inputs.publish == true && vars.AUR_PACKAGES_ENABLED == 'true'))
     runs-on: ubuntu-24.04
     environment: linux-packages
     permissions:
@@ -293,9 +293,11 @@ jobs:
           grep -Fqx $'\tpkgver = '"$VERSION" "$recipe_dir/.SRCINFO"
           grep -Fqx "aur" "$recipe_dir/install-method"
 
-      - name: Publish through pinned AUR SSH
+      - name: Validate AUR SSH and publish when enabled
         env:
           AUR_SSH_PRIVATE_KEY_BASE64: ${{ secrets.AUR_SSH_PRIVATE_KEY_BASE64 }}
+          AUR_PACKAGES_ENABLED: ${{ vars.AUR_PACKAGES_ENABLED }}
+          PUBLISH_REQUESTED: ${{ inputs.publish }}
           VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
@@ -365,6 +367,23 @@ jobs:
             UserKnownHostsFile $aur_temp/known_hosts
           EOF
           chmod 0600 "$ssh_config"
+
+          ssh_help_output="$aur_temp/ssh-help-output"
+          if ! ssh -F "$ssh_config" -T aur.archlinux.org help \
+            > "$ssh_help_output" 2>&1; then
+            echo "the AUR deployment key did not authenticate successfully" >&2
+            exit 1
+          fi
+          if ! grep -Fq "Commands:" "$ssh_help_output"; then
+            echo "the authenticated AUR SSH endpoint returned an unexpected response" >&2
+            exit 1
+          fi
+          echo "AUR SSH credential authenticated successfully"
+
+          if [[ "$PUBLISH_REQUESTED" != "true" || "$AUR_PACKAGES_ENABLED" != "true" ]]; then
+            echo "AUR publication remains disabled; no repository was cloned or pushed"
+            exit 0
+          fi
 
           aur_repository="$aur_temp/dotenc-bin"
           git -c init.defaultBranch=master \

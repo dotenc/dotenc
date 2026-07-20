@@ -507,7 +507,10 @@ but is not yet published to AUR. Keep the repository variable
 `.github/workflows/publish-aur-package.yml` defaults
 manual dispatches to validation-only; it downloads the exact stable GitHub
 Release inputs and performs a clean `makepkg` build/install in a digest-pinned
-x86_64 Arch container. The release workflow calls it only after the GitHub
+x86_64 Arch container. After that succeeds, a manual run also verifies the
+configured SSH identity against AUR's read-only `help` command. It does not
+clone or push the AUR repository unless both the manual `publish` input and the
+launch gate are `true`. The release workflow calls it only after the GitHub
 Release exists and the launch gate is `true`.
 
 Publication needs a dedicated, **unencrypted Ed25519** SSH deployment key
