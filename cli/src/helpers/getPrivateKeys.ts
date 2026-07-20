@@ -195,11 +195,25 @@ export type GetPrivateKeysResult = {
 	unsupportedKeys?: UnsupportedPrivateKeyEntry[]
 }
 
-export const getPrivateKeys = async (): Promise<GetPrivateKeysResult> => {
+export type GetPrivateKeysOptions = {
+	/** Only consider DOTENC_PRIVATE_KEY_BASE64 / DOTENC_PRIVATE_KEY. */
+	environmentOnly?: boolean
+	/** Preserve the interactive CLI behavior by default; library callers can collect. */
+	environmentKeyErrorMode?: "exit" | "collect"
+	/** Allows non-interactive callers to suppress otherwise-safe diagnostics. */
+	logError?: (message: string) => void
+}
+
+export const getPrivateKeys = async (
+	options: GetPrivateKeysOptions = {},
+): Promise<GetPrivateKeysResult> => {
 	const privateKeys: PrivateKeyEntry[] = []
 	const passphraseProtectedKeys: string[] = []
 	const unsupportedKeys: UnsupportedPrivateKeyEntry[] = []
 	const privateKeyPassphrase = process.env.DOTENC_PRIVATE_KEY_PASSPHRASE
+	const environmentKeyErrorMode = options.environmentKeyErrorMode ?? "exit"
+	const logError =
+		options.logError ?? ((message: string) => console.error(message))
 
 	// Check environment-provided bootstrap keys before scanning ~/.ssh.
 	const environmentPrivateKey = getEnvironmentPrivateKey()
@@ -208,7 +222,7 @@ export const getPrivateKeys = async (): Promise<GetPrivateKeysResult> => {
 		const entryName = `env.${envName}`
 
 		if ("error" in environmentPrivateKey) {
-			console.error(
+			logError(
 				`Invalid ${envName} value. Please provide base64-encoded private key content.`,
 			)
 			unsupportedKeys.push({
@@ -252,23 +266,37 @@ export const getPrivateKeys = async (): Promise<GetPrivateKeysResult> => {
 						name: entryName,
 						reason: describeUnsupportedAlgorithm(privateKey.asymmetricKeyType),
 					})
-					console.error(
+					logError(
 						`Unsupported key type in ${envName}: ${privateKey.asymmetricKeyType}. Only RSA and Ed25519 are supported.`,
 					)
 				}
 			} else if (dotencPrivateKeyPassphraseProtected) {
 				if (privateKeyPassphrase !== undefined) {
-					console.error(
+					logError(
 						`Error: failed to decrypt the key in ${envName} with DOTENC_PRIVATE_KEY_PASSPHRASE. Please verify the passphrase.`,
 					)
-					process.exit(1)
+					if (environmentKeyErrorMode === "exit") {
+						process.exit(1)
+					}
+					unsupportedKeys.push({
+						name: entryName,
+						reason: "passphrase-protected (failed to decrypt)",
+					})
+				} else {
+					logError(
+						`Error: the key in ${envName} is passphrase-protected. Set DOTENC_PRIVATE_KEY_PASSPHRASE to use it, or provide a passwordless key.`,
+					)
+					if (environmentKeyErrorMode === "exit") {
+						process.exit(1)
+					}
+					passphraseProtectedKeys.push(entryName)
+					unsupportedKeys.push({
+						name: entryName,
+						reason: "passphrase-protected",
+					})
 				}
-				console.error(
-					`Error: the key in ${envName} is passphrase-protected. Set DOTENC_PRIVATE_KEY_PASSPHRASE to use it, or provide a passwordless key.`,
-				)
-				process.exit(1)
 			} else {
-				console.error(
+				logError(
 					`Invalid private key format in ${envName} environment variable. Please provide a valid private key (PEM or OpenSSH format).`,
 				)
 				unsupportedKeys.push({
@@ -277,6 +305,10 @@ export const getPrivateKeys = async (): Promise<GetPrivateKeysResult> => {
 				})
 			}
 		}
+	}
+
+	if (options.environmentOnly) {
+		return { keys: privateKeys, passphraseProtectedKeys, unsupportedKeys }
 	}
 
 	// Scan ~/.ssh/ for SSH key files

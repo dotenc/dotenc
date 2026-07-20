@@ -408,10 +408,95 @@ CLI:
 - `actions/write-file` decrypts one named variable and writes it to a file with
   mode `0600` by default. This is intended for file-shaped credentials such as
   service account JSON.
+- `actions/diff` is a bundled Node action that compares encrypted environment
+  blobs without checking out the pull request. It accepts only the dedicated
+  `DOTENC_PRIVATE_KEY_BASE64` identity (plus the existing optional passphrase),
+  does not scan the runner's `~/.ssh`, and keeps decrypted dotenv content inside
+  the process. Its report contains variable names and visible recipient metadata
+  only; it never contains values, value hashes, lengths, prefixes, encrypted
+  data keys, or ciphertext. The passphrase-protected OpenSSH fallback gives
+  `ssh-keygen` an allowlisted environment, so unrelated workflow secrets are not
+  inherited by that child process.
+
+`dotenc tools install-github-diffs` is a creation-only installer for this
+privileged diff workflow. It requires an authenticated GitHub CLI session,
+explicit repository-relative environment selection (or `--all`), and an
+explicit `--allow-fork` acknowledgement before targeting a repository GitHub
+reports as a fork. Every selected environment must already be Git-tracked and
+clean. The automated installer currently accepts GitHub.com repositories only;
+GitHub Enterprise Server action availability depends on administrator-managed
+GitHub Connect policy. Non-interactive use additionally requires `--yes`, an
+explicit `--environment`/`-e` selection or `--all`, and a full 40-character
+`--action-ref`. Before changing state, the installer validates the repository
+and remote identity, selected paths, decryptability and action limits, the
+absence of the target workflow/public key/secret, and the official diff
+action's resolved 40-character commit SHA.
+
+The installer creates a dedicated passwordless Ed25519 identity in memory. It
+writes only the public key to the affected `.dotenc/` project directories and
+adds that recipient only to the selected encrypted environments. The PKCS#8
+private key is never written to a temporary file, copied from `~/.ssh`, placed
+in a child-process argument or environment variable, or printed. Its
+base64-encoded form is passed only over standard input to a shell-free
+`gh secret set` child process and stored in the repository Actions secret
+`DOTENC_DIFF_PRIVATE_KEY_BASE64`; the generated workflow maps that secret to
+the action's `DOTENC_PRIVATE_KEY_BASE64` environment variable. Mutable key
+buffers are zeroed best-effort after upload.
+
+The generated `pull_request_target` workflow has only `contents: read` and
+`pull-requests: write`, performs no checkout, install, build, or arbitrary
+command step, enables `fail-on-error`, and invokes the verified implementation
+directly at its full immutable commit SHA.
+
+The installer refuses to overwrite an existing diff key, workflow, or secret;
+rotation and repair require a separate deliberate operation. It snapshots and
+rolls back only installer-touched local files if a failure occurs before the
+secret upload. The upload is last. If an interrupted GitHub response makes the
+remote result ambiguous, the installer preserves the matching local state and
+exits with repair instructions instead of guessing or deleting a possibly
+successful secret. It never stages, commits, pushes, or changes branches.
+
+Filesystem hash checks prevent the installer from knowingly replacing or
+rolling back a path changed after its snapshot, but they are not an atomic
+cross-process filesystem transaction. Do not modify selected environments or
+target paths concurrently. The installer also rechecks the fixed Actions secret
+immediately before upload, but GitHub's secret-write API is an upsert with no
+conditional-create operation. Coordinate repository administrators so nobody
+creates or rotates `DOTENC_DIFF_PRIVATE_KEY_BASE64` during that narrow window.
 
 These actions intentionally do not provide a "decrypt everything" mode. Values
 exported through `$GITHUB_ENV` remain available to later steps in the same job,
 so grant CI keys narrowly and keep allowlists short.
+
+The diff workflow is intentionally different from ordinary CI. It uses
+`pull_request_target` so the trusted base-branch workflow can receive the
+dedicated dotenc key and a token able to update one pull-request comment. That
+event is privileged: the workflow must never check out, install dependencies
+from, build, source, or execute pull-request content. The supplied workflow
+executes the action implementation at a reviewed full commit SHA and treats the
+base and head Git objects as untrusted data. The action resolves the event's
+exact commit and tree object IDs, downloads only matching `.env.*.enc` blobs
+through the GitHub API, applies bounded schemas and size limits, and escapes all
+untrusted Markdown. Its token permissions are limited to `contents: read` and
+`pull-requests: write`. The hardened example uses the workflow's `GITHUB_TOKEN`
+and enables `fail-on-error`, so a missing or unverified report cannot satisfy a
+required check while verified semantic changes remain informational.
+
+Grant the diff identity only to environments whose variable-name changes CI is
+allowed to disclose. A contributor can trigger this workflow and observe the
+redacted variable-name and recipient changes by opening a pull request, so the
+dedicated key's grants define that disclosure boundary. See the
+[GitHub Actions runbook](docs/GITHUB_ACTIONS.md) for the hardened workflow and
+[GitHub's current `pull_request_target`
+guidance](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target).
+
+The changed/unchanged result is also an equality signal about a value. Because
+recipient public keys are committed, a pull-request author can encrypt a guessed
+head value and observe whether it equals the base value. This chosen-plaintext
+oracle is inherent in semantic value comparison even though dotenc never emits
+the value or reusable value-derived material beyond that classification. Do not
+grant the diff key to environments containing guessable values unless that
+equality signal is an accepted risk.
 
 For provider pipelines, the dotenc identity belongs to the runner that actually
 needs decrypted values. Use the reusable GitHub Actions only when GitHub

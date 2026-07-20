@@ -68,20 +68,26 @@ export const parsePassphraseProtectedPrivateKey = async (
 			{ encoding: "utf-8", mode: 0o700 },
 		)
 
+		// Keep unrelated workflow secrets out of the trusted ssh-keygen fallback.
+		// The key and passphrase are already available through restricted temp files.
+		const childEnvironment: NodeJS.ProcessEnv = {
+			DISPLAY: process.env.DISPLAY || ":0",
+			PATH: process.env.PATH || "/usr/bin:/bin",
+			SSH_ASKPASS: askpassPath,
+			SSH_ASKPASS_REQUIRE: "prefer",
+		}
+		for (const name of ["SystemRoot", "WINDIR", "PATHEXT"] as const) {
+			if (process.env[name]) childEnvironment[name] = process.env[name]
+		}
+
 		const result = deps.spawnSync(
 			"ssh-keygen",
 			["-p", "-N", "", "-f", tempKeyPath, "-q"],
 			{
 				stdio: "pipe",
 				encoding: "utf-8",
-				env: {
-					...process.env,
-					// DISPLAY must be non-empty for older OpenSSH to use SSH_ASKPASS.
-					DISPLAY: process.env.DISPLAY || ":0",
-					SSH_ASKPASS: askpassPath,
-					// SSH_ASKPASS_REQUIRE=prefer forces askpass use on OpenSSH >= 8.4.
-					SSH_ASKPASS_REQUIRE: "prefer",
-				},
+				// DISPLAY supports older OpenSSH; SSH_ASKPASS_REQUIRE supports >= 8.4.
+				env: childEnvironment,
 			},
 		)
 		if (result.error || result.status !== 0) {
