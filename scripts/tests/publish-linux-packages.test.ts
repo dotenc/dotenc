@@ -25,6 +25,18 @@ const mutableCacheControl =
 
 const temporaryDirectories: string[] = []
 
+const workflowJob = (workflow: string, jobName: string) => {
+	const lines = workflow.split("\n")
+	const start = lines.indexOf(`  ${jobName}:`)
+	if (start === -1) {
+		throw new Error(`Workflow job ${jobName} was not found`)
+	}
+	const nextJob = lines.findIndex(
+		(line, index) => index > start && /^  [A-Za-z0-9_-]+:$/.test(line),
+	)
+	return lines.slice(start, nextJob === -1 ? undefined : nextJob).join("\n")
+}
+
 const fixture = () => {
 	const root = mkdtempSync(path.join(tmpdir(), "dotenc-package-publisher-"))
 	temporaryDirectories.push(root)
@@ -100,6 +112,44 @@ afterEach(() => {
 })
 
 describe("Linux package publication manifest", () => {
+	test("passes protected secrets to both release publisher workflows", () => {
+		const releaseWorkflow = readFileSync(
+			path.resolve(import.meta.dir, "../../.github/workflows/release.yml"),
+			"utf8",
+		)
+
+		for (const [jobName, reusableWorkflow] of [
+			["publish-linux-packages", "publish-linux-packages.yml"],
+			["publish-aur-package", "publish-aur-package.yml"],
+		] as const) {
+			const job = workflowJob(releaseWorkflow, jobName)
+			expect(job).toContain(`uses: ./.github/workflows/${reusableWorkflow}`)
+			expect(job).toContain("    secrets: inherit")
+		}
+	})
+
+	test("keeps manual reusable secret validation non-publishing", () => {
+		const releaseWorkflow = readFileSync(
+			path.resolve(import.meta.dir, "../../.github/workflows/release.yml"),
+			"utf8",
+		)
+		const linuxJob = workflowJob(
+			releaseWorkflow,
+			"validate-linux-package-secrets",
+		)
+		const aurJob = workflowJob(
+			releaseWorkflow,
+			"validate-aur-package-secrets",
+		)
+
+		for (const job of [linuxJob, aurJob]) {
+			expect(job).toContain("if: github.event_name == 'workflow_dispatch'")
+			expect(job).toContain("    secrets: inherit")
+		}
+		expect(linuxJob).toContain("      validate_only: true")
+		expect(aurJob).toContain("      publish: false")
+	})
+
 	test("uses AlmaLinux rpmkeys' 8-hex signing key ID", () => {
 		const workflow = readFileSync(
 			path.resolve(

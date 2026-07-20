@@ -329,6 +329,7 @@ jobs:
       actions: read
       contents: write
     uses: ./.github/workflows/publish-linux-packages.yml
+    secrets: inherit
     with:
       version: ${{ needs.check-version.outputs.version }}
       package_input_artifact_id: ${{ needs.build-and-release.outputs.linux_package_input_artifact_id }}
@@ -345,5 +346,32 @@ jobs:
       actions: read
       contents: read
     uses: ./.github/workflows/publish-aur-package.yml
+    secrets: inherit
     with:
       version: ${{ needs.check-version.outputs.version }}
+
+  validate-linux-package-secrets:
+    name: Validate Linux package secrets
+    needs: check-version
+    if: github.event_name == 'workflow_dispatch'
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/publish-linux-packages.yml
+    secrets: inherit
+    with:
+      version: ${{ needs.check-version.outputs.version }}
+      validate_only: true
+
+  validate-aur-package-secrets:
+    name: Validate AUR package secrets
+    needs: check-version
+    if: github.event_name == 'workflow_dispatch'
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/publish-aur-package.yml
+    secrets: inherit
+    with:
+      version: ${{ needs.check-version.outputs.version }}
+      publish: false
