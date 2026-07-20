@@ -18,6 +18,11 @@ jobs:
         with:
           bun-version: '1.3.10'
 
+      - name: Setup Node.js for the diff action runtime
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
       - name: Install dependencies
         run: bun install
 
@@ -31,9 +36,16 @@ jobs:
         run: >-
           bash -n
           actions/_lib/*.sh
+          scripts/check-diff-action-bundle.sh
           scripts/sync-action-wrappers.sh
           scripts/alpine-package-tool.sh
           scripts/verify-packages-edge.sh
+
+      - name: Test redacted diff action
+        run: bun run actions:test-diff
+
+      - name: Verify redacted diff action bundle
+        run: bun run actions:check-diff-bundle
 
       - name: Test Linux package publisher safety checks
         run: bun run packages:test-publisher && bun run packages:typecheck-publisher

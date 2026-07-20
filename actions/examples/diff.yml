@@ -1,0 +1,34 @@
+name: Redacted dotenc diff
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: dotenc-diff-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  dotenc-diff:
+    name: Redacted dotenc environment diff
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Do not add a checkout, install, build, or run step for pull-request code.
+      # This privileged job must execute only trusted action code.
+      # One-time setup: replace the placeholder below with the reviewed
+      # 40-character commit SHA that contains actions/diff.
+      - name: Compare encrypted environments
+        uses: dotenc/dotenc/actions/diff@REPLACE_WITH_REVIEWED_FULL_COMMIT_SHA
+        with:
+          github-token: ${{ github.token }}
+          # Semantic changes stay informational. This fails only when a complete,
+          # trustworthy report cannot be produced or published.
+          fail-on-error: "true"
+        env:
+          # Dedicated passwordless identity created by install-github-diffs.
+          DOTENC_PRIVATE_KEY_BASE64: ${{ secrets.DOTENC_DIFF_PRIVATE_KEY_BASE64 }}

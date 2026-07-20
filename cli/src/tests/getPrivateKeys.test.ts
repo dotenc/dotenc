@@ -209,6 +209,53 @@ describe("getPrivateKeys", () => {
 		delete process.env.DOTENC_PRIVATE_KEY
 	})
 
+	test("environment-only mode does not scan ~/.ssh", async () => {
+		delete process.env.DOTENC_PRIVATE_KEY_BASE64
+		process.env.DOTENC_PRIVATE_KEY = ed25519PrivateKeyPem
+
+		const { keys } = await getPrivateKeys({ environmentOnly: true })
+
+		expect(keys.map((key) => key.name)).toEqual(["env.DOTENC_PRIVATE_KEY"])
+		expect(keys.some((key) => key.name === "id_ed25519")).toBe(false)
+		expect(keys.some((key) => key.name === "id_rsa")).toBe(false)
+		delete process.env.DOTENC_PRIVATE_KEY
+	})
+
+	test("collect mode makes an unusable environment key silent and nonfatal", async () => {
+		const exitSpy = spyOn(process, "exit").mockImplementation(() => {
+			throw new Error("unexpected exit")
+		})
+		const errorSpy = spyOn(console, "error").mockImplementation(() => {})
+		try {
+			delete process.env.DOTENC_PRIVATE_KEY_BASE64
+			process.env.DOTENC_PRIVATE_KEY = [
+				"-----BEGIN ENCRYPTED PRIVATE KEY-----",
+				"ZmFrZQ==",
+				"-----END ENCRYPTED PRIVATE KEY-----",
+			].join("\n")
+			delete process.env.DOTENC_PRIVATE_KEY_PASSPHRASE
+
+			const result = await getPrivateKeys({
+				environmentOnly: true,
+				environmentKeyErrorMode: "collect",
+				logError: () => {},
+			})
+
+			expect(result.keys).toEqual([])
+			expect(result.passphraseProtectedKeys).toEqual(["env.DOTENC_PRIVATE_KEY"])
+			expect(result.unsupportedKeys).toContainEqual({
+				name: "env.DOTENC_PRIVATE_KEY",
+				reason: "passphrase-protected",
+			})
+			expect(exitSpy).not.toHaveBeenCalled()
+			expect(errorSpy).not.toHaveBeenCalled()
+		} finally {
+			delete process.env.DOTENC_PRIVATE_KEY
+			errorSpy.mockRestore()
+			exitSpy.mockRestore()
+		}
+	})
+
 	test("ignores invalid DOTENC_PRIVATE_KEY", async () => {
 		const spy = spyOn(console, "error").mockImplementation(() => {})
 		delete process.env.DOTENC_PRIVATE_KEY_BASE64

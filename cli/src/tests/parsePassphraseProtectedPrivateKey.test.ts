@@ -53,9 +53,17 @@ describe("parsePassphraseProtectedPrivateKey", () => {
 
 		expect(parsed).toBe(created)
 		// Passphrase must not appear in ssh-keygen arguments (process listing exposure).
-		const [, spawnArgs] = spawnSync.mock.calls[0] as [string, string[], unknown]
+		const [, spawnArgs, spawnOptions] = spawnSync.mock.calls[0] as [
+			string,
+			string[],
+			{ env: NodeJS.ProcessEnv },
+		]
 		expect(spawnArgs).not.toContain("-P")
 		expect(spawnArgs).not.toContain("secret")
+		expect(spawnOptions.env.DOTENC_PRIVATE_KEY_BASE64).toBeUndefined()
+		expect(spawnOptions.env.DOTENC_PRIVATE_KEY_PASSPHRASE).toBeUndefined()
+		expect(spawnOptions.env["INPUT_GITHUB-TOKEN"]).toBeUndefined()
+		expect(spawnOptions.env.SSH_ASKPASS).toEndWith("/askpass.sh")
 	})
 
 	test("returns null when ssh-keygen fallback fails", async () => {

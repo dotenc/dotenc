@@ -1,0 +1,29 @@
+name: Redacted dotenc diff
+description: Post a safe semantic diff of encrypted dotenc environments on a pull request.
+author: dotenc
+inputs:
+  github-token:
+    description: The workflow's GITHUB_TOKEN, used to read Git objects and update the pull request comment.
+    required: true
+    default: ${{ github.token }}
+  comment:
+    description: Create or update the dotenc pull request comment.
+    required: false
+    default: "true"
+  fail-on-error:
+    description: Fail for unavailable report sections or when the diff cannot be generated or published; semantic changes never fail.
+    required: false
+    default: "false"
+outputs:
+  report:
+    description: Compact versioned redacted JSON; empty when the action fails before producing a report.
+  has-changes:
+    description: Whether the report contains changed or unverified environments; false means a verified empty report.
+  comment-url:
+    description: URL of the pull request comment, when comments are enabled.
+runs:
+  using: node24
+  main: dist/index.js
+branding:
+  icon: shield
+  color: blue

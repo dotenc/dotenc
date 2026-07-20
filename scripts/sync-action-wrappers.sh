@@ -11,6 +11,7 @@ repos=(
 	"run-action"
 	"export-action"
 	"write-file-action"
+	"diff-action"
 )
 
 usage() {
@@ -24,6 +25,7 @@ The target directory should contain or receive these directories:
   run-action
   export-action
   write-file-action
+  diff-action
 
 This script only writes README.md and action.yml in each target directory. It
 does not create GitHub repositories, commit, push, or tag releases.

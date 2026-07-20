@@ -11,8 +11,12 @@
 	"scripts": {
 		"lint": "biome check",
 		"lint:fix": "biome check --write --unsafe",
-		"typecheck": "(cd cli && bun run typecheck) && (cd vscode-extension && bun run typecheck)",
+		"typecheck": "(cd cli && bun run typecheck) && (cd vscode-extension && bun run typecheck) && bun run actions:typecheck-diff",
+		"actions:build-diff": "bun build ./actions/diff/src/index.ts --outfile ./actions/diff/dist/index.js --target node --format cjs",
+		"actions:check-diff-bundle": "bash ./scripts/check-diff-action-bundle.sh",
 		"actions:sync-wrappers": "bash ./scripts/sync-action-wrappers.sh",
+		"actions:test-diff": "bun test ./actions/diff/tests",
+		"actions:typecheck-diff": "bunx tsc --noEmit -p ./actions/diff/tsconfig.json",
 		"packages:test-publisher": "bun test ./scripts/tests/publish-linux-packages.test.ts",
 		"packages:typecheck-publisher": "bunx tsc --noEmit --target es2022 --module esnext --moduleResolution bundler --types bun --skipLibCheck scripts/publish-linux-packages.ts scripts/tests/publish-linux-packages.test.ts",
 		"packages:verify-edge": "bash ./scripts/verify-packages-edge.sh",

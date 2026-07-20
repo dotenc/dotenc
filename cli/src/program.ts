@@ -25,6 +25,7 @@ import { mockUpdateCommand } from "./commands/mockupdate"
 import { runCommand } from "./commands/run"
 import { textconvCommand } from "./commands/textconv"
 import { installAgentSkillCommand } from "./commands/tools/install-agent-skill"
+import { installGithubDiffsCommand } from "./commands/tools/install-github-diffs"
 import { installVscodeExtensionCommand } from "./commands/tools/install-vscode-extension"
 import { updateCommand } from "./commands/update"
 import { whoamiCommand } from "./commands/whoami"
@@ -249,7 +250,7 @@ key
 
 const tools = program
 	.command("tools")
-	.description("install editor integrations")
+	.description("install project integrations")
 
 tools
 	.command("install-agent-skill")
@@ -261,6 +262,47 @@ tools
 	)
 	.description("install the agent skill for this project")
 	.action(installAgentSkillCommand)
+
+tools
+	.command("install-github-diffs")
+	.addOption(
+		new Option(
+			"-e, --environment <path>",
+			"grant an encrypted environment by repository-relative path (repeatable)",
+		).argParser(collectValues),
+	)
+	.addOption(
+		new Option(
+			"--all",
+			"grant every tracked environment in this dotenc project",
+		),
+	)
+	.addOption(
+		new Option(
+			"--repo <owner/repository>",
+			"assert the target GitHub repository",
+		),
+	)
+	.addOption(
+		new Option(
+			"--action-ref <commit-sha>",
+			"reviewed 40-character commit SHA for the trusted action",
+		),
+	)
+	.addOption(
+		new Option("--key-name <name>", "dedicated public-key name").default(
+			"github-diff",
+		),
+	)
+	.addOption(
+		new Option(
+			"--allow-fork",
+			"acknowledge that secrets apply to pull requests targeting this fork",
+		),
+	)
+	.addOption(new Option("--yes", "confirm installation without prompting"))
+	.description("install hardened, redacted GitHub pull-request diffs")
+	.action(installGithubDiffsCommand)
 
 tools
 	.command("install-vscode-extension")

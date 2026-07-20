@@ -1,0 +1,34 @@
+name: Redacted dotenc environment diff
+description: Post a redacted semantic diff of dotenc environments on a pull request.
+inputs:
+  github-token:
+    description: The workflow's GITHUB_TOKEN, used to read Git objects and update the pull-request comment.
+    required: true
+    default: ${{ github.token }}
+  comment:
+    description: Create or update the idempotent pull-request comment.
+    required: false
+    default: "true"
+  fail-on-error:
+    description: Fail for unavailable sections or when the diff cannot be completed; semantic changes never fail.
+    required: false
+    default: "false"
+outputs:
+  report:
+    description: Versioned redacted JSON report; empty when no report could be produced.
+    value: ${{ steps.diff.outputs.report }}
+  has-changes:
+    description: True for changed or unverified environments, false for a verified empty report, and empty on total failure.
+    value: ${{ steps.diff.outputs.has-changes }}
+  comment-url:
+    description: URL of the created or updated pull-request comment, when enabled.
+    value: ${{ steps.diff.outputs.comment-url }}
+runs:
+  using: composite
+  steps:
+    - id: diff
+      uses: dotenc/dotenc/actions/diff@v1
+      with:
+        github-token: ${{ inputs.github-token }}
+        comment: ${{ inputs.comment }}
+        fail-on-error: ${{ inputs.fail-on-error }}
