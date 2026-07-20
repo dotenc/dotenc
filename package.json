@@ -12,7 +12,7 @@
 		"lint": "biome check",
 		"lint:fix": "biome check --write --unsafe",
 		"typecheck": "(cd cli && bun run typecheck) && (cd vscode-extension && bun run typecheck) && bun run actions:typecheck-diff",
-		"actions:build-diff": "bun build ./actions/diff/src/index.ts --outfile ./actions/diff/dist/index.js --target node --format cjs",
+		"actions:build-diff": "bun run ./scripts/build-diff-action.ts",
 		"actions:check-diff-bundle": "bash ./scripts/check-diff-action-bundle.sh",
 		"actions:sync-wrappers": "bash ./scripts/sync-action-wrappers.sh",
 		"actions:test-diff": "bun test ./actions/diff/tests",

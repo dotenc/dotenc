@@ -11,6 +11,7 @@
 			"cli/src/**",
 			"actions/diff/src/**",
 			"actions/diff/tests/**",
+			"scripts/build-diff-action.ts",
 			"scripts/readme-demos/**/*.ts",
 			"scripts/readme-demos/*.json",
 			"website/src/**/*.ts",

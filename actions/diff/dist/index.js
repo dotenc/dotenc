@@ -1,3 +1,4 @@
+var import_node_module = require("node:module");
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
 var __defProp = Object.defineProperty;
@@ -43,7 +44,7 @@ var __export = (target, all) => {
     });
 };
 
-// node_modules/.pnpm/@noble+ciphers@1.3.0/node_modules/@noble/ciphers/utils.js
+// node_modules/@noble/ciphers/utils.js
 var require_utils = __commonJS((exports2) => {
   /*! noble-ciphers - MIT License (c) 2023 Paul Miller (paulmillr.com) */
   Object.defineProperty(exports2, "__esModule", { value: true });
@@ -328,7 +329,7 @@ var require_utils = __commonJS((exports2) => {
   }
 });
 
-// node_modules/.pnpm/eciesjs@0.4.15/node_modules/eciesjs/dist/consts.js
+// node_modules/eciesjs/dist/consts.js
 var require_consts = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.AEAD_TAG_LENGTH = exports2.XCHACHA20_NONCE_LENGTH = exports2.CURVE25519_PUBLIC_KEY_SIZE = exports2.ETH_PUBLIC_KEY_SIZE = exports2.UNCOMPRESSED_PUBLIC_KEY_SIZE = exports2.COMPRESSED_PUBLIC_KEY_SIZE = exports2.SECRET_KEY_LENGTH = undefined;
@@ -341,11 +342,11 @@ var require_consts = __commonJS((exports2) => {
   exports2.AEAD_TAG_LENGTH = 16;
 });
 
-// node_modules/.pnpm/eciesjs@0.4.15/node_modules/eciesjs/dist/config.js
+// node_modules/eciesjs/dist/config.js
 var require_config = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
-  exports2.ephemeralKeySize = exports2.symmetricNonceLength = exports2.symmetricAlgorithm = exports2.isHkdfKeyCompressed = exports2.isEphemeralKeyCompressed = exports2.ellipticCurve = exports2.ECIES_CONFIG = undefined;
-  var consts_1 = require_consts();
+  exports2.ephemeralKeySize = exports2.symmetricNonceLength = exports2.symmetricAlgorithm = exports2.isHkdfKeyCompressed = exports2.isEphemeralKeyCompressed = exports2.ellipticCurve = exports2.ECIES_CONFIG = exports2.Config = undefined;
+  var consts_js_1 = require_consts();
   var Config = function() {
     function Config2() {
       this.ellipticCurve = "secp256k1";
@@ -354,8 +355,25 @@ var require_config = __commonJS((exports2) => {
       this.symmetricAlgorithm = "aes-256-gcm";
       this.symmetricNonceLength = 16;
     }
+    Object.defineProperty(Config2.prototype, "ephemeralKeySize", {
+      get: function() {
+        var mapping = {
+          secp256k1: this.isEphemeralKeyCompressed ? consts_js_1.COMPRESSED_PUBLIC_KEY_SIZE : consts_js_1.UNCOMPRESSED_PUBLIC_KEY_SIZE,
+          x25519: consts_js_1.CURVE25519_PUBLIC_KEY_SIZE,
+          ed25519: consts_js_1.CURVE25519_PUBLIC_KEY_SIZE
+        };
+        if (this.ellipticCurve in mapping) {
+          return mapping[this.ellipticCurve];
+        } else {
+          throw new Error("Not implemented");
+        }
+      },
+      enumerable: false,
+      configurable: true
+    });
     return Config2;
   }();
+  exports2.Config = Config;
   exports2.ECIES_CONFIG = new Config;
   var ellipticCurve = function() {
     return exports2.ECIES_CONFIG.ellipticCurve;
@@ -378,21 +396,12 @@ var require_config = __commonJS((exports2) => {
   };
   exports2.symmetricNonceLength = symmetricNonceLength;
   var ephemeralKeySize = function() {
-    var mapping = {
-      secp256k1: exports2.ECIES_CONFIG.isEphemeralKeyCompressed ? consts_1.COMPRESSED_PUBLIC_KEY_SIZE : consts_1.UNCOMPRESSED_PUBLIC_KEY_SIZE,
-      x25519: consts_1.CURVE25519_PUBLIC_KEY_SIZE,
-      ed25519: consts_1.CURVE25519_PUBLIC_KEY_SIZE
-    };
-    if (exports2.ECIES_CONFIG.ellipticCurve in mapping) {
-      return mapping[exports2.ECIES_CONFIG.ellipticCurve];
-    } else {
-      throw new Error("Not implemented");
-    }
+    return exports2.ECIES_CONFIG.ephemeralKeySize;
   };
   exports2.ephemeralKeySize = ephemeralKeySize;
 });
 
-// node_modules/.pnpm/@noble+ciphers@1.3.0/node_modules/@noble/ciphers/cryptoNode.js
+// node_modules/@noble/ciphers/cryptoNode.js
 var require_cryptoNode = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.crypto = undefined;
@@ -400,7 +409,7 @@ var require_cryptoNode = __commonJS((exports2) => {
   exports2.crypto = nc && typeof nc === "object" && "webcrypto" in nc ? nc.webcrypto : nc && typeof nc === "object" && ("randomBytes" in nc) ? nc : undefined;
 });
 
-// node_modules/.pnpm/@noble+ciphers@1.3.0/node_modules/@noble/ciphers/webcrypto.js
+// node_modules/@noble/ciphers/webcrypto.js
 var require_webcrypto = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.gcm = exports2.ctr = exports2.cbc = exports2.utils = undefined;
@@ -500,7 +509,7 @@ var require_webcrypto = __commonJS((exports2) => {
   exports2.gcm = /* @__PURE__ */ (() => generate(mode.GCM))();
 });
 
-// node_modules/.pnpm/@noble+hashes@1.8.0/node_modules/@noble/hashes/cryptoNode.js
+// node_modules/@noble/hashes/cryptoNode.js
 var require_cryptoNode2 = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.crypto = undefined;
@@ -508,7 +517,7 @@ var require_cryptoNode2 = __commonJS((exports2) => {
   exports2.crypto = nc && typeof nc === "object" && "webcrypto" in nc ? nc.webcrypto : nc && typeof nc === "object" && ("randomBytes" in nc) ? nc : undefined;
 });
 
-// node_modules/.pnpm/@noble+hashes@1.8.0/node_modules/@noble/hashes/utils.js
+// node_modules/@noble/hashes/utils.js
 var require_utils2 = __commonJS((exports2) => {
   /*! noble-hashes - MIT License (c) 2022 Paul Miller (paulmillr.com) */
   Object.defineProperty(exports2, "__esModule", { value: true });
@@ -745,7 +754,7 @@ var require_utils2 = __commonJS((exports2) => {
   }
 });
 
-// node_modules/.pnpm/@noble+hashes@1.8.0/node_modules/@noble/hashes/_md.js
+// node_modules/@noble/hashes/_md.js
 var require__md = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.SHA512_IV = exports2.SHA384_IV = exports2.SHA224_IV = exports2.SHA256_IV = exports2.HashMD = undefined;
@@ -921,7 +930,7 @@ var require__md = __commonJS((exports2) => {
   ]);
 });
 
-// node_modules/.pnpm/@noble+hashes@1.8.0/node_modules/@noble/hashes/_u64.js
+// node_modules/@noble/hashes/_u64.js
 var require__u64 = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.toBig = exports2.shrSL = exports2.shrSH = exports2.rotrSL = exports2.rotrSH = exports2.rotrBL = exports2.rotrBH = exports2.rotr32L = exports2.rotr32H = exports2.rotlSL = exports2.rotlSH = exports2.rotlBL = exports2.rotlBH = exports2.add5L = exports2.add5H = exports2.add4L = exports2.add4H = exports2.add3L = exports2.add3H = undefined;
@@ -1014,7 +1023,7 @@ var require__u64 = __commonJS((exports2) => {
   exports2.default = u64;
 });
 
-// node_modules/.pnpm/@noble+hashes@1.8.0/node_modules/@noble/hashes/sha2.js
+// node_modules/@noble/hashes/sha2.js
 var require_sha2 = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.sha512_224 = exports2.sha512_256 = exports2.sha384 = exports2.sha512 = exports2.sha224 = exports2.sha256 = exports2.SHA512_256 = exports2.SHA512_224 = exports2.SHA384 = exports2.SHA512 = exports2.SHA224 = exports2.SHA256 = undefined;
@@ -1484,7 +1493,7 @@ var require_sha2 = __commonJS((exports2) => {
   exports2.sha512_224 = (0, utils_ts_1.createHasher)(() => new SHA512_224);
 });
 
-// node_modules/.pnpm/@noble+curves@1.9.6/node_modules/@noble/curves/utils.js
+// node_modules/@noble/curves/utils.js
 var require_utils3 = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.notImplemented = exports2.bitMask = exports2.utf8ToBytes = exports2.randomBytes = exports2.isBytes = exports2.hexToBytes = exports2.concatBytes = exports2.bytesToUtf8 = exports2.bytesToHex = exports2.anumber = exports2.abytes = undefined;
@@ -1765,7 +1774,7 @@ var require_utils3 = __commonJS((exports2) => {
   }
 });
 
-// node_modules/.pnpm/@noble+curves@1.9.6/node_modules/@noble/curves/abstract/modular.js
+// node_modules/@noble/curves/abstract/modular.js
 var require_modular = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.isNegativeLE = undefined;
@@ -2164,7 +2173,7 @@ var require_modular = __commonJS((exports2) => {
   }
 });
 
-// node_modules/.pnpm/@noble+curves@1.9.6/node_modules/@noble/curves/abstract/curve.js
+// node_modules/@noble/curves/abstract/curve.js
 var require_curve = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.wNAF = undefined;
@@ -2483,7 +2492,7 @@ var require_curve = __commonJS((exports2) => {
   }
 });
 
-// node_modules/.pnpm/@noble+curves@1.9.6/node_modules/@noble/curves/abstract/edwards.js
+// node_modules/@noble/curves/abstract/edwards.js
 var require_edwards = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.PrimeEdwardsPoint = undefined;
@@ -2949,7 +2958,7 @@ var require_edwards = __commonJS((exports2) => {
         const u = is25519 ? Fp.div(_1n + y, _1n - y) : Fp.div(y - _1n, y + _1n);
         return Fp.toBytes(u);
       },
-      toMontgomeryPriv(secretKey) {
+      toMontgomerySecret(secretKey) {
         const size = lengths.secretKey;
         (0, utils_ts_1._abytes2)(secretKey, size);
         const hashed = cHash(secretKey.subarray(0, size));
@@ -3010,7 +3019,7 @@ var require_edwards = __commonJS((exports2) => {
   }
 });
 
-// node_modules/.pnpm/@noble+curves@1.9.6/node_modules/@noble/curves/abstract/hash-to-curve.js
+// node_modules/@noble/curves/abstract/hash-to-curve.js
 var require_hash_to_curve = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2._DST_scalar = undefined;
@@ -3179,7 +3188,7 @@ var require_hash_to_curve = __commonJS((exports2) => {
   }
 });
 
-// node_modules/.pnpm/@noble+curves@1.9.6/node_modules/@noble/curves/abstract/montgomery.js
+// node_modules/@noble/curves/abstract/montgomery.js
 var require_montgomery = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.montgomery = montgomery;
@@ -3306,7 +3315,7 @@ var require_montgomery = __commonJS((exports2) => {
   }
 });
 
-// node_modules/.pnpm/@noble+curves@1.9.6/node_modules/@noble/curves/ed25519.js
+// node_modules/@noble/curves/ed25519.js
 var require_ed25519 = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.hash_to_ristretto255 = exports2.hashToRistretto255 = exports2.encodeToCurve = exports2.hashToCurve = exports2.RistrettoPoint = exports2.edwardsToMontgomery = exports2.ED25519_TORSION_SUBGROUP = exports2.ristretto255_hasher = exports2.ristretto255 = exports2.ed25519_hasher = exports2.x25519 = exports2.ed25519ph = exports2.ed25519ctx = exports2.ed25519 = undefined;
@@ -3650,7 +3659,7 @@ var require_ed25519 = __commonJS((exports2) => {
   }
   exports2.edwardsToMontgomery = edwardsToMontgomeryPub;
   function edwardsToMontgomeryPriv(edwardsPriv) {
-    return exports2.ed25519.utils.toMontgomeryPriv((0, utils_ts_1.ensureBytes)("pub", edwardsPriv));
+    return exports2.ed25519.utils.toMontgomerySecret((0, utils_ts_1.ensureBytes)("pub", edwardsPriv));
   }
   exports2.RistrettoPoint = _RistrettoPoint;
   exports2.hashToCurve = (() => exports2.ed25519_hasher.hashToCurve)();
@@ -3659,7 +3668,7 @@ var require_ed25519 = __commonJS((exports2) => {
   exports2.hash_to_ristretto255 = (() => exports2.ristretto255_hasher.hashToCurve)();
 });
 
-// node_modules/.pnpm/@noble+hashes@1.8.0/node_modules/@noble/hashes/hmac.js
+// node_modules/@noble/hashes/hmac.js
 var require_hmac = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.hmac = exports2.HMAC = undefined;
@@ -3735,7 +3744,7 @@ var require_hmac = __commonJS((exports2) => {
   exports2.hmac.create = (hash, key) => new HMAC(hash, key);
 });
 
-// node_modules/.pnpm/@noble+curves@1.9.6/node_modules/@noble/curves/abstract/weierstrass.js
+// node_modules/@noble/curves/abstract/weierstrass.js
 var require_weierstrass = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.DER = exports2.DERErr = undefined;
@@ -4847,7 +4856,7 @@ var require_weierstrass = __commonJS((exports2) => {
   }
 });
 
-// node_modules/.pnpm/@noble+curves@1.9.6/node_modules/@noble/curves/_shortw_utils.js
+// node_modules/@noble/curves/_shortw_utils.js
 var require__shortw_utils = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.getHash = getHash;
@@ -4863,7 +4872,7 @@ var require__shortw_utils = __commonJS((exports2) => {
   }
 });
 
-// node_modules/.pnpm/@noble+curves@1.9.6/node_modules/@noble/curves/secp256k1.js
+// node_modules/@noble/curves/secp256k1.js
 var require_secp256k1 = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.encodeToCurve = exports2.hashToCurve = exports2.secp256k1_hasher = exports2.schnorr = exports2.secp256k1 = undefined;
@@ -5079,7 +5088,7 @@ var require_secp256k1 = __commonJS((exports2) => {
   exports2.encodeToCurve = (() => exports2.secp256k1_hasher.encodeToCurve)();
 });
 
-// node_modules/.pnpm/eciesjs@0.4.15/node_modules/eciesjs/dist/utils/hex.js
+// node_modules/eciesjs/dist/utils/hex.js
 var require_hex = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.decodeHex = exports2.remove0x = undefined;
@@ -5094,27 +5103,27 @@ var require_hex = __commonJS((exports2) => {
   exports2.decodeHex = decodeHex;
 });
 
-// node_modules/.pnpm/eciesjs@0.4.15/node_modules/eciesjs/dist/utils/elliptic.js
+// node_modules/eciesjs/dist/utils/elliptic.js
 var require_elliptic = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.hexToPublicKey = exports2.convertPublicKeyFormat = exports2.getSharedPoint = exports2.getPublicKey = exports2.isValidPrivateKey = exports2.getValidSecret = undefined;
   var webcrypto_1 = require_webcrypto();
   var ed25519_1 = require_ed25519();
   var secp256k1_1 = require_secp256k1();
-  var config_1 = require_config();
-  var consts_1 = require_consts();
-  var hex_1 = require_hex();
+  var config_js_1 = require_config();
+  var consts_js_1 = require_consts();
+  var hex_js_1 = require_hex();
   var getValidSecret = function(curve) {
     var key;
     do {
-      key = (0, webcrypto_1.randomBytes)(consts_1.SECRET_KEY_LENGTH);
+      key = (0, webcrypto_1.randomBytes)(consts_js_1.SECRET_KEY_LENGTH);
     } while (!(0, exports2.isValidPrivateKey)(key, curve));
     return key;
   };
   exports2.getValidSecret = getValidSecret;
   var isValidPrivateKey = function(secret, curve) {
-    return _exec(curve || (0, config_1.ellipticCurve)(), function(curve2) {
-      return curve2.utils.isValidPrivateKey(secret);
+    return _exec(curve, function(curve2) {
+      return curve2.utils.isValidSecretKey(secret);
     }, function() {
       return true;
     }, function() {
@@ -5123,7 +5132,7 @@ var require_elliptic = __commonJS((exports2) => {
   };
   exports2.isValidPrivateKey = isValidPrivateKey;
   var getPublicKey = function(secret, curve) {
-    return _exec(curve || (0, config_1.ellipticCurve)(), function(curve2) {
+    return _exec(curve, function(curve2) {
       return curve2.getPublicKey(secret);
     }, function(curve2) {
       return curve2.getPublicKey(secret);
@@ -5133,7 +5142,7 @@ var require_elliptic = __commonJS((exports2) => {
   };
   exports2.getPublicKey = getPublicKey;
   var getSharedPoint = function(sk, pk, compressed, curve) {
-    return _exec(curve || (0, config_1.ellipticCurve)(), function(curve2) {
+    return _exec(curve, function(curve2) {
       return curve2.getSharedSecret(sk, pk, compressed);
     }, function(curve2) {
       return curve2.getSharedSecret(sk, pk);
@@ -5143,8 +5152,8 @@ var require_elliptic = __commonJS((exports2) => {
   };
   exports2.getSharedPoint = getSharedPoint;
   var convertPublicKeyFormat = function(pk, compressed, curve) {
-    return _exec(curve || (0, config_1.ellipticCurve)(), function(curve2) {
-      return curve2.getSharedSecret(BigInt(1), pk, compressed);
+    return _exec(curve, function(curve2) {
+      return curve2.getSharedSecret(Uint8Array.from(Array(31).fill(0).concat([1])), pk, compressed);
     }, function() {
       return pk;
     }, function() {
@@ -5153,8 +5162,8 @@ var require_elliptic = __commonJS((exports2) => {
   };
   exports2.convertPublicKeyFormat = convertPublicKeyFormat;
   var hexToPublicKey = function(hex, curve) {
-    var decoded = (0, hex_1.decodeHex)(hex);
-    return _exec(curve || (0, config_1.ellipticCurve)(), function() {
+    var decoded = (0, hex_js_1.decodeHex)(hex);
+    return _exec(curve, function() {
       return compatEthPublicKey(decoded);
     }, function() {
       return decoded;
@@ -5164,18 +5173,19 @@ var require_elliptic = __commonJS((exports2) => {
   };
   exports2.hexToPublicKey = hexToPublicKey;
   function _exec(curve, secp256k1Callback, x25519Callback, ed25519Callback) {
-    if (curve === "secp256k1") {
+    var _curve = curve || config_js_1.ECIES_CONFIG.ellipticCurve;
+    if (_curve === "secp256k1") {
       return secp256k1Callback(secp256k1_1.secp256k1);
-    } else if (curve === "x25519") {
+    } else if (_curve === "x25519") {
       return x25519Callback(ed25519_1.x25519);
-    } else if (curve === "ed25519") {
+    } else if (_curve === "ed25519") {
       return ed25519Callback(ed25519_1.ed25519);
     } else {
       throw new Error("Not implemented");
     }
   }
   var compatEthPublicKey = function(pk) {
-    if (pk.length === consts_1.ETH_PUBLIC_KEY_SIZE) {
+    if (pk.length === consts_js_1.ETH_PUBLIC_KEY_SIZE) {
       var fixed = new Uint8Array(1 + pk.length);
       fixed.set([4]);
       fixed.set(pk, 1);
@@ -5185,12 +5195,12 @@ var require_elliptic = __commonJS((exports2) => {
   };
   var getSharedPointOnEd25519 = function(curve, sk, pk) {
     var scalar = curve.utils.getExtendedPublicKey(sk).scalar;
-    var point = curve.ExtendedPoint.fromHex(pk).multiply(scalar);
-    return point.toRawBytes();
+    var point = curve.Point.fromBytes(pk).multiply(scalar);
+    return point.toBytes();
   };
 });
 
-// node_modules/.pnpm/@noble+hashes@1.8.0/node_modules/@noble/hashes/hkdf.js
+// node_modules/@noble/hashes/hkdf.js
 var require_hkdf = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.hkdf = undefined;
@@ -5234,7 +5244,7 @@ var require_hkdf = __commonJS((exports2) => {
   exports2.hkdf = hkdf;
 });
 
-// node_modules/.pnpm/eciesjs@0.4.15/node_modules/eciesjs/dist/utils/hash.js
+// node_modules/eciesjs/dist/utils/hash.js
 var require_hash = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.getSharedKey = exports2.deriveKey = undefined;
@@ -5255,12 +5265,12 @@ var require_hash = __commonJS((exports2) => {
   exports2.getSharedKey = getSharedKey;
 });
 
-// node_modules/.pnpm/@ecies+ciphers@0.2.4_@noble+ciphers@1.3.0/node_modules/@ecies/ciphers/dist/_node/compat.js
+// node_modules/@ecies/ciphers/dist/_node/compat.js
 var require_compat = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2._compat = undefined;
-  var utils_1 = require_utils();
   var node_crypto_1 = require("node:crypto");
+  var utils_1 = require_utils();
   var AEAD_TAG_LENGTH = 16;
   var IS_DENO = globalThis.Deno !== undefined;
   var _compat = function(algorithm, key, nonce, AAD) {
@@ -5302,22 +5312,22 @@ var require_compat = __commonJS((exports2) => {
   exports2._compat = _compat;
 });
 
-// node_modules/.pnpm/@ecies+ciphers@0.2.4_@noble+ciphers@1.3.0/node_modules/@ecies/ciphers/dist/aes/node.js
+// node_modules/@ecies/ciphers/dist/aes/node.js
 var require_node = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.aes256cbc = exports2.aes256gcm = undefined;
-  var compat_1 = require_compat();
+  var compat_js_1 = require_compat();
   var aes256gcm = function(key, nonce, AAD) {
-    return (0, compat_1._compat)("aes-256-gcm", key, nonce, AAD);
+    return (0, compat_js_1._compat)("aes-256-gcm", key, nonce, AAD);
   };
   exports2.aes256gcm = aes256gcm;
-  var aes256cbc = function(key, nonce, AAD) {
-    return (0, compat_1._compat)("aes-256-cbc", key, nonce);
+  var aes256cbc = function(key, nonce, _AAD) {
+    return (0, compat_js_1._compat)("aes-256-cbc", key, nonce);
   };
   exports2.aes256cbc = aes256cbc;
 });
 
-// node_modules/.pnpm/@ecies+ciphers@0.2.4_@noble+ciphers@1.3.0/node_modules/@ecies/ciphers/dist/_node/hchacha.js
+// node_modules/@ecies/ciphers/dist/_node/hchacha.js
 var require_hchacha = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2._hchacha20 = undefined;
@@ -5405,61 +5415,60 @@ var require_hchacha = __commonJS((exports2) => {
   };
 });
 
-// node_modules/.pnpm/@ecies+ciphers@0.2.4_@noble+ciphers@1.3.0/node_modules/@ecies/ciphers/dist/chacha/node.js
+// node_modules/@ecies/ciphers/dist/chacha/node.js
 var require_node2 = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.chacha20 = exports2.xchacha20 = undefined;
   var utils_1 = require_utils();
-  var compat_1 = require_compat();
-  var hchacha_1 = require_hchacha();
+  var compat_js_1 = require_compat();
+  var hchacha_js_1 = require_hchacha();
   var xchacha20 = function(key, nonce, AAD) {
     if (nonce.length !== 24) {
       throw new Error("xchacha20's nonce must be 24 bytes");
     }
     var constants = new Uint32Array([1634760805, 857760878, 2036477234, 1797285236]);
     var subKey = new Uint32Array(8);
-    (0, hchacha_1._hchacha20)(constants, (0, utils_1.u32)(key), (0, utils_1.u32)(nonce.subarray(0, 16)), subKey);
+    (0, hchacha_js_1._hchacha20)(constants, (0, utils_1.u32)(key), (0, utils_1.u32)(nonce.subarray(0, 16)), subKey);
     var subNonce = new Uint8Array(12);
     subNonce.set([0, 0, 0, 0]);
     subNonce.set(nonce.subarray(16), 4);
-    return (0, compat_1._compat)("chacha20-poly1305", (0, utils_1.u8)(subKey), subNonce, AAD);
+    return (0, compat_js_1._compat)("chacha20-poly1305", (0, utils_1.u8)(subKey), subNonce, AAD);
   };
   exports2.xchacha20 = xchacha20;
   var chacha20 = function(key, nonce, AAD) {
     if (nonce.length !== 12) {
       throw new Error("chacha20's nonce must be 12 bytes");
     }
-    return (0, compat_1._compat)("chacha20-poly1305", key, nonce, AAD);
+    return (0, compat_js_1._compat)("chacha20-poly1305", key, nonce, AAD);
   };
   exports2.chacha20 = chacha20;
 });
 
-// node_modules/.pnpm/eciesjs@0.4.15/node_modules/eciesjs/dist/utils/symmetric.js
+// node_modules/eciesjs/dist/utils/symmetric.js
 var require_symmetric = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.aesDecrypt = exports2.aesEncrypt = exports2.symDecrypt = exports2.symEncrypt = undefined;
-  var utils_1 = require_utils();
-  var webcrypto_1 = require_webcrypto();
   var aes_1 = require_node();
   var chacha_1 = require_node2();
-  var config_1 = require_config();
-  var consts_1 = require_consts();
+  var utils_1 = require_utils();
+  var webcrypto_1 = require_webcrypto();
+  var config_js_1 = require_config();
+  var consts_js_1 = require_consts();
   var symEncrypt = function(key, plainText, AAD) {
-    return _exec(_encrypt, key, plainText, AAD);
+    return _exec(_encrypt, config_js_1.ECIES_CONFIG.symmetricAlgorithm, config_js_1.ECIES_CONFIG.symmetricNonceLength, key, plainText, AAD);
   };
   exports2.symEncrypt = symEncrypt;
   var symDecrypt = function(key, cipherText, AAD) {
-    return _exec(_decrypt, key, cipherText, AAD);
+    return _exec(_decrypt, config_js_1.ECIES_CONFIG.symmetricAlgorithm, config_js_1.ECIES_CONFIG.symmetricNonceLength, key, cipherText, AAD);
   };
   exports2.symDecrypt = symDecrypt;
   exports2.aesEncrypt = exports2.symEncrypt;
   exports2.aesDecrypt = exports2.symDecrypt;
-  function _exec(callback, key, data, AAD) {
-    var algorithm = (0, config_1.symmetricAlgorithm)();
+  function _exec(callback, algorithm, nonceLength, key, data, AAD) {
     if (algorithm === "aes-256-gcm") {
-      return callback(aes_1.aes256gcm, key, data, (0, config_1.symmetricNonceLength)(), consts_1.AEAD_TAG_LENGTH, AAD);
+      return callback(aes_1.aes256gcm, key, data, nonceLength, consts_js_1.AEAD_TAG_LENGTH, AAD);
     } else if (algorithm === "xchacha20") {
-      return callback(chacha_1.xchacha20, key, data, consts_1.XCHACHA20_NONCE_LENGTH, consts_1.AEAD_TAG_LENGTH, AAD);
+      return callback(chacha_1.xchacha20, key, data, consts_js_1.XCHACHA20_NONCE_LENGTH, consts_js_1.AEAD_TAG_LENGTH, AAD);
     } else if (algorithm === "aes-256-cbc") {
       return callback(aes_1.aes256cbc, key, data, 16, 0);
     } else {
@@ -5491,7 +5500,7 @@ var require_symmetric = __commonJS((exports2) => {
   }
 });
 
-// node_modules/.pnpm/eciesjs@0.4.15/node_modules/eciesjs/dist/utils/index.js
+// node_modules/eciesjs/dist/utils/index.js
 var require_utils4 = __commonJS((exports2) => {
   var __createBinding = exports2 && exports2.__createBinding || (Object.create ? function(o, m, k, k2) {
     if (k2 === undefined)
@@ -5520,21 +5529,21 @@ var require_utils4 = __commonJS((exports2) => {
   __exportStar(require_symmetric(), exports2);
 });
 
-// node_modules/.pnpm/eciesjs@0.4.15/node_modules/eciesjs/dist/keys/PublicKey.js
+// node_modules/eciesjs/dist/keys/PublicKey.js
 var require_PublicKey = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.PublicKey = undefined;
   var utils_1 = require_utils();
-  var utils_2 = require_utils4();
+  var index_js_1 = require_utils4();
   var PublicKey = function() {
     function PublicKey2(data, curve) {
-      var compressed = (0, utils_2.convertPublicKeyFormat)(data, true, curve);
-      var uncompressed = (0, utils_2.convertPublicKeyFormat)(data, false, curve);
+      var compressed = (0, index_js_1.convertPublicKeyFormat)(data, true, curve);
+      var uncompressed = (0, index_js_1.convertPublicKeyFormat)(data, false, curve);
       this.data = compressed;
       this.dataUncompressed = compressed.length !== uncompressed.length ? uncompressed : null;
     }
     PublicKey2.fromHex = function(hex, curve) {
-      return new PublicKey2((0, utils_2.hexToPublicKey)(hex, curve), curve);
+      return new PublicKey2((0, index_js_1.hexToPublicKey)(hex, curve), curve);
     };
     Object.defineProperty(PublicKey2.prototype, "_uncompressed", {
       get: function() {
@@ -5575,7 +5584,7 @@ var require_PublicKey = __commonJS((exports2) => {
       }
       var senderPoint = this.toBytes(compressed);
       var sharedPoint = sk.multiply(this, compressed);
-      return (0, utils_2.getSharedKey)(senderPoint, sharedPoint);
+      return (0, index_js_1.getSharedKey)(senderPoint, sharedPoint);
     };
     PublicKey2.prototype.equals = function(other) {
       return (0, utils_1.equalBytes)(this.data, other.data);
@@ -5585,27 +5594,27 @@ var require_PublicKey = __commonJS((exports2) => {
   exports2.PublicKey = PublicKey;
 });
 
-// node_modules/.pnpm/eciesjs@0.4.15/node_modules/eciesjs/dist/keys/PrivateKey.js
+// node_modules/eciesjs/dist/keys/PrivateKey.js
 var require_PrivateKey = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.PrivateKey = undefined;
   var utils_1 = require_utils();
-  var utils_2 = require_utils4();
-  var PublicKey_1 = require_PublicKey();
+  var index_js_1 = require_utils4();
+  var PublicKey_js_1 = require_PublicKey();
   var PrivateKey = function() {
     function PrivateKey2(secret, curve) {
       this.curve = curve;
       if (secret === undefined) {
-        this.data = (0, utils_2.getValidSecret)(curve);
-      } else if ((0, utils_2.isValidPrivateKey)(secret, curve)) {
+        this.data = (0, index_js_1.getValidSecret)(curve);
+      } else if ((0, index_js_1.isValidPrivateKey)(secret, curve)) {
         this.data = secret;
       } else {
         throw new Error("Invalid private key");
       }
-      this.publicKey = new PublicKey_1.PublicKey((0, utils_2.getPublicKey)(this.data, curve), curve);
+      this.publicKey = new PublicKey_js_1.PublicKey((0, index_js_1.getPublicKey)(this.data, curve), curve);
     }
     PrivateKey2.fromHex = function(hex, curve) {
-      return new PrivateKey2((0, utils_2.decodeHex)(hex), curve);
+      return new PrivateKey2((0, index_js_1.decodeHex)(hex), curve);
     };
     Object.defineProperty(PrivateKey2.prototype, "secret", {
       get: function() {
@@ -5623,13 +5632,13 @@ var require_PrivateKey = __commonJS((exports2) => {
       }
       var senderPoint = this.publicKey.toBytes(compressed);
       var sharedPoint = this.multiply(pk, compressed);
-      return (0, utils_2.getSharedKey)(senderPoint, sharedPoint);
+      return (0, index_js_1.getSharedKey)(senderPoint, sharedPoint);
     };
     PrivateKey2.prototype.multiply = function(pk, compressed) {
       if (compressed === undefined) {
         compressed = false;
       }
-      return (0, utils_2.getSharedPoint)(this.data, pk.toBytes(true), compressed, this.curve);
+      return (0, index_js_1.getSharedPoint)(this.data, pk.toBytes(true), compressed, this.curve);
     };
     PrivateKey2.prototype.equals = function(other) {
       return (0, utils_1.equalBytes)(this.data, other.data);
@@ -5639,80 +5648,83 @@ var require_PrivateKey = __commonJS((exports2) => {
   exports2.PrivateKey = PrivateKey;
 });
 
-// node_modules/.pnpm/eciesjs@0.4.15/node_modules/eciesjs/dist/keys/index.js
+// node_modules/eciesjs/dist/keys/index.js
 var require_keys = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.PublicKey = exports2.PrivateKey = undefined;
-  var PrivateKey_1 = require_PrivateKey();
+  var PrivateKey_js_1 = require_PrivateKey();
   Object.defineProperty(exports2, "PrivateKey", { enumerable: true, get: function() {
-    return PrivateKey_1.PrivateKey;
+    return PrivateKey_js_1.PrivateKey;
   } });
-  var PublicKey_1 = require_PublicKey();
+  var PublicKey_js_1 = require_PublicKey();
   Object.defineProperty(exports2, "PublicKey", { enumerable: true, get: function() {
-    return PublicKey_1.PublicKey;
+    return PublicKey_js_1.PublicKey;
   } });
 });
 
-// node_modules/.pnpm/eciesjs@0.4.15/node_modules/eciesjs/dist/index.js
+// node_modules/eciesjs/dist/index.js
 var require_dist = __commonJS((exports2) => {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.utils = exports2.PublicKey = exports2.PrivateKey = exports2.ECIES_CONFIG = undefined;
   exports2.encrypt = encrypt;
   exports2.decrypt = decrypt;
   var utils_1 = require_utils();
-  var config_1 = require_config();
-  var keys_1 = require_keys();
-  var utils_2 = require_utils4();
+  var config_js_1 = require_config();
+  var index_js_1 = require_keys();
+  var index_js_2 = require_utils4();
   function encrypt(receiverRawPK, data) {
-    return Buffer.from(_encrypt(receiverRawPK, data));
+    return Buffer.from(_encrypt(receiverRawPK, data, config_js_1.ECIES_CONFIG));
   }
-  function _encrypt(receiverRawPK, data) {
-    var curve = (0, config_1.ellipticCurve)();
-    var ephemeralSK = new keys_1.PrivateKey(undefined, curve);
-    var receiverPK = receiverRawPK instanceof Uint8Array ? new keys_1.PublicKey(receiverRawPK, curve) : keys_1.PublicKey.fromHex(receiverRawPK, curve);
-    var sharedKey = ephemeralSK.encapsulate(receiverPK, (0, config_1.isHkdfKeyCompressed)());
-    var ephemeralPK = ephemeralSK.publicKey.toBytes((0, config_1.isEphemeralKeyCompressed)());
-    var encrypted = (0, utils_2.symEncrypt)(sharedKey, data);
+  function _encrypt(receiverRawPK, data, config) {
+    var curve = config.ellipticCurve;
+    var ephemeralSK = new index_js_1.PrivateKey(undefined, curve);
+    var receiverPK = receiverRawPK instanceof Uint8Array ? new index_js_1.PublicKey(receiverRawPK, curve) : index_js_1.PublicKey.fromHex(receiverRawPK, curve);
+    var sharedKey = ephemeralSK.encapsulate(receiverPK, config.isHkdfKeyCompressed);
+    var ephemeralPK = ephemeralSK.publicKey.toBytes(config.isEphemeralKeyCompressed);
+    var encrypted = (0, index_js_2.symEncrypt)(sharedKey, data);
     return (0, utils_1.concatBytes)(ephemeralPK, encrypted);
   }
   function decrypt(receiverRawSK, data) {
     return Buffer.from(_decrypt(receiverRawSK, data));
   }
-  function _decrypt(receiverRawSK, data) {
-    var curve = (0, config_1.ellipticCurve)();
-    var receiverSK = receiverRawSK instanceof Uint8Array ? new keys_1.PrivateKey(receiverRawSK, curve) : keys_1.PrivateKey.fromHex(receiverRawSK, curve);
-    var keySize = (0, config_1.ephemeralKeySize)();
-    var ephemeralPK = new keys_1.PublicKey(data.subarray(0, keySize), curve);
+  function _decrypt(receiverRawSK, data, config) {
+    if (config === undefined) {
+      config = config_js_1.ECIES_CONFIG;
+    }
+    var curve = config.ellipticCurve;
+    var receiverSK = receiverRawSK instanceof Uint8Array ? new index_js_1.PrivateKey(receiverRawSK, curve) : index_js_1.PrivateKey.fromHex(receiverRawSK, curve);
+    var keySize = config.ephemeralKeySize;
+    var ephemeralPK = new index_js_1.PublicKey(data.subarray(0, keySize), curve);
     var encrypted = data.subarray(keySize);
-    var sharedKey = ephemeralPK.decapsulate(receiverSK, (0, config_1.isHkdfKeyCompressed)());
-    return (0, utils_2.symDecrypt)(sharedKey, encrypted);
+    var sharedKey = ephemeralPK.decapsulate(receiverSK, config.isHkdfKeyCompressed);
+    return (0, index_js_2.symDecrypt)(sharedKey, encrypted);
   }
-  var config_2 = require_config();
+  var config_js_2 = require_config();
   Object.defineProperty(exports2, "ECIES_CONFIG", { enumerable: true, get: function() {
-    return config_2.ECIES_CONFIG;
+    return config_js_2.ECIES_CONFIG;
   } });
-  var keys_2 = require_keys();
+  var index_js_3 = require_keys();
   Object.defineProperty(exports2, "PrivateKey", { enumerable: true, get: function() {
-    return keys_2.PrivateKey;
+    return index_js_3.PrivateKey;
   } });
   Object.defineProperty(exports2, "PublicKey", { enumerable: true, get: function() {
-    return keys_2.PublicKey;
+    return index_js_3.PublicKey;
   } });
   exports2.utils = {
-    aesEncrypt: utils_2.aesEncrypt,
-    aesDecrypt: utils_2.aesDecrypt,
-    symEncrypt: utils_2.symEncrypt,
-    symDecrypt: utils_2.symDecrypt,
-    decodeHex: utils_2.decodeHex,
-    getValidSecret: utils_2.getValidSecret,
-    remove0x: utils_2.remove0x
+    aesEncrypt: index_js_2.aesEncrypt,
+    aesDecrypt: index_js_2.aesDecrypt,
+    symEncrypt: index_js_2.symEncrypt,
+    symDecrypt: index_js_2.symDecrypt,
+    decodeHex: index_js_2.decodeHex,
+    getValidSecret: index_js_2.getValidSecret,
+    remove0x: index_js_2.remove0x
   };
 });
 
 // actions/diff/src/runtime.ts
 var import_node_buffer3 = require("node:buffer");
 
-// node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/external.js
+// node_modules/zod/v3/external.js
 var exports_external = {};
 __export(exports_external, {
   void: () => voidType,
@@ -5824,7 +5836,7 @@ __export(exports_external, {
   BRAND: () => BRAND
 });
 
-// node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/helpers/util.js
+// node_modules/zod/v3/helpers/util.js
 var util;
 (function(util2) {
   util2.assertEqual = (_) => {};
@@ -5955,7 +5967,7 @@ var getParsedType = (data) => {
   }
 };
 
-// node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/ZodError.js
+// node_modules/zod/v3/ZodError.js
 var ZodIssueCode = util.arrayToEnum([
   "invalid_type",
   "invalid_literal",
@@ -6074,7 +6086,7 @@ ZodError.create = (issues) => {
   return error;
 };
 
-// node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/locales/en.js
+// node_modules/zod/v3/locales/en.js
 var errorMap = (issue, _ctx) => {
   let message;
   switch (issue.code) {
@@ -6177,7 +6189,7 @@ var errorMap = (issue, _ctx) => {
 };
 var en_default = errorMap;
 
-// node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/errors.js
+// node_modules/zod/v3/errors.js
 var overrideErrorMap = en_default;
 function setErrorMap(map) {
   overrideErrorMap = map;
@@ -6185,7 +6197,7 @@ function setErrorMap(map) {
 function getErrorMap() {
   return overrideErrorMap;
 }
-// node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/helpers/parseUtil.js
+// node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
   const { data, path, errorMaps, issueData } = params;
   const fullPath = [...path, ...issueData.path || []];
@@ -6291,14 +6303,14 @@ var isAborted = (x) => x.status === "aborted";
 var isDirty = (x) => x.status === "dirty";
 var isValid = (x) => x.status === "valid";
 var isAsync = (x) => typeof Promise !== "undefined" && x instanceof Promise;
-// node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/helpers/errorUtil.js
+// node_modules/zod/v3/helpers/errorUtil.js
 var errorUtil;
 (function(errorUtil2) {
   errorUtil2.errToObj = (message) => typeof message === "string" ? { message } : message || {};
   errorUtil2.toString = (message) => typeof message === "string" ? message : message?.message;
 })(errorUtil || (errorUtil = {}));
 
-// node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/types.js
+// node_modules/zod/v3/types.js
 class ParseInputLazyPath {
   constructor(parent, value, path, key) {
     this._cachedPath = [];
@@ -9782,7 +9794,7 @@ var decryptDataKey = (keyInfo, encryptedDataKey) => {
   }
 };
 
-// node_modules/.pnpm/chalk@5.4.1/node_modules/chalk/source/vendor/ansi-styles/index.js
+// node_modules/chalk/source/vendor/ansi-styles/index.js
 var ANSI_BACKGROUND_OFFSET = 10;
 var wrapAnsi16 = (offset = 0) => (code) => `\x1B[${code + offset}m`;
 var wrapAnsi256 = (offset = 0) => (code) => `\x1B[${38 + offset};5;${code}m`;
@@ -9959,7 +9971,7 @@ function assembleStyles() {
 var ansiStyles = assembleStyles();
 var ansi_styles_default = ansiStyles;
 
-// node_modules/.pnpm/chalk@5.4.1/node_modules/chalk/source/vendor/supports-color/index.js
+// node_modules/chalk/source/vendor/supports-color/index.js
 var import_node_process = __toESM(require("node:process"));
 var import_node_os = __toESM(require("node:os"));
 var import_node_tty = __toESM(require("node:tty"));
@@ -10050,6 +10062,12 @@ function _supportsColor(haveStream, { streamIsTTY, sniffFlags = true } = {}) {
   if (env.TERM === "xterm-kitty") {
     return 3;
   }
+  if (env.TERM === "xterm-ghostty") {
+    return 3;
+  }
+  if (env.TERM === "wezterm") {
+    return 3;
+  }
   if ("TERM_PROGRAM" in env) {
     const version = Number.parseInt((env.TERM_PROGRAM_VERSION || "").split(".")[0], 10);
     switch (env.TERM_PROGRAM) {
@@ -10085,7 +10103,7 @@ var supportsColor = {
 };
 var supports_color_default = supportsColor;
 
-// node_modules/.pnpm/chalk@5.4.1/node_modules/chalk/source/utilities.js
+// node_modules/chalk/source/utilities.js
 function stringReplaceAll(string, substring, replacer) {
   let index = string.indexOf(substring);
   if (index === -1) {
@@ -10118,7 +10136,7 @@ function stringEncaseCRLFWithFirstIndex(string, prefix, postfix, index) {
   return returnValue;
 }
 
-// node_modules/.pnpm/chalk@5.4.1/node_modules/chalk/source/index.js
+// node_modules/chalk/source/index.js
 var { stdout: stdoutColor, stderr: stderrColor } = supports_color_default;
 var GENERATOR = Symbol("GENERATOR");
 var STYLER = Symbol("STYLER");

@@ -10,11 +10,13 @@ if [[ ! -s "$BUNDLE_PATH" ]]; then
 	exit 1
 fi
 
-TEMP_BUNDLE="$(mktemp "${TMPDIR:-/tmp}/dotenc-diff-action.XXXXXX")"
+TEMP_BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dotenc-diff-action.XXXXXX")"
+TEMP_BUNDLE="$TEMP_BUILD_DIR/index.js"
 SMOKE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dotenc-diff-smoke.XXXXXX")"
 
 cleanup() {
 	rm -f "$TEMP_BUNDLE"
+	rmdir "$TEMP_BUILD_DIR"
 	rm -f \
 		"$SMOKE_DIR/event.json" \
 		"$SMOKE_DIR/output" \
@@ -26,10 +28,7 @@ trap cleanup EXIT
 
 (
 	cd "$ROOT_DIR"
-	bun build ./actions/diff/src/index.ts \
-		--outfile "$TEMP_BUNDLE" \
-		--target node \
-		--format cjs
+	bun run ./scripts/build-diff-action.ts "$TEMP_BUNDLE"
 )
 
 if ! cmp -s "$BUNDLE_PATH" "$TEMP_BUNDLE"; then
