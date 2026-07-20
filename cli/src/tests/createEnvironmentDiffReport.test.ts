@@ -58,6 +58,47 @@ const fixtureDecryptor = async (
 const createReport = (input: EnvironmentDiffInput) =>
 	createEnvironmentDiffReport(input, { decryptEnvironment: fixtureDecryptor })
 
+const realEncryptedEnvironment = async ({
+	dataKey,
+	environmentName = "production",
+	plaintext,
+	publicKey,
+	version = 2,
+}: {
+	dataKey: Buffer
+	environmentName?: string
+	plaintext: string
+	publicKey: crypto.KeyObject
+	version?: 1 | 2
+}): Promise<string> => {
+	const publicDer = publicKey.export({ type: "spki", format: "der" }) as Buffer
+	const encryptedContent = await encryptData(
+		dataKey,
+		plaintext,
+		version >= 2 ? Buffer.from(environmentName, "utf-8") : undefined,
+	)
+	const encryptedKey = encryptDataKey(
+		{
+			algorithm: "ed25519",
+			publicKey,
+			rawPublicKey: Buffer.from(publicDer.subarray(publicDer.byteLength - 32)),
+		},
+		dataKey,
+	)
+	return JSON.stringify({
+		version,
+		keys: [
+			{
+				name: "ci-production",
+				fingerprint: getKeyFingerprint(publicKey),
+				encryptedDataKey: encryptedKey.toString("base64"),
+				algorithm: "ed25519",
+			},
+		],
+		encryptedContent: encryptedContent.toString("base64"),
+	})
+}
+
 describe("createEnvironmentDiffReport", () => {
 	test("reports only added, changed, and removed variable names", async () => {
 		const report = await createReport({
@@ -96,31 +137,37 @@ describe("createEnvironmentDiffReport", () => {
 	})
 
 	test("omits formatting-only changes", async () => {
-		const report = await createReport({
-			base: [
-				{
-					path: ".env.staging.enc",
-					content: encryptedEnvironment({
-						plaintext: "FOO=bar\nQUOTED=value",
-						nonce: "base",
-					}),
-				},
-			],
-			head: [
-				{
-					path: ".env.staging.enc",
-					content: encryptedEnvironment({
-						plaintext: '# comment\nFOO = "bar"\n\nQUOTED=value\n',
-						nonce: "head",
-					}),
-				},
-			],
-		})
+		const report = await createEnvironmentDiffReport(
+			{
+				base: [
+					{
+						path: ".env.staging.enc",
+						content: encryptedEnvironment({
+							plaintext: "FOO=bar\nQUOTED=value",
+							nonce: "base",
+						}),
+					},
+				],
+				head: [
+					{
+						path: ".env.staging.enc",
+						content: encryptedEnvironment({
+							plaintext: '# comment\nFOO = "bar"\n\nQUOTED=value\n',
+							nonce: "head",
+						}),
+					},
+				],
+			},
+			{
+				decryptEnvironment: fixtureDecryptor,
+				dataKeysEqual: async () => false,
+			},
+		)
 
 		expect(report.environments).toEqual([])
 	})
 
-	test("ignores complete re-encryption when plaintext and access are unchanged", async () => {
+	test("does not claim rotation without a data-key comparator", async () => {
 		const base = encryptedEnvironment({ plaintext: "TOKEN=same", nonce: "old" })
 		const head = encryptedEnvironment({ plaintext: "TOKEN=same", nonce: "new" })
 		expect(base).not.toBe(head)
@@ -131,6 +178,220 @@ describe("createEnvironmentDiffReport", () => {
 		})
 
 		expect(report).toEqual({ schemaVersion: 1, environments: [] })
+	})
+
+	test("uses the reserved empty modified entry for a proven data-key-only change", async () => {
+		const report = await createEnvironmentDiffReport(
+			{
+				base: [
+					{
+						path: ".env.production.enc",
+						content: encryptedEnvironment({
+							plaintext: "TOKEN=same",
+							nonce: "base",
+						}),
+					},
+				],
+				head: [
+					{
+						path: ".env.production.enc",
+						content: encryptedEnvironment({
+							plaintext: "TOKEN=same",
+							nonce: "head",
+						}),
+					},
+				],
+			},
+			{
+				decryptEnvironment: fixtureDecryptor,
+				dataKeysEqual: async () => false,
+			},
+		)
+
+		expect(report).toEqual({
+			schemaVersion: 1,
+			environments: [
+				{
+					path: ".env.production.enc",
+					name: "production",
+					status: "modified",
+					variables: {
+						status: "available",
+						added: [],
+						changed: [],
+						removed: [],
+					},
+					access: {
+						status: "available",
+						grants: [],
+						revocations: [],
+						renames: [],
+					},
+				},
+			],
+		})
+	})
+
+	test("treats a missing legacy version as explicit v1 during rotation proof", async () => {
+		const baseEnvironment = JSON.parse(
+			encryptedEnvironment({
+				plaintext: "TOKEN=same",
+				nonce: "base",
+				version: 1,
+			}),
+		) as Record<string, unknown>
+		delete baseEnvironment.version
+
+		let comparisons = 0
+		const report = await createEnvironmentDiffReport(
+			{
+				base: [
+					{
+						path: ".env.production.enc",
+						content: JSON.stringify(baseEnvironment),
+					},
+				],
+				head: [
+					{
+						path: ".env.production.enc",
+						content: encryptedEnvironment({
+							plaintext: "TOKEN=same",
+							nonce: "head",
+							version: 1,
+						}),
+					},
+				],
+			},
+			{
+				decryptEnvironment: fixtureDecryptor,
+				dataKeysEqual: async () => {
+					comparisons++
+					return false
+				},
+			},
+		)
+
+		expect(comparisons).toBe(1)
+		expect(report.environments).toHaveLength(1)
+		expect(report.environments[0].status).toBe("modified")
+	})
+
+	test("does not claim rotation when version or recipient metadata changed", async () => {
+		const base = encryptedEnvironment({
+			plaintext: "TOKEN=same",
+			nonce: "base",
+		})
+
+		const cases = [
+			{
+				name: "version changed",
+				head: encryptedEnvironment({
+					plaintext: "TOKEN=same",
+					nonce: "head",
+					version: 1,
+				}),
+			},
+			{
+				name: "recipient algorithm changed",
+				head: encryptedEnvironment({
+					plaintext: "TOKEN=same",
+					nonce: "head",
+					recipients: [
+						{
+							name: "ci-production",
+							fingerprint: "fingerprint-ci",
+							algorithm: "rsa",
+						},
+					],
+				}),
+			},
+		]
+
+		for (const fixture of cases) {
+			let comparisons = 0
+			const report = await createEnvironmentDiffReport(
+				{
+					base: [{ path: ".env.production.enc", content: base }],
+					head: [{ path: ".env.production.enc", content: fixture.head }],
+				},
+				{
+					decryptEnvironment: fixtureDecryptor,
+					dataKeysEqual: async () => {
+						comparisons++
+						return false
+					},
+				},
+			)
+
+			expect(report.environments, fixture.name).toEqual([])
+			expect(comparisons, fixture.name).toBe(0)
+		}
+	})
+
+	test("rejects a changed key when any unchanged recipient wrapper makes rotation inconsistent", async () => {
+		const base = encryptedEnvironment({
+			plaintext: "TOKEN=same",
+			nonce: "base",
+		})
+		const head = JSON.parse(
+			encryptedEnvironment({ plaintext: "TOKEN=same", nonce: "head" }),
+		) as { keys: Array<{ encryptedDataKey: string }> }
+		head.keys[0].encryptedDataKey = (
+			JSON.parse(base) as { keys: Array<{ encryptedDataKey: string }> }
+		).keys[0].encryptedDataKey
+
+		await expect(
+			createEnvironmentDiffReport(
+				{
+					base: [{ path: ".env.production.enc", content: base }],
+					head: [
+						{
+							path: ".env.production.enc",
+							content: JSON.stringify(head),
+						},
+					],
+				},
+				{
+					decryptEnvironment: fixtureDecryptor,
+					dataKeysEqual: async () => false,
+				},
+			),
+		).rejects.toThrow("Data key rotation could not be verified safely.")
+	})
+
+	test("replaces invalid data-key comparator results with a static safe failure", async () => {
+		const sentinel = "SENTINEL_DATA_KEY_MATERIAL"
+		const base = encryptedEnvironment({
+			plaintext: "TOKEN=same",
+			nonce: "base",
+		})
+		const head = encryptedEnvironment({
+			plaintext: "TOKEN=same",
+			nonce: "head",
+		})
+
+		for (const dataKeysEqual of [
+			async () => {
+				throw new Error(sentinel)
+			},
+			async () => undefined as never,
+		]) {
+			try {
+				await createEnvironmentDiffReport(
+					{
+						base: [{ path: ".env.production.enc", content: base }],
+						head: [{ path: ".env.production.enc", content: head }],
+					},
+					{ decryptEnvironment: fixtureDecryptor, dataKeysEqual },
+				)
+				throw new Error("expected comparison to fail")
+			} catch (error) {
+				expect(String(error)).toContain(
+					"Data key comparison could not be completed safely.",
+				)
+				expect(String(error)).not.toContain(sentinel)
+			}
+		}
 	})
 
 	test("compares access by fingerprint, including grants, revocations, and renames", async () => {
@@ -292,6 +553,107 @@ describe("createEnvironmentDiffReport", () => {
 			expect(errorSpy).not.toHaveBeenCalled()
 		} finally {
 			errorSpy.mockRestore()
+		}
+	})
+
+	test("cryptographically distinguishes rotation from randomized same-key re-encryption", async () => {
+		const originalBase64Key = process.env.DOTENC_PRIVATE_KEY_BASE64
+		const originalRawKey = process.env.DOTENC_PRIVATE_KEY
+		const keyPair = crypto.generateKeyPairSync("ed25519")
+		const privateKeyPem = keyPair.privateKey
+			.export({ type: "pkcs8", format: "pem" })
+			.toString()
+		const baseDataKey = Buffer.alloc(32, 0x31)
+		const rotatedDataKey = Buffer.alloc(32, 0x32)
+
+		try {
+			process.env.DOTENC_PRIVATE_KEY_BASE64 = Buffer.from(
+				privateKeyPem,
+				"utf-8",
+			).toString("base64")
+			delete process.env.DOTENC_PRIVATE_KEY
+
+			const base = await realEncryptedEnvironment({
+				dataKey: baseDataKey,
+				plaintext: "TOKEN=same",
+				publicKey: keyPair.publicKey,
+			})
+			const sameKeyHead = await realEncryptedEnvironment({
+				dataKey: baseDataKey,
+				plaintext: "TOKEN=same",
+				publicKey: keyPair.publicKey,
+			})
+			const rotatedHead = await realEncryptedEnvironment({
+				dataKey: rotatedDataKey,
+				plaintext: "TOKEN=same",
+				publicKey: keyPair.publicKey,
+			})
+			const parsedBase = JSON.parse(base) as {
+				encryptedContent: string
+				keys: Array<{ encryptedDataKey: string }>
+			}
+			const parsedSameKeyHead = JSON.parse(sameKeyHead) as typeof parsedBase
+			expect(parsedSameKeyHead.encryptedContent).not.toBe(
+				parsedBase.encryptedContent,
+			)
+			expect(parsedSameKeyHead.keys[0].encryptedDataKey).not.toBe(
+				parsedBase.keys[0].encryptedDataKey,
+			)
+
+			const sameKeyReport = await createEnvironmentDiffReport(
+				{
+					base: [{ path: ".env.production.enc", content: base }],
+					head: [{ path: ".env.production.enc", content: sameKeyHead }],
+				},
+				{ privateKeySource: "environment" },
+			)
+			expect(sameKeyReport.environments).toEqual([])
+
+			const rotatedReport = await createEnvironmentDiffReport(
+				{
+					base: [{ path: ".env.production.enc", content: base }],
+					head: [{ path: ".env.production.enc", content: rotatedHead }],
+				},
+				{ privateKeySource: "environment" },
+			)
+			expect(rotatedReport.environments).toEqual([
+				{
+					path: ".env.production.enc",
+					name: "production",
+					status: "modified",
+					variables: {
+						status: "available",
+						added: [],
+						changed: [],
+						removed: [],
+					},
+					access: {
+						status: "available",
+						grants: [],
+						revocations: [],
+						renames: [],
+					},
+				},
+			])
+			const serialized = JSON.stringify(rotatedReport)
+			expect(serialized).not.toContain(baseDataKey.toString("base64"))
+			expect(serialized).not.toContain(rotatedDataKey.toString("base64"))
+			expect(serialized).not.toContain(baseDataKey.toString("hex"))
+			expect(serialized).not.toContain(rotatedDataKey.toString("hex"))
+			expect(serialized).not.toContain("PRIVATE KEY")
+		} finally {
+			baseDataKey.fill(0)
+			rotatedDataKey.fill(0)
+			if (originalBase64Key === undefined) {
+				delete process.env.DOTENC_PRIVATE_KEY_BASE64
+			} else {
+				process.env.DOTENC_PRIVATE_KEY_BASE64 = originalBase64Key
+			}
+			if (originalRawKey === undefined) {
+				delete process.env.DOTENC_PRIVATE_KEY
+			} else {
+				process.env.DOTENC_PRIVATE_KEY = originalRawKey
+			}
 		}
 	})
 

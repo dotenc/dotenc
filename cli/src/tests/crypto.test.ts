@@ -8,6 +8,13 @@ const key = crypto.randomBytes(32)
 const wrongKey = crypto.randomBytes(32)
 const message = "Hello, dotenc!"
 
+const encryptBytes = (dataKey: Buffer, input: Buffer): Buffer => {
+	const iv = crypto.randomBytes(12)
+	const cipher = crypto.createCipheriv("aes-256-gcm", dataKey, iv)
+	const encrypted = Buffer.concat([cipher.update(input), cipher.final()])
+	return Buffer.concat([iv, encrypted, cipher.getAuthTag()])
+}
+
 describe("crypto helpers", () => {
 	test("encrypt and decrypt returns original message", async () => {
 		const encrypted = await encryptData(key, message)
@@ -40,6 +47,14 @@ describe("crypto helpers", () => {
 		await expect(decryptData(key, shortInput)).rejects.toThrow(
 			/Encrypted input is too short/,
 		)
+	})
+
+	test("decrypt rejects authenticated plaintext that is not valid UTF-8", async () => {
+		const encrypted = encryptBytes(
+			key,
+			Buffer.from([0x54, 0x4f, 0x4b, 0x45, 0x4e, 0x3d, 0x80]),
+		)
+		await expect(decryptData(key, encrypted)).rejects.toThrow(/valid UTF-8/)
 	})
 
 	test("encrypt and decrypt with AAD returns original message", async () => {

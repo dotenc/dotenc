@@ -211,8 +211,27 @@ export class GitHubClient {
 	async #requestJson(
 		pathname: string,
 		maxResponseBytes: number,
-		init: { method?: "GET" | "POST" | "PATCH"; body?: unknown } = {},
+		init: {
+			method?: "GET" | "POST" | "PATCH" | "DELETE"
+			body?: unknown
+		} = {},
 	): Promise<unknown> {
+		const response = await this.#request(pathname, init)
+		const body = await readBoundedResponse(response, maxResponseBytes)
+		try {
+			return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body))
+		} catch {
+			throw new SafeActionError("invalid_github_response")
+		}
+	}
+
+	async #request(
+		pathname: string,
+		init: {
+			method?: "GET" | "POST" | "PATCH" | "DELETE"
+			body?: unknown
+		} = {},
+	): Promise<Response> {
 		let response: Response
 		try {
 			response = await this.#fetch(this.#endpoint(pathname), {
@@ -241,12 +260,23 @@ export class GitHubClient {
 			throw new GitHubApiError(response.status)
 		}
 
-		const body = await readBoundedResponse(response, maxResponseBytes)
-		try {
-			return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body))
-		} catch {
+		return response
+	}
+
+	async #requestNoContent(
+		pathname: string,
+		init: { method: "DELETE" },
+	): Promise<void> {
+		const response = await this.#request(pathname, init)
+		if (response.status !== 204) {
+			try {
+				await response.body?.cancel()
+			} catch {
+				// The status is already enough to reject the response safely.
+			}
 			throw new SafeActionError("invalid_github_response")
 		}
+		await readBoundedResponse(response, 0)
 	}
 
 	async #getTreeSha(commitSha: string): Promise<string> {
@@ -440,22 +470,20 @@ export class GitHubClient {
 		return { base, head }
 	}
 
-	async upsertPullRequestComment(
+	async #findPullRequestCommentIds(
 		pullRequestNumber: number,
 		marker: string,
-		body: string,
-	): Promise<string> {
+	): Promise<number[]> {
 		if (
 			!Number.isSafeInteger(pullRequestNumber) ||
 			pullRequestNumber < 1 ||
 			!marker ||
-			!body.startsWith(marker) ||
-			byteLength(body) > this.#limits.maxCommentBytes
+			byteLength(marker) > this.#limits.maxCommentBytes
 		) {
 			throw new SafeActionError("invalid_comment")
 		}
 
-		let existingCommentId: number | undefined
+		const commentIds = new Set<number>()
 		for (let page = 1; page <= this.#limits.maxCommentPages; page += 1) {
 			const response = await this.#requestJson(
 				`${this.#repositoryPath()}/issues/${pullRequestNumber}/comments?per_page=${this.#limits.commentsPerPage}&page=${page}`,
@@ -479,16 +507,44 @@ export class GitHubClient {
 					comment.user.type === "Bot" &&
 					comment.user.login === "github-actions[bot]"
 				) {
-					existingCommentId = comment.id as number
-					break
+					commentIds.add(comment.id as number)
 				}
 			}
 
-			if (existingCommentId !== undefined) break
-			if (response.length < this.#limits.commentsPerPage) break
+			if (response.length < this.#limits.commentsPerPage) {
+				return [...commentIds]
+			}
 			if (page === this.#limits.maxCommentPages) {
 				throw new SafeActionError("comment_page_limit")
 			}
+		}
+
+		return [...commentIds]
+	}
+
+	async #deletePullRequestCommentById(commentId: number): Promise<void> {
+		await this.#requestNoContent(
+			`${this.#repositoryPath()}/issues/comments/${commentId}`,
+			{ method: "DELETE" },
+		)
+	}
+
+	async upsertPullRequestComment(
+		pullRequestNumber: number,
+		marker: string,
+		body: string,
+	): Promise<string> {
+		if (
+			!body.startsWith(marker) ||
+			byteLength(body) > this.#limits.maxCommentBytes
+		) {
+			throw new SafeActionError("invalid_comment")
+		}
+
+		const [existingCommentId, ...duplicateCommentIds] =
+			await this.#findPullRequestCommentIds(pullRequestNumber, marker)
+		for (const commentId of duplicateCommentIds) {
+			await this.#deletePullRequestCommentById(commentId)
 		}
 
 		const result = await this.#requestJson(
@@ -525,5 +581,21 @@ export class GitHubClient {
 		}
 
 		return htmlUrl
+	}
+
+	async deletePullRequestComment(
+		pullRequestNumber: number,
+		marker: string,
+	): Promise<boolean> {
+		const existingCommentIds = await this.#findPullRequestCommentIds(
+			pullRequestNumber,
+			marker,
+		)
+		if (existingCommentIds.length === 0) return false
+
+		for (const commentId of existingCommentIds) {
+			await this.#deletePullRequestCommentById(commentId)
+		}
+		return true
 	}
 }
