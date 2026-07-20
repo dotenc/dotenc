@@ -17,6 +17,7 @@ This document describes the security model, cryptographic design, and operationa
 - [Access Control Model](#access-control-model)
 - [Operational Flow](#operational-flow)
 - [Installation Script Trust Model](#installation-script-trust-model)
+- [Linux Package Repository Trust Model](#linux-package-repository-trust-model)
 - [OCI Image Trust Model](#oci-image-trust-model)
 - [GitHub Actions Trust Model](#github-actions-trust-model)
 - [Known Limitations](#known-limitations)
@@ -247,6 +248,99 @@ Alternatively, install via Homebrew, Scoop, npm, the
 `ghcr.io/dotenc/cli` OCI image, or a standalone binary from the
 [GitHub Releases](https://github.com/dotenc/dotenc/releases) page. None of
 these methods use the install script.
+
+---
+
+## Linux Package Repository Trust Model
+
+Official signed APT, RPM, and APK repositories are being prepared at
+`packages.dotenc.org`, but they are **not a supported installation method yet**.
+The delivery infrastructure exists; launch remains gated on production signing
+key custody and a verified first publication. Until that gate passes, use one
+of the installation methods listed above.
+
+The planned trust model separates authenticity from delivery:
+
+- APT and RPM use independent OpenPGP v4 RSA trust roots. Each primary key
+  remains offline; CI receives only that ecosystem's RSA-4096 signing subkey.
+- APT signs `InRelease`, which authenticates repository indexes and the hashes
+  of `.deb` files. The `.deb` files do not carry separate dotenc repository
+  signatures.
+- RPM signs both package files and `repomd.xml`. A separate RSA-4096 Alpine key
+  signs APK packages and `APKINDEX.tar.gz` with RSA/SHA-256.
+- Arch users receive a `dotenc-bin` AUR recipe that pins the SHA-256 of each
+  tagged GitHub release archive. AUR stores build metadata rather than a dotenc
+  binary repository, so this path uses none of the APT, RPM, or APK signing
+  keys. Its separately gated publisher uses a dedicated AUR-only Ed25519 SSH
+  identity and may update only the `dotenc-bin` AUR Git repository. CI accepts
+  that identity only as an unencrypted base64-encoded environment secret,
+  verifies the server's Ed25519 key against the fingerprint published by AUR,
+  and uses strict host-key checking. The key is exposed only after an
+  unprivileged, digest-pinned Arch build/install validation succeeds. Manual
+  validation authenticates with AUR's read-only `help` command, then exits
+  without cloning when publication is disabled. Pushes are non-forced and fail
+  closed on downgrades or unexpected repository state.
+- Package managers verify those signatures against explicitly installed dotenc
+  public keys. HTTPS alone is not the package authenticity boundary.
+- A first package publication accepts Linux binaries only from the immutable
+  Actions artifact created earlier in the same release run; manual and
+  scheduled invocations are refresh-only. Later refreshes authenticate the
+  canonical six-package bundle through its APT-subkey-signed digest manifest,
+  not through the adjacent mutable checksum alone.
+- Versioned packages and content-addressed metadata are immutable. Signed
+  mutable repository roots are published last so they never intentionally
+  reference objects that have not finished uploading.
+- Private signing keys must never be published to the package host, included in
+  packages, stored in repository history, or exposed through workflow logs,
+  artifacts, or caches.
+- APT and RPM signing run in separate ephemeral GPG homes. Alpine signing runs
+  in a network-disabled container whose tools are prepared before its read-only
+  key mount is attached; the R2 publication step receives no signing secrets.
+
+The repository objects are stored in the private-write
+`dotenc-packages` Cloudflare R2 bucket and exposed through the
+`packages.dotenc.org` custom domain. Cloudflare is responsible for TLS
+termination, WAF enforcement, caching, and managed DDoS mitigation on that
+public path. Public `r2.dev` access remains disabled to avoid an origin bypass.
+Cloudflare and R2 do not replace package signatures and do not protect against a
+compromised signing key or authorized publisher.
+
+Mutable repository objects use a 60-second browser TTL and a 300-second shared
+edge TTL. Allowed-path `404` and `410` responses expose
+`max-age=0, must-revalidate` to clients, so browsers do not reuse misses;
+Cloudflare applies a separate 30-second edge TTL that is not advertised through
+`s-maxage`. Origin `5xx` responses are not stored.
+
+APT metadata carries a 14-day `Valid-Until` and is refreshed weekly. RPM and
+APK metadata have no client-enforced expiry, so a valid older signed repository
+can be replayed to freeze those clients. Weekly freshness monitoring, exact URL
+purges, and short mutable-object cache lifetimes detect or reduce accidental
+staleness but cannot cryptographically prevent that replay. Rotation also
+requires ecosystem-specific handling: RPM 4.x cannot be assumed to learn a new
+subkey on an already imported primary certificate, and immutable RPM/APK
+packages continue to require the public key that originally signed them. The
+canonical package manifest is also pinned to the exact APT primary and signing
+fingerprints. The current exact-identity refresh path therefore requires a new
+package release when an APT, RPM, or APK signing identity changes. Immutable
+OpenPGP certificate object names bind both the primary fingerprint and a digest
+of the exact certificate, so a renewed certificate never overwrites an older
+object with the same trust root.
+
+Publication remains disabled unless the GitHub repository variable
+`LINUX_PACKAGES_ENABLED` is exactly `true`; the signing secrets remain scoped to
+the protected `linux-packages` environment. A manual dispatch defaults to a
+non-publishing validation mode that may run while the gate is disabled: it
+policy-checks the production keys, signs all package variants and repository
+roots, verifies them, and installs from clean local repositories, while all
+release-asset, artifact-retention, R2, cache-purge, and public-edge steps remain
+skipped. Both OpenPGP passphrase secrets are mandatory in this production path.
+The gate must stay disabled until that validation, the clean-install matrix,
+edge checks, recovery drill, and first signed publication satisfy the launch
+runbook.
+
+The operational controls, cache classes, key-custody requirements, publication
+order, verification, and recovery procedures are documented in
+[Official Linux Package Repositories](docs/LINUX_PACKAGES.md).
 
 ---
 

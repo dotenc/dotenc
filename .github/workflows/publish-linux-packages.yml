@@ -1,0 +1,1356 @@
+name: Publish Linux packages
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Release version without the leading v
+        required: true
+        type: string
+      package_input_artifact_id:
+        description: Same-run immutable artifact ID used only for initial signing
+        required: false
+        type: string
+      validate_only:
+        description: Reserved for manual signing-key validation
+        required: false
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Existing GitHub release version without the leading v
+        required: true
+        type: string
+      validate_only:
+        description: Build, sign, and install locally without modifying GitHub or R2
+        required: true
+        type: boolean
+        default: true
+  schedule:
+    - cron: "17 4 * * 1"
+
+concurrency:
+  group: linux-packages-production
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build, sign, and publish Linux repositories
+    if: inputs.validate_only == true || vars.LINUX_PACKAGES_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment: linux-packages
+    permissions:
+      actions: read
+      contents: write
+    env:
+      VERSION: ${{ inputs.version }}
+      PACKAGE_INPUT_ARTIFACT_ID: ${{ inputs.package_input_artifact_id }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
+      R2_BUCKET: ${{ vars.R2_BUCKET }}
+      R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+      PACKAGES_BASE_URL: ${{ vars.PACKAGES_BASE_URL }}
+      LINUX_PACKAGES_ENABLED: ${{ vars.LINUX_PACKAGES_ENABLED }}
+      VALIDATE_ONLY: ${{ inputs.validate_only }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.3.10"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Resolve publication target
+        id: target
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          latest_release_json=$(gh release view \
+            --repo "$GITHUB_REPOSITORY" \
+            --json isDraft,publishedAt,tagName)
+          latest_tag_name=$(jq -r '.tagName' <<<"$latest_release_json")
+          version=${VERSION:-}
+          validate_only=${VALIDATE_ONLY:-false}
+          if [[ "$validate_only" != "true" && "$validate_only" != "false" ]]; then
+            echo "validate_only must be a boolean" >&2
+            exit 1
+          fi
+          if [[ "$validate_only" == "true" && "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]]; then
+            echo "Non-publishing signing-key validation is restricted to manual workflow dispatch" >&2
+            exit 1
+          fi
+          if [[ "$GITHUB_EVENT_NAME" == "schedule" ]]; then
+            release_json=$latest_release_json
+            tag_name=$(jq -r '.tagName' <<<"$release_json")
+            version=${tag_name#v}
+          else
+            release_json=$(gh release view "v$version" --repo "$GITHUB_REPOSITORY" --json isDraft,publishedAt,tagName)
+            tag_name=$(jq -r '.tagName' <<<"$release_json")
+          fi
+
+          if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Stable Linux publication requires an X.Y.Z version without a leading v; prereleases need a separate suite" >&2
+            exit 1
+          fi
+          if [[ "$tag_name" != "v$version" || "$(jq -r '.isDraft' <<<"$release_json")" != "false" ]]; then
+            echo "v$version is not a published GitHub release" >&2
+            exit 1
+          fi
+          if [[ "$tag_name" != "$latest_tag_name" || "$(jq -r '.isDraft' <<<"$latest_release_json")" != "false" ]]; then
+            echo "Normal publication may only target the latest published release ($latest_tag_name); use the separate reviewed rollback procedure" >&2
+            exit 1
+          fi
+          bundle_name="dotenc-linux-packages-${version}.tar.gz"
+          checksum_name="${bundle_name}.sha256"
+          mapfile -t release_assets < <(
+            gh release view "v$version" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name'
+          )
+          bundle_present=false
+          checksum_present=false
+          for asset in "${release_assets[@]}"; do
+            [[ "$asset" == "$bundle_name" ]] && bundle_present=true
+            [[ "$asset" == "$checksum_name" ]] && checksum_present=true
+          done
+          if [[ "$bundle_present" != "$checksum_present" ]]; then
+            echo "v$version has an incomplete canonical Linux package bundle" >&2
+            exit 1
+          fi
+
+          publication_epoch=$(date -u +%s)
+          if [[ "$validate_only" == "true" ]]; then
+            refresh=false
+            checkout_version=$(jq -r '.version' cli/package.json)
+            if [[ "$checkout_version" != "$version" ]]; then
+              echo "Signing-key validation requires checked-out cli/package.json version $checkout_version to match v$version" >&2
+              exit 1
+            fi
+            source_date_epoch=$(git show --no-patch --format=%ct 'HEAD^{commit}')
+            if [[ ! "$source_date_epoch" =~ ^[1-9][0-9]*$ ]]; then
+              echo "Unable to derive a valid validation source date" >&2
+              exit 1
+            fi
+          elif [[ "$bundle_present" == "true" ]]; then
+            refresh=true
+            source_date_epoch=""
+          else
+            refresh=false
+            if [[ "$GITHUB_EVENT_NAME" != "push" ]]; then
+              echo "Initial signing is restricted to the release workflow's same-run immutable artifact; dispatch and schedule may only refresh an existing canonical bundle" >&2
+              exit 1
+            fi
+            if [[ ! "$PACKAGE_INPUT_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]; then
+              echo "Initial signing requires the immutable same-run Linux package input artifact ID" >&2
+              exit 1
+            fi
+            checkout_version=$(jq -r '.version' cli/package.json)
+            if [[ "$checkout_version" != "$version" ]]; then
+              echo "Initial signing requires checked-out cli/package.json version $checkout_version to match latest release v$version" >&2
+              exit 1
+            fi
+            git fetch --force --no-tags --depth=1 origin \
+              "refs/tags/v$version:refs/tags/v$version"
+            checkout_commit=$(git rev-parse 'HEAD^{commit}')
+            tag_commit=$(git rev-parse "v$version^{commit}")
+            if [[ "$checkout_commit" != "$GITHUB_SHA" || "$tag_commit" != "$GITHUB_SHA" ]]; then
+              echo "Initial signing requires release tag v$version to resolve to the checked-out release commit" >&2
+              exit 1
+            fi
+            source_date_epoch=$(git show --no-patch --format=%ct "v$version^{commit}")
+            if [[ ! "$source_date_epoch" =~ ^[1-9][0-9]*$ ]]; then
+              echo "Unable to derive a valid repository source date" >&2
+              exit 1
+            fi
+          fi
+
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          {
+            echo "version=$version"
+            echo "validate_only=$validate_only"
+            echo "refresh=$refresh"
+            echo "source_date_epoch=$source_date_epoch"
+            echo "publication_epoch=$publication_epoch"
+            echo "bundle_name=$bundle_name"
+            echo "checksum_name=$checksum_name"
+            echo "release_published_at=$(jq -r '.publishedAt' <<<"$release_json")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Validate run input
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$PACKAGES_BASE_URL" ]]; then
+            echo "PACKAGES_BASE_URL is not configured in the linux-packages environment" >&2
+            exit 1
+          fi
+
+          if [[ "$VALIDATE_ONLY" != "true" ]]; then
+            for name in CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_ZONE_ID R2_BUCKET R2_ENDPOINT; do
+              if [[ -z "${!name:-}" ]]; then
+                echo "$name is not configured in the linux-packages environment" >&2
+                exit 1
+              fi
+            done
+            if [[ "$LINUX_PACKAGES_ENABLED" != "true" ]]; then
+              echo "Linux package publication is disabled; set LINUX_PACKAGES_ENABLED=true after signing-key launch review" >&2
+              exit 1
+            fi
+          fi
+
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "Production Linux package publication is restricted to the main branch" >&2
+            exit 1
+          fi
+
+          if [[ "$PACKAGES_BASE_URL" != "https://packages.dotenc.org" ]]; then
+            echo "PACKAGES_BASE_URL must be https://packages.dotenc.org" >&2
+            exit 1
+          fi
+          if [[ "$VALIDATE_ONLY" != "true" ]]; then
+            if [[ "$R2_BUCKET" != "dotenc-packages" ]]; then
+              echo "R2_BUCKET must be dotenc-packages" >&2
+              exit 1
+            fi
+            if [[ "$R2_ENDPOINT" != "https://${CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com" ]]; then
+              echo "R2_ENDPOINT does not match CLOUDFLARE_ACCOUNT_ID" >&2
+              exit 1
+            fi
+          fi
+
+      - name: Build validation Linux package inputs
+        if: steps.target.outputs.validate_only == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          bun run --cwd cli build:binary:linux-x64
+          bun run --cwd cli build:binary:linux-arm64
+          bun run --cwd cli build:binary:linux-x64-musl
+          bun run --cwd cli build:binary:linux-arm64-musl
+          for binary in \
+            dotenc-linux-x64 \
+            dotenc-linux-arm64 \
+            dotenc-linux-x64-musl \
+            dotenc-linux-arm64-musl; do
+            if [[ ! -x "cli/dist/$binary" ]]; then
+              echo "Validation binary was not built: $binary" >&2
+              exit 1
+            fi
+          done
+
+      - name: Download immutable same-run Linux package inputs
+        id: release
+        if: steps.target.outputs.refresh != 'true' && steps.target.outputs.validate_only != 'true'
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          artifact-ids: ${{ inputs.package_input_artifact_id }}
+          path: ${{ runner.temp }}/dotenc-release-${{ steps.target.outputs.version }}
+          merge-multiple: true
+
+      - name: Download canonical signed package bundle
+        id: package_source
+        if: steps.target.outputs.refresh == 'true' && steps.target.outputs.validate_only != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUNDLE_NAME: ${{ steps.target.outputs.bundle_name }}
+          CHECKSUM_NAME: ${{ steps.target.outputs.checksum_name }}
+        run: |
+          set -euo pipefail
+
+          download_dir="$RUNNER_TEMP/dotenc-package-bundle-download-$VERSION"
+          source_dir="$RUNNER_TEMP/dotenc-package-source-$VERSION"
+          mkdir -p "$download_dir" "$source_dir"
+          for asset in "$BUNDLE_NAME" "$CHECKSUM_NAME"; do
+            downloaded=false
+            for attempt in 1 2 3 4 5; do
+              if gh release download "v$VERSION" \
+                --repo "$GITHUB_REPOSITORY" \
+                --dir "$download_dir" \
+                --pattern "$asset" \
+                --skip-existing; then
+                downloaded=true
+                break
+              fi
+              sleep "$attempt"
+            done
+            if [[ "$downloaded" != "true" || ! -f "$download_dir/$asset" ]]; then
+              echo "Unable to download canonical asset $asset from v$VERSION" >&2
+              exit 1
+            fi
+          done
+
+          checksum_line=$(awk -v file="$BUNDLE_NAME" '$2 == file { count += 1; line = $0 } END { if (count == 1) print line }' "$download_dir/$CHECKSUM_NAME")
+          if [[ -z "$checksum_line" ]]; then
+            echo "$CHECKSUM_NAME does not contain exactly one entry for $BUNDLE_NAME" >&2
+            exit 1
+          fi
+          (
+            cd "$download_dir"
+            printf '%s\n' "$checksum_line" | sha256sum --check --strict
+          )
+
+          while IFS= read -r entry; do
+            case "$entry" in
+              . | ./ | ./public | ./public/* | ./package-bundle-manifest.json | ./package-bundle-manifest.json.asc) ;;
+              *)
+                echo "Unsafe canonical bundle path: $entry" >&2
+                exit 1
+                ;;
+            esac
+            if [[ "$entry" == /* || "$entry" == *"/../"* || "$entry" == ../* || "$entry" == *"/.." ]]; then
+              echo "Unsafe canonical bundle path: $entry" >&2
+              exit 1
+            fi
+          done < <(tar --list --gzip --file "$download_dir/$BUNDLE_NAME")
+          if tar --list --verbose --gzip --file "$download_dir/$BUNDLE_NAME" | awk '$1 !~ /^[d-]/ { bad = 1 } END { exit bad }'; then
+            :
+          else
+            echo "Canonical bundle contains a non-file, non-directory entry" >&2
+            exit 1
+          fi
+
+          tar --extract --gzip \
+            --file "$download_dir/$BUNDLE_NAME" \
+            --directory "$source_dir" \
+            --no-same-owner \
+            --no-same-permissions
+          if [[ ! -d "$source_dir/public" ||
+            ! -f "$source_dir/package-bundle-manifest.json" ||
+            ! -f "$source_dir/package-bundle-manifest.json.asc" ]]; then
+            echo "Canonical bundle is missing its public tree, package manifest, or durable manifest signature" >&2
+            exit 1
+          fi
+          if find "$source_dir" -type l -print -quit | grep -q .; then
+            echo "Canonical bundle must not contain symbolic links" >&2
+            exit 1
+          fi
+
+          source_date_epoch=$(jq -r '.sourceDateEpoch' "$source_dir/package-bundle-manifest.json")
+          if [[ ! "$source_date_epoch" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Canonical bundle manifest has an invalid sourceDateEpoch" >&2
+            exit 1
+          fi
+
+          {
+            echo "source_dir=$source_dir/public"
+            echo "source_manifest=$source_dir/package-bundle-manifest.json"
+            echo "source_date_epoch=$source_date_epoch"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Verify checksums and extract Linux binaries
+        if: steps.target.outputs.refresh != 'true' && steps.target.outputs.validate_only != 'true'
+        shell: bash
+        env:
+          DOWNLOAD_DIR: ${{ steps.release.outputs.download-path }}
+        run: |
+          set -euo pipefail
+
+          archives=(
+            dotenc-linux-x64.tar.gz
+            dotenc-linux-arm64.tar.gz
+            dotenc-linux-x64-musl.tar.gz
+            dotenc-linux-arm64-musl.tar.gz
+          )
+          checksum_file="$RUNNER_TEMP/linux-SHA256SUMS"
+          : > "$checksum_file"
+
+          for archive in "${archives[@]}"; do
+            matches=$(awk -v file="$archive" '$2 == file { count += 1; line = $0 } END { if (count == 1) print line }' "$DOWNLOAD_DIR/SHA256SUMS")
+            if [[ -z "$matches" ]]; then
+              echo "SHA256SUMS does not contain exactly one entry for $archive" >&2
+              exit 1
+            fi
+            printf '%s\n' "$matches" >> "$checksum_file"
+          done
+
+          (
+            cd "$DOWNLOAD_DIR"
+            sha256sum --strict --check "$checksum_file"
+          )
+
+          mkdir -p cli/dist
+          for archive in "${archives[@]}"; do
+            binary=${archive%.tar.gz}
+            listing=$(tar --list --gzip --file "$DOWNLOAD_DIR/$archive")
+            verbose_listing=$(tar --list --verbose --gzip --file "$DOWNLOAD_DIR/$archive")
+            if [[ "$listing" != "$binary" || "${verbose_listing:0:1}" != "-" ]]; then
+              echo "$archive must contain exactly one regular file named $binary" >&2
+              exit 1
+            fi
+            tar --extract --gzip \
+              --file "$DOWNLOAD_DIR/$archive" \
+              --directory cli/dist \
+              --no-same-owner \
+              --no-same-permissions
+            if [[ ! -f "cli/dist/$binary" || -L "cli/dist/$binary" ]]; then
+              echo "$binary was not extracted as a regular file" >&2
+              exit 1
+            fi
+            chmod 0755 "cli/dist/$binary"
+          done
+
+      - name: Install pinned repository toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            apt-utils \
+            createrepo-c \
+            dpkg \
+            gnupg \
+            gpgv \
+            gzip \
+            openssl \
+            rpm
+
+          nfpm_version=$(bun -e 'console.log((await Bun.file("cli/packaging/tools.json").json()).nfpm)')
+          if [[ "$nfpm_version" != "2.47.0" ]]; then
+            echo "Unexpected nFPM version in cli/packaging/tools.json: $nfpm_version" >&2
+            exit 1
+          fi
+
+          case "$(uname -m)" in
+            x86_64)
+              nfpm_arch=x86_64
+              nfpm_sha256=0660ca602b2d2d2ae4781a06c692b3eeb9d437ffea05b831d76e41f4a3188783
+              ;;
+            aarch64)
+              nfpm_arch=arm64
+              nfpm_sha256=1c0f5f2999b9a974bfb04fdb0cc3306096de530ac5dbb25d739cc5f5219c919c
+              ;;
+            *)
+              echo "Unsupported repository builder architecture: $(uname -m)" >&2
+              exit 1
+              ;;
+          esac
+
+          nfpm_archive="nfpm_${nfpm_version}_Linux_${nfpm_arch}.tar.gz"
+          nfpm_url="https://github.com/goreleaser/nfpm/releases/download/v${nfpm_version}/${nfpm_archive}"
+          curl --fail --show-error --silent --location \
+            "$nfpm_url" \
+            --output "$RUNNER_TEMP/$nfpm_archive"
+          printf '%s  %s\n' "$nfpm_sha256" "$RUNNER_TEMP/$nfpm_archive" | sha256sum --check --strict
+
+          mkdir -p "$RUNNER_TEMP/nfpm-bin"
+          tar --extract --gzip \
+            --file "$RUNNER_TEMP/$nfpm_archive" \
+            --directory "$RUNNER_TEMP/nfpm-bin" \
+            nfpm
+          chmod 0755 "$RUNNER_TEMP/nfpm-bin/nfpm"
+          echo "$RUNNER_TEMP/nfpm-bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/nfpm-bin/nfpm" --version
+          aws --version
+
+      - name: Build and sign repository payload
+        id: repository
+        shell: bash
+        env:
+          PACKAGE_APT_GPG_PRIVATE_KEY_BASE64: ${{ secrets.PACKAGE_APT_GPG_PRIVATE_KEY_BASE64 }}
+          PACKAGE_APT_GPG_PASSPHRASE: ${{ secrets.PACKAGE_APT_GPG_PASSPHRASE }}
+          PACKAGE_RPM_GPG_PRIVATE_KEY_BASE64: ${{ secrets.PACKAGE_RPM_GPG_PRIVATE_KEY_BASE64 }}
+          PACKAGE_RPM_GPG_PASSPHRASE: ${{ secrets.PACKAGE_RPM_GPG_PASSPHRASE }}
+          PACKAGE_APK_PRIVATE_KEY_BASE64: ${{ secrets.PACKAGE_APK_PRIVATE_KEY_BASE64 }}
+          REFRESH: ${{ steps.target.outputs.refresh }}
+          PACKAGE_SOURCE_DIR: ${{ steps.package_source.outputs.source_dir }}
+          PACKAGE_SOURCE_MANIFEST: ${{ steps.package_source.outputs.source_manifest }}
+          SOURCE_DATE_EPOCH: ${{ steps.package_source.outputs.source_date_epoch || steps.target.outputs.source_date_epoch }}
+          PUBLICATION_EPOCH: ${{ steps.target.outputs.publication_epoch }}
+        run: |
+          set -euo pipefail
+
+          signing_dir=""
+          apk_key_dir=""
+          apk_bootstrap_container=""
+          apk_container=""
+          apk_tools_image=""
+          cleanup() {
+            if [[ -n "$apk_container" ]]; then
+              docker rm --force "$apk_container" >/dev/null 2>&1 || true
+            fi
+            if [[ -n "$apk_bootstrap_container" ]]; then
+              docker rm --force "$apk_bootstrap_container" >/dev/null 2>&1 || true
+            fi
+            if [[ -n "$apk_tools_image" ]]; then
+              docker image rm --force "$apk_tools_image" >/dev/null 2>&1 || true
+            fi
+            if [[ -n "$apk_key_dir" && "$apk_key_dir" == "$RUNNER_TEMP"/dotenc-apk-key.* ]]; then
+              find "$apk_key_dir" -type f -exec shred --force --remove {} + 2>/dev/null || true
+              rm -rf -- "$apk_key_dir"
+            fi
+            if [[ -n "$signing_dir" && "$signing_dir" == "$RUNNER_TEMP"/dotenc-signing.* ]]; then
+              for isolated_home in "$signing_dir/apt-gnupg" "$signing_dir/rpm-gnupg"; do
+                if [[ -d "$isolated_home" ]]; then
+                  gpgconf --homedir "$isolated_home" --kill gpg-agent >/dev/null 2>&1 || true
+                fi
+              done
+              find "$signing_dir" -type f -exec shred --force --remove {} + 2>/dev/null || true
+              rm -rf -- "$signing_dir"
+            fi
+          }
+          trap cleanup EXIT HUP INT TERM
+
+          if [[ -z "$PACKAGE_APT_GPG_PRIVATE_KEY_BASE64" ]]; then
+            echo "PACKAGE_APT_GPG_PRIVATE_KEY_BASE64 is not configured" >&2
+            exit 1
+          fi
+          if [[ -z "$PACKAGE_RPM_GPG_PRIVATE_KEY_BASE64" ]]; then
+            echo "PACKAGE_RPM_GPG_PRIVATE_KEY_BASE64 is not configured" >&2
+            exit 1
+          fi
+          if [[ -z "$PACKAGE_APT_GPG_PASSPHRASE" ]]; then
+            echo "PACKAGE_APT_GPG_PASSPHRASE is not configured" >&2
+            exit 1
+          fi
+          if [[ -z "$PACKAGE_RPM_GPG_PASSPHRASE" ]]; then
+            echo "PACKAGE_RPM_GPG_PASSPHRASE is not configured" >&2
+            exit 1
+          fi
+          if [[ -z "$PACKAGE_APK_PRIVATE_KEY_BASE64" ]]; then
+            echo "PACKAGE_APK_PRIVATE_KEY_BASE64 is not configured" >&2
+            exit 1
+          fi
+
+          signing_dir=$(mktemp -d "$RUNNER_TEMP/dotenc-signing.XXXXXX")
+          chmod 0700 "$signing_dir"
+          apt_gpg_private_key="$signing_dir/package-apt-gpg-private.asc"
+          rpm_gpg_private_key="$signing_dir/package-rpm-gpg-private.asc"
+          apk_private_key="$signing_dir/package-apk-private.pem"
+          apt_gpg_public_key="$signing_dir/dotenc-apt.asc"
+          rpm_gpg_public_key="$signing_dir/dotenc-rpm.asc"
+
+          printf '%s' "$PACKAGE_APT_GPG_PRIVATE_KEY_BASE64" | base64 --decode > "$apt_gpg_private_key"
+          printf '%s' "$PACKAGE_RPM_GPG_PRIVATE_KEY_BASE64" | base64 --decode > "$rpm_gpg_private_key"
+          printf '%s' "$PACKAGE_APK_PRIVATE_KEY_BASE64" | base64 --decode > "$apk_private_key"
+          unset PACKAGE_APT_GPG_PRIVATE_KEY_BASE64
+          unset PACKAGE_RPM_GPG_PRIVATE_KEY_BASE64
+          unset PACKAGE_APK_PRIVATE_KEY_BASE64
+          chmod 0600 "$apt_gpg_private_key" "$rpm_gpg_private_key" "$apk_private_key"
+          if [[ ! -s "$apt_gpg_private_key" || ! -s "$rpm_gpg_private_key" || ! -s "$apk_private_key" ]]; then
+            echo "A decoded signing key is empty" >&2
+            exit 1
+          fi
+
+          prepare_gpg_key() {
+            local label=$1
+            local private_key=$2
+            local public_key=$3
+            local isolated_home="$signing_dir/${label}-gnupg"
+            local public_listing="$signing_dir/${label}-public.colons"
+            local secret_listing="$signing_dir/${label}-secret.colons"
+            local minimum_expiry=$((PUBLICATION_EPOCH + 30 * 24 * 60 * 60))
+            local primary_fingerprint primary_validity primary_bits primary_algorithm primary_expires
+            local signing_fingerprint signing_validity signing_bits signing_algorithm signing_expires
+            local secret_primary_fingerprint secret_primary_storage
+            local secret_signing_fingerprint secret_signing_storage
+            local -a primary_records signing_records secret_primary_records secret_signing_records
+
+            mkdir -m 0700 "$isolated_home"
+            GNUPGHOME="$isolated_home" gpg --batch --quiet --import "$private_key"
+            GNUPGHOME="$isolated_home" gpg --batch --with-colons \
+              --with-fingerprint --with-subkey-fingerprint --list-keys > "$public_listing"
+            GNUPGHOME="$isolated_home" gpg --batch --with-colons \
+              --with-subkey-fingerprint --list-secret-keys > "$secret_listing"
+
+            mapfile -t primary_records < <(
+              awk -F: '
+                $1 == "pub" {
+                  validity = $2
+                  bits = $3
+                  algorithm = $4
+                  expires = ($7 == "" ? 0 : $7)
+                  primary = 1
+                  next
+                }
+                primary && $1 == "fpr" {
+                  print $10 ":" validity ":" bits ":" algorithm ":" expires
+                  primary = 0
+                }
+              ' "$public_listing"
+            )
+            mapfile -t signing_records < <(
+              awk -F: -v now="$PUBLICATION_EPOCH" '
+                $1 == "sub" {
+                  validity = $2
+                  bits = $3
+                  algorithm = $4
+                  expires = ($7 == "" ? 0 : $7)
+                  capabilities = tolower($12)
+                  signing = index(capabilities, "s") > 0 &&
+                    validity !~ /^[deir]$/ &&
+                    (expires == 0 || expires > now)
+                  next
+                }
+                signing && $1 == "fpr" {
+                  print $10 ":" validity ":" bits ":" algorithm ":" expires
+                  signing = 0
+                }
+              ' "$public_listing"
+            )
+            if [[ "${#primary_records[@]}" -ne 1 || "${#signing_records[@]}" -ne 1 ]]; then
+              echo "$label GPG certificate must contain one primary key and exactly one non-revoked, unexpired signing subkey" >&2
+              exit 1
+            fi
+
+            IFS=: read -r primary_fingerprint primary_validity primary_bits primary_algorithm primary_expires <<< "${primary_records[0]}"
+            IFS=: read -r signing_fingerprint signing_validity signing_bits signing_algorithm signing_expires <<< "${signing_records[0]}"
+            if [[ ! "$primary_fingerprint" =~ ^[0-9A-F]{40}$ || ! "$signing_fingerprint" =~ ^[0-9A-F]{40}$ ]]; then
+              echo "$label GPG fingerprints must be full 40-character uppercase hex values" >&2
+              exit 1
+            fi
+            if [[ "$primary_validity" =~ ^[deir]$ ]] ||
+              (( primary_expires != 0 && primary_expires < minimum_expiry )); then
+              echo "$label GPG primary key is revoked, disabled, invalid, or has less than 30 days remaining" >&2
+              exit 1
+            fi
+            if [[ "$signing_validity" =~ ^[deir]$ ]] ||
+              (( signing_expires != 0 && signing_expires < minimum_expiry )); then
+              echo "$label GPG signing subkey is revoked, disabled, invalid, or has less than 30 days remaining" >&2
+              exit 1
+            fi
+            if (( (primary_algorithm != 1 && primary_algorithm != 3) || primary_bits < 4096 )); then
+              echo "$label GPG primary key must be RSA-4096 or stronger" >&2
+              exit 1
+            fi
+            if (( (signing_algorithm != 1 && signing_algorithm != 3) || signing_bits < 4096 )); then
+              echo "$label GPG signing subkey must be RSA-4096 or stronger" >&2
+              exit 1
+            fi
+
+            mapfile -t secret_primary_records < <(
+              awk -F: '
+                $1 == "sec" { storage = $15; primary = 1; next }
+                primary && $1 == "fpr" {
+                  print $10 ":" storage
+                  primary = 0
+                }
+              ' "$secret_listing"
+            )
+            mapfile -t secret_signing_records < <(
+              awk -F: '
+                $1 == "ssb" {
+                  storage = $15
+                  available = storage != "#" && storage != ""
+                  next
+                }
+                available && $1 == "fpr" {
+                  print $10 ":" storage
+                  available = 0
+                }
+              ' "$secret_listing"
+            )
+            if [[ "${#secret_primary_records[@]}" -ne 1 || "${#secret_signing_records[@]}" -ne 1 ]]; then
+              echo "$label GPG secret must contain an offline primary stub and exactly one available signing subkey" >&2
+              exit 1
+            fi
+            IFS=: read -r secret_primary_fingerprint secret_primary_storage <<< "${secret_primary_records[0]}"
+            IFS=: read -r secret_signing_fingerprint secret_signing_storage <<< "${secret_signing_records[0]}"
+            if [[ "$secret_primary_fingerprint" != "$primary_fingerprint" || "$secret_primary_storage" != "#" ]]; then
+              echo "$label GPG primary secret material must remain offline; CI accepts only a dummy primary stub" >&2
+              exit 1
+            fi
+            if [[ "$secret_signing_fingerprint" != "$signing_fingerprint" || -z "$secret_signing_storage" || "$secret_signing_storage" == "#" ]]; then
+              echo "$label GPG secret does not contain exactly the declared usable signing subkey" >&2
+              exit 1
+            fi
+
+            GNUPGHOME="$isolated_home" gpg --batch --armor \
+              --export "$primary_fingerprint" > "$public_key"
+            printf -v "${label}_gpg_primary_fingerprint" '%s' "$primary_fingerprint"
+            printf -v "${label}_gpg_signing_fingerprint" '%s' "$signing_fingerprint"
+            printf -v "${label}_gnupg_home" '%s' "$isolated_home"
+          }
+
+          prepare_gpg_key apt "$apt_gpg_private_key" "$apt_gpg_public_key"
+          prepare_gpg_key rpm "$rpm_gpg_private_key" "$rpm_gpg_public_key"
+          if [[ "$apt_gpg_primary_fingerprint" == "$rpm_gpg_primary_fingerprint" || "$apt_gpg_signing_fingerprint" == "$rpm_gpg_signing_fingerprint" ]]; then
+            echo "APT and RPM must use different OpenPGP trust roots and signing subkeys" >&2
+            exit 1
+          fi
+          if grep -Eq 'ENCRYPTED PRIVATE KEY|Proc-Type: 4,ENCRYPTED' "$apk_private_key"; then
+            echo "APK private key must be an unencrypted RSA-4096 PEM key" >&2
+            exit 1
+          fi
+          openssl rsa --in "$apk_private_key" --check --noout >/dev/null 2>&1
+          apk_key_bits=$(openssl rsa --in "$apk_private_key" --text --noout 2>/dev/null |
+            sed -n 's/^Private-Key: (\([0-9][0-9]*\) bit.*/\1/p' | head -n 1)
+          if [[ "$apk_key_bits" != "4096" ]]; then
+            echo "APK private key must be exactly RSA-4096" >&2
+            exit 1
+          fi
+          apk_public_der="$signing_dir/apk-public.der"
+          openssl rsa --in "$apk_private_key" --pubout --outform DER \
+            --out "$apk_public_der" >/dev/null 2>&1
+          apk_key_fingerprint=$(sha256sum "$apk_public_der" | awk '{ print $1 }')
+          if [[ ! "$apk_key_fingerprint" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "Unable to derive the APK public-key fingerprint" >&2
+            exit 1
+          fi
+          apk_key_name="dotenc-$apk_key_fingerprint"
+          apk_public_key="$signing_dir/$apk_key_name.rsa.pub"
+          openssl rsa --in "$apk_private_key" --pubout --out "$apk_public_key" >/dev/null 2>&1
+          chmod 0644 "$apt_gpg_public_key" "$rpm_gpg_public_key" "$apk_public_key"
+
+          apt_gpg_passphrase_file=""
+          if [[ -n "$PACKAGE_APT_GPG_PASSPHRASE" ]]; then
+            apt_gpg_passphrase_file="$signing_dir/apt-gpg-passphrase"
+            printf '%s' "$PACKAGE_APT_GPG_PASSPHRASE" > "$apt_gpg_passphrase_file"
+            chmod 0600 "$apt_gpg_passphrase_file"
+          fi
+          rpm_gpg_passphrase_file=""
+          if [[ -n "$PACKAGE_RPM_GPG_PASSPHRASE" ]]; then
+            rpm_gpg_passphrase_file="$signing_dir/rpm-gpg-passphrase"
+            printf '%s' "$PACKAGE_RPM_GPG_PASSPHRASE" > "$rpm_gpg_passphrase_file"
+            chmod 0600 "$rpm_gpg_passphrase_file"
+          fi
+          unset PACKAGE_APT_GPG_PASSPHRASE
+          unset PACKAGE_RPM_GPG_PASSPHRASE
+
+          repository_parent=$(mktemp -d "$RUNNER_TEMP/dotenc-package-repository-parent.XXXXXX")
+          repository_dir="$repository_parent/repository"
+          apk_key_dir=$(mktemp -d "$RUNNER_TEMP/dotenc-apk-key.XXXXXX")
+          chmod 0700 "$apk_key_dir"
+          apk_container_private_key="$apk_key_dir/dotenc-apk.rsa"
+          install -m 0600 "$apk_private_key" "$apk_container_private_key"
+
+          apk_bootstrap_container="dotenc-apk-bootstrap-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          apk_tools_image="dotenc-apk-tools:${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker run --detach --rm \
+            --name "$apk_bootstrap_container" \
+            alpine:3.22.3@sha256:55ae5d250caebc548793f321534bc6a8ef1d116f334f18f4ada1b2daad3251b2 \
+            sleep infinity >/dev/null
+          docker exec "$apk_bootstrap_container" apk add --no-cache 'abuild=3.15.0-r1' >/dev/null
+          docker commit "$apk_bootstrap_container" "$apk_tools_image" >/dev/null
+          docker rm --force "$apk_bootstrap_container" >/dev/null
+          apk_bootstrap_container=""
+
+          apk_container="dotenc-apk-signer-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker run --detach --rm \
+            --network none \
+            --name "$apk_container" \
+            --volume "$repository_parent:$repository_parent" \
+            --volume "$apk_key_dir:$apk_key_dir:ro" \
+            --workdir "$repository_parent" \
+            "$apk_tools_image" \
+            sleep infinity >/dev/null
+
+          wrapper_dir="$RUNNER_TEMP/dotenc-apk-wrappers"
+          mkdir -p "$wrapper_dir"
+          ln -s "$GITHUB_WORKSPACE/scripts/alpine-package-tool.sh" "$wrapper_dir/apk"
+          ln -s "$GITHUB_WORKSPACE/scripts/alpine-package-tool.sh" "$wrapper_dir/abuild-gzsplit"
+          ln -s "$GITHUB_WORKSPACE/scripts/alpine-package-tool.sh" "$wrapper_dir/abuild-sign"
+          export PATH="$wrapper_dir:$PATH"
+          export DOTENC_APK_TOOLS_CONTAINER="$apk_container"
+          export DOTENC_APK_COMMAND="$wrapper_dir/apk"
+          export DOTENC_ABUILD_GZSPLIT_COMMAND="$wrapper_dir/abuild-gzsplit"
+          export DOTENC_ABUILD_SIGN_COMMAND="$wrapper_dir/abuild-sign"
+          unset GNUPGHOME
+          export DOTENC_APT_GNUPGHOME="$apt_gnupg_home"
+          export DOTENC_RPM_GNUPGHOME="$rpm_gnupg_home"
+          export NFPM_RPM_KEY_FILE="$rpm_gpg_private_key"
+          export NFPM_APK_KEY_FILE="$apk_container_private_key"
+          if [[ -n "$apt_gpg_passphrase_file" ]]; then
+            export DOTENC_APT_GPG_PASSPHRASE_FILE="$apt_gpg_passphrase_file"
+          fi
+          if [[ -n "$rpm_gpg_passphrase_file" ]]; then
+            export NFPM_RPM_PASSPHRASE_FILE="$rpm_gpg_passphrase_file"
+            export DOTENC_RPM_GPG_PASSPHRASE_FILE="$rpm_gpg_passphrase_file"
+          fi
+
+          if [[ "$REFRESH" == "true" ]]; then
+            if [[ -z "$PACKAGE_SOURCE_DIR" || -z "$PACKAGE_SOURCE_MANIFEST" ]]; then
+              echo "Refresh mode is missing its canonical package source" >&2
+              exit 1
+            fi
+            source_args=(
+              --package-source-dir "$PACKAGE_SOURCE_DIR"
+              --package-source-manifest "$PACKAGE_SOURCE_MANIFEST"
+            )
+          else
+            source_args=(--input-dir cli/dist)
+          fi
+          bun cli/packaging/repository.ts \
+            --version "$VERSION" \
+            "${source_args[@]}" \
+            --output-dir "$repository_dir" \
+            --apt-gpg-primary-fingerprint "$apt_gpg_primary_fingerprint" \
+            --apt-gpg-signing-fingerprint "$apt_gpg_signing_fingerprint" \
+            --apt-gpg-public-key "$apt_gpg_public_key" \
+            --rpm-gpg-primary-fingerprint "$rpm_gpg_primary_fingerprint" \
+            --rpm-gpg-signing-fingerprint "$rpm_gpg_signing_fingerprint" \
+            --rpm-gpg-public-key "$rpm_gpg_public_key" \
+            --apk-public-key "$apk_public_key" \
+            --apk-key-name "$apk_key_name" \
+            --base-url "$PACKAGES_BASE_URL" \
+            --source-date-epoch "$SOURCE_DATE_EPOCH" \
+            --publication-epoch "$PUBLICATION_EPOCH"
+
+          bun scripts/publish-linux-packages.ts \
+            --manifest "$repository_dir/publication-manifest.json" \
+            --root "$repository_dir" \
+            --validate-only
+          {
+            echo "repository_dir=$repository_dir"
+            echo "apk_key_name=$apk_key_name"
+            echo "apt_gpg_primary_fingerprint=$apt_gpg_primary_fingerprint"
+            echo "apt_gpg_signing_fingerprint=$apt_gpg_signing_fingerprint"
+            echo "rpm_gpg_primary_fingerprint=$rpm_gpg_primary_fingerprint"
+            echo "rpm_gpg_signing_fingerprint=$rpm_gpg_signing_fingerprint"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Verify signed roots and repository metadata freshness
+        shell: bash
+        env:
+          REPOSITORY_DIR: ${{ steps.repository.outputs.repository_dir }}
+          PUBLICATION_EPOCH: ${{ steps.target.outputs.publication_epoch }}
+          RELEASE_PUBLISHED_AT: ${{ steps.target.outputs.release_published_at }}
+          APT_SIGNING_FINGERPRINT: ${{ steps.repository.outputs.apt_gpg_signing_fingerprint }}
+          RPM_SIGNING_FINGERPRINT: ${{ steps.repository.outputs.rpm_gpg_signing_fingerprint }}
+        run: |
+          set -euo pipefail
+
+          verification_dir=$(mktemp -d "$RUNNER_TEMP/dotenc-repository-verification.XXXXXX")
+          cleanup_verification() {
+            if [[ "$verification_dir" == "$RUNNER_TEMP"/dotenc-repository-verification.* ]]; then
+              rm -rf -- "$verification_dir"
+            fi
+          }
+          trap cleanup_verification EXIT HUP INT TERM
+          mkdir -m 0700 "$verification_dir/gnupg"
+
+          GNUPGHOME="$verification_dir/gnupg" gpg --batch --yes --dearmor \
+            --output "$verification_dir/apt.gpg" \
+            "$REPOSITORY_DIR/public/keys/dotenc-apt.asc"
+          apt_status=$(gpgv \
+            --status-fd 1 \
+            --keyring "$verification_dir/apt.gpg" \
+            --output "$verification_dir/apt-release" \
+            "$REPOSITORY_DIR/public/apt/dists/stable/InRelease" \
+            2>"$verification_dir/apt-gpgv.log")
+          apt_valid_fingerprint=$(awk '$2 == "VALIDSIG" { print $3 }' <<<"$apt_status")
+          if [[ "$apt_valid_fingerprint" != "$APT_SIGNING_FINGERPRINT" ]]; then
+            echo "APT InRelease was not signed by the selected APT signing subkey" >&2
+            exit 1
+          fi
+
+          GNUPGHOME="$verification_dir/gnupg" gpg --batch --yes --dearmor \
+            --output "$verification_dir/rpm.gpg" \
+            "$REPOSITORY_DIR/public/keys/dotenc-rpm.asc"
+          for rpm_arch in x86_64 aarch64; do
+            rpm_status=$(gpgv \
+              --status-fd 1 \
+              --keyring "$verification_dir/rpm.gpg" \
+              "$REPOSITORY_DIR/public/rpm/$rpm_arch/repodata/repomd.xml.asc" \
+              "$REPOSITORY_DIR/public/rpm/$rpm_arch/repodata/repomd.xml" \
+              2>"$verification_dir/rpm-$rpm_arch-gpgv.log")
+            rpm_valid_fingerprint=$(awk '$2 == "VALIDSIG" { print $3 }' <<<"$rpm_status")
+            if [[ "$rpm_valid_fingerprint" != "$RPM_SIGNING_FINGERPRINT" ]]; then
+              echo "RPM repomd.xml for $rpm_arch was not signed by the selected RPM signing subkey" >&2
+              exit 1
+            fi
+          done
+
+          generated_at=$(jq -r '.generatedAt' "$REPOSITORY_DIR/publication-manifest.json")
+          generated_epoch=$(date --utc --date "$generated_at" +%s)
+          if [[ "$generated_epoch" != "$PUBLICATION_EPOCH" ]]; then
+            echo "Manifest generatedAt does not match the publication epoch" >&2
+            exit 1
+          fi
+
+          now_epoch=$(date --utc +%s)
+          metadata_age=$((now_epoch - generated_epoch))
+          if (( metadata_age < -300 || metadata_age > 691200 )); then
+            echo "Repository metadata publication date is outside the allowed eight-day freshness window" >&2
+            exit 1
+          fi
+
+          valid_until=$(awk -F': ' '$1 == "Valid-Until" { print $2; exit }' "$verification_dir/apt-release")
+          if [[ -z "$valid_until" ]]; then
+            echo "APT Release metadata is missing Valid-Until" >&2
+            exit 1
+          fi
+          valid_until_epoch=$(date --utc --date "$valid_until" +%s)
+          if (( valid_until_epoch < now_epoch + 518400 )); then
+            echo "APT Valid-Until must leave at least six days for clients" >&2
+            exit 1
+          fi
+
+          release_epoch=$(date --utc --date "$RELEASE_PUBLISHED_AT" +%s)
+          release_age_days=$(((now_epoch - release_epoch) / 86400))
+          {
+            echo "### Linux repository freshness"
+            echo
+            echo "- Metadata generated: \`$generated_at\`"
+            echo "- APT Valid-Until: \`$valid_until\`"
+            echo "- Underlying release age: ${release_age_days} day(s)"
+            echo "- RPM and APK metadata have no native expiry; the gated weekly refresh is their freshness monitor."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=RPM/APK metadata freshness::RPM and APK metadata do not expire; weekly refresh health is the freshness control."
+
+      - name: Prepare canonical signed package bundle
+        id: canonical_bundle
+        if: steps.target.outputs.refresh != 'true' && steps.target.outputs.validate_only != 'true'
+        shell: bash
+        env:
+          REPOSITORY_DIR: ${{ steps.repository.outputs.repository_dir }}
+          BUNDLE_NAME: ${{ steps.target.outputs.bundle_name }}
+          CHECKSUM_NAME: ${{ steps.target.outputs.checksum_name }}
+          SOURCE_DATE_EPOCH: ${{ steps.package_source.outputs.source_date_epoch || steps.target.outputs.source_date_epoch }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! -f "$REPOSITORY_DIR/package-bundle-manifest.json" ||
+            ! -f "$REPOSITORY_DIR/package-bundle-manifest.json.asc" ]]; then
+            echo "Builder did not produce the canonical package manifest and its detached APT signature" >&2
+            exit 1
+          fi
+
+          package_paths=(
+            "apt/pool/main/d/dotenc/dotenc_${VERSION}-1_amd64.deb"
+            "apt/pool/main/d/dotenc/dotenc_${VERSION}-1_arm64.deb"
+            "rpm/x86_64/dotenc-${VERSION}-1.x86_64.rpm"
+            "rpm/aarch64/dotenc-${VERSION}-1.aarch64.rpm"
+            "apk/stable/main/x86_64/dotenc-${VERSION}-r0.apk"
+            "apk/stable/main/aarch64/dotenc-${VERSION}-r0.apk"
+          )
+          staging_dir="$RUNNER_TEMP/dotenc-package-bundle-staging-$VERSION"
+          bundle_dir="$RUNNER_TEMP/dotenc-package-bundle-assets-$VERSION"
+          mkdir -p "$staging_dir/public" "$bundle_dir"
+          for package_path in "${package_paths[@]}"; do
+            source="$REPOSITORY_DIR/public/$package_path"
+            if [[ ! -f "$source" || -L "$source" ]]; then
+              echo "Missing canonical signed package: $package_path" >&2
+              exit 1
+            fi
+            install -D -m 0644 "$source" "$staging_dir/public/$package_path"
+          done
+          install -m 0644 \
+            "$REPOSITORY_DIR/package-bundle-manifest.json" \
+            "$staging_dir/package-bundle-manifest.json"
+          install -m 0644 \
+            "$REPOSITORY_DIR/package-bundle-manifest.json.asc" \
+            "$staging_dir/package-bundle-manifest.json.asc"
+
+          tar --create \
+            --directory "$staging_dir" \
+            --sort=name \
+            --mtime="@$SOURCE_DATE_EPOCH" \
+            --owner=0 \
+            --group=0 \
+            --numeric-owner \
+            --format=ustar \
+            . | gzip --no-name > "$bundle_dir/$BUNDLE_NAME"
+          bundle_sha256=$(sha256sum "$bundle_dir/$BUNDLE_NAME" | awk '{ print $1 }')
+          printf '%s  %s\n' "$bundle_sha256" "$BUNDLE_NAME" > "$bundle_dir/$CHECKSUM_NAME"
+          echo "bundle_dir=$bundle_dir" >> "$GITHUB_OUTPUT"
+
+      - name: Setup QEMU for arm64 package tests
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+        with:
+          platforms: arm64
+          image: tonistiigi/binfmt:qemu-v9.2.2@sha256:1b804311fe87047a4c96d38b4b3ef6f62fca8cd125265917a9e3dc3c996c39e6
+
+      - name: Install from trusted APT, RPM, and APK repositories
+        shell: bash
+        env:
+          REPOSITORY_DIR: ${{ steps.repository.outputs.repository_dir }}
+          APK_KEY_NAME: ${{ steps.repository.outputs.apk_key_name }}
+          RPM_SIGNING_FINGERPRINT: ${{ steps.repository.outputs.rpm_gpg_signing_fingerprint }}
+        run: |
+          set -euo pipefail
+
+          debian_image="debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818"
+          almalinux_image="almalinux:9@sha256:d2515c769e7b73f95c4fde38c0a505336ff38f14990c0b7253b77060a049a743"
+          alpine_image="alpine:3.22.3@sha256:55ae5d250caebc548793f321534bc6a8ef1d116f334f18f4ada1b2daad3251b2"
+          platforms=(linux/amd64 linux/arm64)
+          rpm_arches=(x86_64 aarch64)
+          # AlmaLinux 9 rpmkeys renders the signing key ID as the low 32 bits.
+          rpm_key_id=${RPM_SIGNING_FINGERPRINT: -8}
+          rpm_key_id=${rpm_key_id,,}
+          if [[ ! "$rpm_key_id" =~ ^[0-9a-f]{8}$ ]]; then
+            echo "Unable to derive AlmaLinux rpmkeys' 8-hex signing key ID" >&2
+            exit 1
+          fi
+
+          for index in 0 1; do
+            platform=${platforms[$index]}
+            rpm_arch=${rpm_arches[$index]}
+
+            docker run --rm --platform "$platform" \
+              --volume "$REPOSITORY_DIR/public:/repo:ro" \
+              --env EXPECTED_VERSION="$VERSION" \
+              "$debian_image" \
+              sh -euc '
+                install -D -m 0644 /repo/keys/dotenc-apt.asc /usr/share/keyrings/dotenc-apt.asc
+                printf "%s\n" \
+                  "deb [signed-by=/usr/share/keyrings/dotenc-apt.asc] file:/repo/apt stable main" \
+                  > /etc/apt/sources.list.d/dotenc.list
+                apt-get update >/dev/null
+                apt-get install --yes dotenc >/dev/null
+                test "$(dotenc --version)" = "$EXPECTED_VERSION"
+                dotenc --help >/dev/null
+              '
+
+            docker run --rm --platform "$platform" \
+              --volume "$REPOSITORY_DIR/public:/repo:ro" \
+              --env EXPECTED_VERSION="$VERSION" \
+              --env RPM_ARCH="$rpm_arch" \
+              --env RPM_KEY_ID="$rpm_key_id" \
+              "$almalinux_image" \
+              sh -euc '
+                rpm --import /repo/keys/dotenc-rpm.asc
+                signature=$(rpmkeys --checksig --verbose "/repo/rpm/$RPM_ARCH/dotenc-$EXPECTED_VERSION-1.$RPM_ARCH.rpm")
+                printf "%s\n" "$signature" | tr "[:upper:]" "[:lower:]" | grep -F "key id $RPM_KEY_ID: ok" >/dev/null
+                printf "%s\n" \
+                  "[dotenc]" \
+                  "name=dotenc" \
+                  "baseurl=file:///repo/rpm/$RPM_ARCH" \
+                  "enabled=1" \
+                  "gpgcheck=1" \
+                  "repo_gpgcheck=1" \
+                  "gpgkey=file:///repo/keys/dotenc-rpm.asc" \
+                  > /etc/yum.repos.d/dotenc.repo
+                dnf install --assumeyes dotenc >/dev/null
+                test "$(dotenc --version)" = "$EXPECTED_VERSION"
+                dotenc --help >/dev/null
+              '
+
+            docker run --rm --platform "$platform" \
+              --volume "$REPOSITORY_DIR/public:/repo:ro" \
+              --env APK_KEY_NAME="$APK_KEY_NAME" \
+              --env EXPECTED_VERSION="$VERSION" \
+              "$alpine_image" \
+              sh -euc '
+                install -m 0644 "/repo/keys/$APK_KEY_NAME.rsa.pub" "/etc/apk/keys/$APK_KEY_NAME.rsa.pub"
+                printf "%s\n" "file:///repo/apk/stable/main" >> /etc/apk/repositories
+                apk update >/dev/null
+                apk add --no-cache dotenc >/dev/null
+                test "$(dotenc --version)" = "$EXPECTED_VERSION"
+                dotenc --help >/dev/null
+              '
+          done
+
+      - name: Record non-publishing validation result
+        if: steps.target.outputs.validate_only == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          {
+            echo "### Production signing-key validation passed"
+            echo
+            echo "- Imported and policy-checked the APT, RPM, and APK production keys."
+            echo "- Built and signed all x86_64/amd64 and arm64 packages and repository metadata."
+            echo "- Verified repository signatures and installed each package from clean local repositories."
+            echo "- Did not upload GitHub release assets or artifacts, write to R2, purge caches, or query the public package edge."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload canonical signed package bundle to the GitHub release
+        if: steps.target.outputs.refresh != 'true' && steps.target.outputs.validate_only != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUNDLE_DIR: ${{ steps.canonical_bundle.outputs.bundle_dir }}
+          BUNDLE_NAME: ${{ steps.target.outputs.bundle_name }}
+          CHECKSUM_NAME: ${{ steps.target.outputs.checksum_name }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$BUNDLE_DIR" || ! -f "$BUNDLE_DIR/$BUNDLE_NAME" || ! -f "$BUNDLE_DIR/$CHECKSUM_NAME" ]]; then
+            echo "Canonical bundle preparation did not complete" >&2
+            exit 1
+          fi
+          mapfile -t existing_assets < <(
+            gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name'
+          )
+          for asset in "${existing_assets[@]}"; do
+            if [[ "$asset" == "$BUNDLE_NAME" || "$asset" == "$CHECKSUM_NAME" ]]; then
+              echo "Refusing to overwrite existing canonical release asset $asset" >&2
+              exit 1
+            fi
+          done
+          gh release upload "v$VERSION" \
+            "$BUNDLE_DIR/$BUNDLE_NAME" \
+            "$BUNDLE_DIR/$CHECKSUM_NAME" \
+            --repo "$GITHUB_REPOSITORY"
+
+          verification_dir="$RUNNER_TEMP/dotenc-package-bundle-verification-$VERSION"
+          mkdir -p "$verification_dir"
+          for asset in "$BUNDLE_NAME" "$CHECKSUM_NAME"; do
+            gh release download "v$VERSION" \
+              --repo "$GITHUB_REPOSITORY" \
+              --dir "$verification_dir" \
+              --pattern "$asset"
+          done
+          (
+            cd "$verification_dir"
+            sha256sum --check --strict "$CHECKSUM_NAME"
+          )
+
+      - name: Archive the exact repository publication
+        if: steps.target.outputs.validate_only != 'true'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: linux-packages-v${{ steps.target.outputs.version }}-attempt-${{ github.run_attempt }}
+          path: |
+            ${{ steps.repository.outputs.repository_dir }}/public
+            ${{ steps.repository.outputs.repository_dir }}/publication-manifest.json
+            ${{ steps.repository.outputs.repository_dir }}/package-bundle-manifest.json
+            ${{ steps.repository.outputs.repository_dir }}/package-bundle-manifest.json.asc
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 90
+
+      - name: Publish repository objects to R2
+        if: steps.target.outputs.validate_only != 'true'
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          CLOUDFLARE_CACHE_PURGE_TOKEN: ${{ secrets.CLOUDFLARE_CACHE_PURGE_TOKEN }}
+          REPOSITORY_DIR: ${{ steps.repository.outputs.repository_dir }}
+        run: |
+          set -euo pipefail
+
+          bun scripts/publish-linux-packages.ts \
+            --manifest "$REPOSITORY_DIR/publication-manifest.json" \
+            --root "$REPOSITORY_DIR"
+
+      - name: Verify the public edge and signed repository roots
+        if: steps.target.outputs.validate_only != 'true'
+        shell: bash
+        env:
+          REPOSITORY_DIR: ${{ steps.repository.outputs.repository_dir }}
+          APT_PRIMARY_FINGERPRINT: ${{ steps.repository.outputs.apt_gpg_primary_fingerprint }}
+          APT_SIGNING_FINGERPRINT: ${{ steps.repository.outputs.apt_gpg_signing_fingerprint }}
+          RPM_PRIMARY_FINGERPRINT: ${{ steps.repository.outputs.rpm_gpg_primary_fingerprint }}
+          RPM_SIGNING_FINGERPRINT: ${{ steps.repository.outputs.rpm_gpg_signing_fingerprint }}
+          APK_KEY_NAME: ${{ steps.repository.outputs.apk_key_name }}
+        run: |
+          set -euo pipefail
+
+          scripts/verify-packages-edge.sh "$PACKAGES_BASE_URL"
+
+          edge_dir=$(mktemp -d "$RUNNER_TEMP/dotenc-package-edge.XXXXXX")
+          cleanup_edge() {
+            if [[ "$edge_dir" == "$RUNNER_TEMP"/dotenc-package-edge.* ]]; then
+              rm -rf -- "$edge_dir"
+            fi
+          }
+          trap cleanup_edge EXIT HUP INT TERM
+
+          fetch_exact() {
+            local object_path=$1
+            local source="$REPOSITORY_DIR/public/$object_path"
+            local destination="$edge_dir/$object_path"
+            local expected_sha256
+            local actual_sha256=""
+
+            if [[ ! -f "$source" || -L "$source" ]]; then
+              echo "Local edge-verification source is missing: $object_path" >&2
+              exit 1
+            fi
+            expected_sha256=$(sha256sum "$source" | awk '{ print $1 }')
+            mkdir -p "$(dirname "$destination")"
+            for attempt in 1 2 3 4 5; do
+              if curl --fail --show-error --silent \
+                --proto '=https' \
+                --tlsv1.2 \
+                --retry 3 \
+                --retry-all-errors \
+                "$PACKAGES_BASE_URL/$object_path" \
+                --output "$destination"; then
+                actual_sha256=$(sha256sum "$destination" | awk '{ print $1 }')
+                if [[ "$actual_sha256" == "$expected_sha256" ]]; then
+                  return
+                fi
+              fi
+              sleep "$attempt"
+            done
+            echo "Public edge bytes for $object_path do not match this publication (expected $expected_sha256, got ${actual_sha256:-unavailable})" >&2
+            exit 1
+          }
+
+          edge_objects=(
+            keys/dotenc-apt.asc
+            keys/dotenc-rpm.asc
+            "keys/$APK_KEY_NAME.rsa.pub"
+            apt/dotenc.sources
+            rpm/dotenc.repo
+            apk/dotenc.repositories
+            "apt/pool/main/d/dotenc/dotenc_${VERSION}-1_amd64.deb"
+            apt/dists/stable/InRelease
+            rpm/x86_64/repodata/repomd.xml
+            rpm/x86_64/repodata/repomd.xml.asc
+            rpm/aarch64/repodata/repomd.xml
+            rpm/aarch64/repodata/repomd.xml.asc
+            apk/stable/main/x86_64/APKINDEX.tar.gz
+            apk/stable/main/aarch64/APKINDEX.tar.gz
+          )
+          for object_path in "${edge_objects[@]}"; do
+            fetch_exact "$object_path"
+          done
+
+          assert_cache_control() {
+            local object_path=$1
+            local expected=$2
+            local header_file="$edge_dir/cache-control-${object_path//\//_}.headers"
+            local status cache_control cf_cache_status
+
+            for attempt in 1 2; do
+              status=$(curl --fail --show-error --silent \
+                --proto '=https' \
+                --tlsv1.2 \
+                --dump-header "$header_file" \
+                --output /dev/null \
+                --write-out '%{http_code}' \
+                "$PACKAGES_BASE_URL/$object_path")
+              cache_control=$(tr -d '\r' < "$header_file" |
+                awk -F: 'tolower($1) == "cache-control" {
+                  value = $0
+                  sub(/^[^:]*:[[:space:]]*/, "", value)
+                } END { print value }')
+              cf_cache_status=$(tr -d '\r' < "$header_file" |
+                awk -F: 'tolower($1) == "cf-cache-status" {
+                  value = $0
+                  sub(/^[^:]*:[[:space:]]*/, "", value)
+                } END { print toupper(value) }')
+              if [[ "$status" == "200" && "$cache_control" == "$expected" && "$cf_cache_status" == "HIT" ]]; then
+                return
+              fi
+              sleep "$attempt"
+            done
+            echo "Cache contract failed for $object_path: HTTP ${status:-unknown}, Cache-Control ${cache_control:-missing}, CF-Cache-Status ${cf_cache_status:-missing}" >&2
+            exit 1
+          }
+
+          immutable_cache_control="public, max-age=31536000, s-maxage=31536000, immutable, no-transform"
+          mutable_cache_control="public, max-age=60, s-maxage=300, must-revalidate, no-transform"
+
+          config_files=(
+            "$edge_dir/apt/dotenc.sources"
+            "$edge_dir/rpm/dotenc.repo"
+            "$edge_dir/apk/dotenc.repositories"
+          )
+          mapfile -t config_key_urls < <(
+            grep -hEo 'https://[^[:space:]]+/keys/[A-Za-z0-9._-]+' "${config_files[@]}" |
+              sort -u
+          )
+          if [[ "${#config_key_urls[@]}" -ne 3 ]]; then
+            echo "Generated client configs must reference exactly three immutable signing-key URLs" >&2
+            exit 1
+          fi
+          for key_url in "${config_key_urls[@]}"; do
+            if [[ "$key_url" != "$PACKAGES_BASE_URL/keys/"* ]]; then
+              echo "Generated client config contains an off-origin signing-key URL: $key_url" >&2
+              exit 1
+            fi
+            key_path=${key_url#"$PACKAGES_BASE_URL/"}
+            if [[ "$key_path" =~ ^keys/dotenc-apt-${APT_PRIMARY_FINGERPRINT}-[0-9a-f]{64}\.asc$ ]] ||
+              [[ "$key_path" =~ ^keys/dotenc-rpm-${RPM_PRIMARY_FINGERPRINT}-[0-9a-f]{64}\.asc$ ]] ||
+              [[ "$key_path" == "keys/$APK_KEY_NAME.rsa.pub" ]]; then
+              fetch_exact "$key_path"
+              assert_cache_control "$key_path" "$immutable_cache_control"
+            else
+              echo "Generated client config contains an unexpected signing-key path: $key_path" >&2
+              exit 1
+            fi
+          done
+
+          package_probe_path="apt/pool/main/d/dotenc/dotenc_${VERSION}-1_amd64.deb"
+          assert_cache_control "$package_probe_path" "$immutable_cache_control"
+          mutable_roots=(
+            keys/dotenc-apt.asc
+            keys/dotenc-rpm.asc
+            apt/dotenc.sources
+            rpm/dotenc.repo
+            apk/dotenc.repositories
+            apt/dists/stable/InRelease
+            rpm/x86_64/repodata/repomd.xml
+            rpm/x86_64/repodata/repomd.xml.asc
+            rpm/aarch64/repodata/repomd.xml
+            rpm/aarch64/repodata/repomd.xml.asc
+            apk/stable/main/x86_64/APKINDEX.tar.gz
+            apk/stable/main/aarch64/APKINDEX.tar.gz
+          )
+          for object_path in "${mutable_roots[@]}"; do
+            assert_cache_control "$object_path" "$mutable_cache_control"
+          done
+
+          range_headers="$edge_dir/package-range.headers"
+          range_body="$edge_dir/package-range.body"
+          range_status=$(curl --fail --show-error --silent \
+            --proto '=https' \
+            --tlsv1.2 \
+            --range 0-0 \
+            --dump-header "$range_headers" \
+            --output "$range_body" \
+            --write-out '%{http_code}' \
+            "$PACKAGES_BASE_URL/$package_probe_path")
+          if [[ "$range_status" != "206" || "$(stat --format=%s "$range_body")" != "1" ]]; then
+            echo "Public package Range request did not return exactly one byte with HTTP 206" >&2
+            exit 1
+          fi
+          if ! tr -d '\r' < "$range_headers" |
+            grep -Eiq '^content-range:[[:space:]]*bytes 0-0/[1-9][0-9]*$'; then
+            echo "Public package Range response is missing a valid Content-Range header" >&2
+            exit 1
+          fi
+
+          mkdir -m 0700 "$edge_dir/gnupg"
+          GNUPGHOME="$edge_dir/gnupg" gpg --batch --yes --dearmor \
+            --output "$edge_dir/apt.gpg" \
+            "$edge_dir/keys/dotenc-apt.asc"
+          apt_status=$(gpgv \
+            --status-fd 1 \
+            --keyring "$edge_dir/apt.gpg" \
+            --output /dev/null \
+            "$edge_dir/apt/dists/stable/InRelease" \
+            2>"$edge_dir/apt-gpgv.log")
+          apt_valid_signing=$(awk '$2 == "VALIDSIG" { print $3 }' <<<"$apt_status")
+          apt_valid_primary=$(awk '$2 == "VALIDSIG" { print $NF }' <<<"$apt_status")
+          if [[ "$apt_valid_signing" != "$APT_SIGNING_FINGERPRINT" || "$apt_valid_primary" != "$APT_PRIMARY_FINGERPRINT" ]]; then
+            echo "Public APT InRelease has the wrong signing identity" >&2
+            exit 1
+          fi
+
+          GNUPGHOME="$edge_dir/gnupg" gpg --batch --yes --dearmor \
+            --output "$edge_dir/rpm.gpg" \
+            "$edge_dir/keys/dotenc-rpm.asc"
+          for rpm_arch in x86_64 aarch64; do
+            rpm_status=$(gpgv \
+              --status-fd 1 \
+              --keyring "$edge_dir/rpm.gpg" \
+              "$edge_dir/rpm/$rpm_arch/repodata/repomd.xml.asc" \
+              "$edge_dir/rpm/$rpm_arch/repodata/repomd.xml" \
+              2>"$edge_dir/rpm-$rpm_arch-gpgv.log")
+            rpm_valid_signing=$(awk '$2 == "VALIDSIG" { print $3 }' <<<"$rpm_status")
+            rpm_valid_primary=$(awk '$2 == "VALIDSIG" { print $NF }' <<<"$rpm_status")
+            if [[ "$rpm_valid_signing" != "$RPM_SIGNING_FINGERPRINT" || "$rpm_valid_primary" != "$RPM_PRIMARY_FINGERPRINT" ]]; then
+              echo "Public RPM root for $rpm_arch has the wrong signing identity" >&2
+              exit 1
+            fi
+          done
+
+          mkdir -m 0700 "$edge_dir/apk-keys"
+          install -m 0644 \
+            "$edge_dir/keys/$APK_KEY_NAME.rsa.pub" \
+            "$edge_dir/apk-keys/$APK_KEY_NAME.rsa.pub"
+          docker run --rm \
+            --network none \
+            --volume "$edge_dir:/edge:ro" \
+            alpine:3.22.3@sha256:55ae5d250caebc548793f321534bc6a8ef1d116f334f18f4ada1b2daad3251b2 \
+            apk --keys-dir /edge/apk-keys verify \
+            /edge/apk/stable/main/x86_64/APKINDEX.tar.gz \
+            /edge/apk/stable/main/aarch64/APKINDEX.tar.gz

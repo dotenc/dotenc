@@ -2,7 +2,17 @@ import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
 import { EventEmitter } from "node:events"
 
 const detectInstallMethodMock = mock(
-	() => "homebrew" as "homebrew" | "scoop" | "npm" | "binary" | "unknown",
+	() =>
+		"homebrew" as
+			| "homebrew"
+			| "scoop"
+			| "npm"
+			| "apt"
+			| "rpm"
+			| "apk"
+			| "aur"
+			| "binary"
+			| "unknown",
 )
 const spawnMock = mock(() => {
 	throw new Error("spawn should not be called")
@@ -113,6 +123,64 @@ describe("updateCommand", () => {
 		logSpy.mockRestore()
 	})
 
+	test.each([
+		["apt", "sudo apt update && sudo apt install --only-upgrade dotenc"],
+		["apk", "sudo apk upgrade dotenc"],
+	] as const)("prints the %s update command without spawning a process", async (method, expectedCommand) => {
+		detectInstallMethodMock.mockReturnValue(method)
+
+		const logSpy = spyOn(console, "log").mockImplementation(() => {})
+		await updateCommand()
+
+		expect(spawnMock).not.toHaveBeenCalled()
+		expect(
+			logSpy.mock.calls.some((call) =>
+				String(call[0]).includes(expectedCommand),
+			),
+		).toBe(true)
+		logSpy.mockRestore()
+	})
+
+	test("prints both DNF and YUM commands for an RPM install", async () => {
+		detectInstallMethodMock.mockReturnValue("rpm")
+
+		const logSpy = spyOn(console, "log").mockImplementation(() => {})
+		await updateCommand()
+
+		expect(spawnMock).not.toHaveBeenCalled()
+		expect(
+			logSpy.mock.calls.some((call) =>
+				String(call[0]).includes("sudo dnf upgrade dotenc"),
+			),
+		).toBe(true)
+		expect(
+			logSpy.mock.calls.some((call) =>
+				String(call[0]).includes("sudo yum update dotenc"),
+			),
+		).toBe(true)
+		logSpy.mockRestore()
+	})
+
+	test("prints yay and paru commands for an AUR install", async () => {
+		detectInstallMethodMock.mockReturnValue("aur")
+
+		const logSpy = spyOn(console, "log").mockImplementation(() => {})
+		await updateCommand()
+
+		expect(spawnMock).not.toHaveBeenCalled()
+		expect(
+			logSpy.mock.calls.some((call) =>
+				String(call[0]).includes("yay -Syu dotenc-bin"),
+			),
+		).toBe(true)
+		expect(
+			logSpy.mock.calls.some((call) =>
+				String(call[0]).includes("paru -Syu dotenc-bin"),
+			),
+		).toBe(true)
+		logSpy.mockRestore()
+	})
+
 	test("prints release URL for standalone binary", async () => {
 		detectInstallMethodMock.mockReturnValue("binary")
 
@@ -146,6 +214,11 @@ describe("updateCommand", () => {
 		expect(
 			logSpy.mock.calls.some((call) =>
 				String(call[0]).includes("brew update && brew upgrade dotenc"),
+			),
+		).toBe(true)
+		expect(
+			logSpy.mock.calls.some((call) =>
+				String(call[0]).includes("yay -Syu dotenc-bin"),
 			),
 		).toBe(true)
 		logSpy.mockRestore()

@@ -57,6 +57,30 @@ describe("maybeNotifyAboutUpdate", () => {
 		expect(fetchCalls).toBe(0)
 	})
 
+	test.each([
+		"apt",
+		"rpm",
+		"apk",
+		"aur",
+	] as const)("does not check for updates for %s system package installs", async (installMethod) => {
+		let fetchCalls = 0
+
+		await maybeNotifyAboutUpdate({
+			args: ["dev", "echo"],
+			currentVersion: "0.5.0",
+			detectInstallMethod: () => installMethod,
+			getHomeConfig: async () => ({}),
+			setHomeConfig: async () => {},
+			fetchLatestVersion: async () => {
+				fetchCalls += 1
+				return "0.6.0"
+			},
+			log: () => {},
+		})
+
+		expect(fetchCalls).toBe(0)
+	})
+
 	test("skips checks for mockupdate command", async () => {
 		let fetchCalls = 0
 

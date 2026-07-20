@@ -1,0 +1,16 @@
+{
+	"nfpm": "2.47.0",
+	"requiredCommands": [
+		"abuild-gzsplit",
+		"abuild-sign",
+		"apk",
+		"apt-ftparchive",
+		"createrepo_c",
+		"dpkg-deb",
+		"gpg",
+		"gpgv",
+		"gzip",
+		"rpm",
+		"rpmkeys"
+	]
+}
