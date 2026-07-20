@@ -36,6 +36,108 @@ Done.
 
 ## Installation
 
+### APT (Debian / Ubuntu)
+
+```bash
+(
+set -e
+sudo apt update
+sudo apt install -y ca-certificates curl
+sudo install -d -m 0755 /etc/apt/keyrings
+apt_key_file="$(mktemp)"
+trap 'rm -f "$apt_key_file"' 0
+curl -fsSL \
+  https://packages.dotenc.org/keys/dotenc-apt-7BEFECEEA5921A0C3C431CFAA1A964033C1E2A5B-108333389e16fc3dbdb09938308639951ea6df5fb8f482eba562cafbc353c58f.asc \
+  -o "$apt_key_file"
+printf '%s  %s\n' \
+  108333389e16fc3dbdb09938308639951ea6df5fb8f482eba562cafbc353c58f \
+  "$apt_key_file" | sha256sum -c -
+sudo install -m 0644 "$apt_key_file" /etc/apt/keyrings/dotenc.asc
+printf '%s\n' \
+  'Types: deb' \
+  'URIs: https://packages.dotenc.org/apt' \
+  'Suites: stable' \
+  'Components: main' \
+  'Signed-By: /etc/apt/keyrings/dotenc.asc' \
+  | sudo tee /etc/apt/sources.list.d/dotenc.sources >/dev/null
+sudo chmod 0644 /etc/apt/sources.list.d/dotenc.sources
+rm -f "$apt_key_file"
+trap - 0
+sudo apt update
+sudo apt install dotenc
+)
+```
+
+### RPM (Fedora / RHEL family)
+
+```bash
+(
+set -e
+rpm_key_file="$(mktemp)"
+trap 'rm -f "$rpm_key_file"' 0
+curl -fsSL \
+  https://packages.dotenc.org/keys/dotenc-rpm-C1FFEF75009580AB4A9EDDE87486A84C0C27D6A2-2600233af0c9acab0f047d2f0c1fbda5d5970187a41a67eecdd85240b983309b.asc \
+  -o "$rpm_key_file"
+printf '%s  %s\n' \
+  2600233af0c9acab0f047d2f0c1fbda5d5970187a41a67eecdd85240b983309b \
+  "$rpm_key_file" | sha256sum -c -
+sudo install -d -m 0755 /etc/pki/rpm-gpg
+sudo install -m 0644 "$rpm_key_file" /etc/pki/rpm-gpg/dotenc.asc
+printf '%s\n' \
+  '[dotenc]' \
+  'name=dotenc' \
+  "baseurl=https://packages.dotenc.org/rpm/\$basearch" \
+  'enabled=1' \
+  'gpgcheck=1' \
+  'repo_gpgcheck=1' \
+  'gpgkey=file:///etc/pki/rpm-gpg/dotenc.asc' \
+  'sslverify=1' \
+  | sudo tee /etc/yum.repos.d/dotenc.repo >/dev/null
+sudo chmod 0644 /etc/yum.repos.d/dotenc.repo
+rm -f "$rpm_key_file"
+trap - 0
+sudo dnf install dotenc
+)
+```
+
+### APK (Alpine Linux)
+
+```bash
+# Run this block in a root shell.
+(
+set -e
+apk add --no-cache ca-certificates
+apk_key=dotenc-600d1cdeb051ccba069f4c444aa76d9094caf23b3aea0a29f1a84e2bf3204128
+apk_key_file="$(mktemp)"
+trap 'rm -f "$apk_key_file"' 0
+wget -q "https://packages.dotenc.org/keys/${apk_key}.rsa.pub" \
+  -O "$apk_key_file"
+printf '%s  %s\n' \
+  6b8e09be9c96801f9434f8b8e7c622cedcf6c343eb50483509dcd18a3b5b4b50 \
+  "$apk_key_file" | sha256sum -c -
+cp "$apk_key_file" "/etc/apk/keys/${apk_key}.rsa.pub"
+chmod 0644 "/etc/apk/keys/${apk_key}.rsa.pub"
+grep -qxF 'https://packages.dotenc.org/apk/stable/main' /etc/apk/repositories \
+  || echo 'https://packages.dotenc.org/apk/stable/main' \
+  >> /etc/apk/repositories
+rm -f "$apk_key_file"
+trap - 0
+apk update
+apk add dotenc
+)
+```
+
+### AUR (Arch Linux)
+
+```bash
+yay -S dotenc-bin
+# or: paru -S dotenc-bin
+```
+
+The signed repositories support `amd64`/`x86_64` and `arm64`/`aarch64`.
+See the [Linux package repository guide](https://github.com/dotenc/dotenc/blob/main/docs/LINUX_PACKAGES.md)
+for signing-key fingerprints, caching, rotation, and recovery details.
+
 ### Homebrew (macOS / Linux)
 
 ```bash
