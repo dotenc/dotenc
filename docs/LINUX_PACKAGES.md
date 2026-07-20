@@ -1,14 +1,13 @@
 # Official Linux Package Repositories
 
 > [!IMPORTANT]
-> **Pre-launch status (2026-07-20):** the R2 bucket, custom domain, Cloudflare
-> edge controls, and production signing secrets are provisioned. The protected
-> non-publishing validation has policy-checked the production keys, built and
-> signed every package variant, verified the signed roots, and installed from
-> clean APT, RPM, and APK repositories on both supported architectures. The
-> repositories are still **not public or usable** because no first signed
-> publication has completed. Do not advertise APT, RPM, or APK installation
-> until the remaining launch criteria below pass.
+> **Production status (2026-07-20):** the first signed publication, `v0.12.1`,
+> completed in [release run 29770950512](https://github.com/dotenc/dotenc/actions/runs/29770950512)
+> after [protected non-publishing validation 29770478145](https://github.com/dotenc/dotenc/actions/runs/29770478145).
+> APT, RPM, and APK are public on both supported architectures, and
+> [`dotenc-bin 0.12.1-1`](https://aur.archlinux.org/packages/dotenc-bin) is
+> public in AUR. Clean public installs passed on Debian Bookworm, AlmaLinux 9,
+> and Alpine 3.22 for both amd64 and arm64.
 
 This document is the operator and security runbook for the official dotenc
 Linux package repositories served from `https://packages.dotenc.org`.
@@ -50,14 +49,44 @@ Public namespaces are intentionally limited to:
 - `/apk/` — Alpine repository objects
 - `/keys/` — public signing keys and repository bootstrap material
 
+## Production trust roots
+
+The first production release uses these independently generated identities:
+
+| Ecosystem | Primary / root identity | Online signing identity | Validity and immutable bootstrap object |
+| --- | --- | --- | --- |
+| APT | `7BEF ECEE A592 1A0C 3C43 1CFA A1A9 6403 3C1E 2A5B` | `82B6 1F62 F49F 282F DA49 B3B2 7D09 9ED2 C8D8 D848` | 2026-07-20 through 2028-07-19; [exact certificate](https://packages.dotenc.org/keys/dotenc-apt-7BEFECEEA5921A0C3C431CFAA1A964033C1E2A5B-108333389e16fc3dbdb09938308639951ea6df5fb8f482eba562cafbc353c58f.asc) |
+| RPM | `C1FF EF75 0095 80AB 4A9E DDE8 7486 A84C 0C27 D6A2` | `2259 4CF5 8985 9987 FEDF E3EF 4905 AD34 F67B E8A7` | 2026-07-20 through 2028-07-19; [exact certificate](https://packages.dotenc.org/keys/dotenc-rpm-C1FFEF75009580AB4A9EDDE87486A84C0C27D6A2-2600233af0c9acab0f047d2f0c1fbda5d5970187a41a67eecdd85240b983309b.asc) |
+| APK | RSA-4096 SPKI SHA-256 `600d1cdeb051ccba069f4c444aa76d9094caf23b3aea0a29f1a84e2bf3204128` | Same RSA identity | No embedded expiry; [exact public key](https://packages.dotenc.org/keys/dotenc-600d1cdeb051ccba069f4c444aa76d9094caf23b3aea0a29f1a84e2bf3204128.rsa.pub), PEM SHA-256 `6b8e09be9c96801f9434f8b8e7c622cedcf6c343eb50483509dcd18a3b5b4b50` |
+
+Copy-paste installation commands are maintained in the
+[README installation section](https://github.com/dotenc/dotenc#installation).
+The live package-manager configuration files are
+[`apt/dotenc.sources`](https://packages.dotenc.org/apt/dotenc.sources),
+[`rpm/dotenc.repo`](https://packages.dotenc.org/rpm/dotenc.repo), and
+[`apk/dotenc.repositories`](https://packages.dotenc.org/apk/dotenc.repositories).
+
 The R2 S3-compatible API is the authenticated write path. The R2-managed
 `r2.dev` development URL is disabled so it cannot bypass the custom-domain WAF
 and cache controls. Bucket listing is not a supported public interface.
 
-## Launch criteria
+## First-publication record
 
-Do not document the repository as an installation option until all of the
-following are complete:
+The `v0.12.1` launch satisfied the following criteria. Keep them as the
+acceptance checklist for replacement infrastructure, a new trust root, or a
+future relaunch:
+
+Independent installation from the live public repositories produced this
+post-launch record on 2026-07-20:
+
+| Distribution | Platform | Package version | CLI / install marker | Result |
+| --- | --- | --- | --- | --- |
+| Debian Bookworm | `linux/amd64` | `0.12.1-1` | `0.12.1` / `apt` | Pass |
+| Debian Bookworm | `linux/arm64` | `0.12.1-1` | `0.12.1` / `apt` | Pass |
+| AlmaLinux 9 | `linux/amd64` | `0.12.1-1.x86_64` | `0.12.1` / `rpm` | Pass |
+| AlmaLinux 9 | `linux/arm64` | `0.12.1-1.aarch64` | `0.12.1` / `rpm` | Pass |
+| Alpine 3.22 | `linux/amd64` | `0.12.1-r0` | `0.12.1` / `apk` | Pass |
+| Alpine 3.22 | `linux/arm64` | `0.12.1-r0` | `0.12.1` / `apk` | Pass |
 
 - Create separate offline OpenPGP primary keys and dedicated CI signing subkeys
   for APT and RPM publication. CI must receive secret-subkey-only exports, not
@@ -86,7 +115,8 @@ following are complete:
   RPM-based, and Alpine test environments.
 - Verify the public edge controls and cache headers described below.
 - Exercise the metadata rollback procedure with a non-production publication.
-- Only then update user-facing installation docs and `install.sh`.
+- Update user-facing installation docs only after the checks above pass. Treat
+  any `install.sh` migration as a separate bootstrap and security review.
 
 ## Provisioned Cloudflare baseline
 
@@ -230,7 +260,8 @@ Its currently provisioned configuration contract is:
 | Variable | `R2_BUCKET` | `dotenc-packages` |
 | Variable | `R2_ENDPOINT` | Account-scoped R2 S3 endpoint |
 | Variable | `PACKAGES_BASE_URL` | `https://packages.dotenc.org` |
-| Repository variable (launch gate) | `LINUX_PACKAGES_ENABLED` | Keep unset or not `true` until every launch criterion passes; `true` enables the gated publisher and weekly refresh |
+| Repository variable (publication admission) | `LINUX_PACKAGES_ENABLED` | `true` in normal production; any other value blocks future release publication and weekly refresh before entering the protected environment |
+| Repository variable (AUR admission) | `AUR_PACKAGES_ENABLED` | `true` in normal production; any other value blocks future AUR publication |
 | Secret | `R2_ACCESS_KEY_ID` | Access-key ID for the bucket-scoped publisher token |
 | Secret | `R2_SECRET_ACCESS_KEY` | Secret half of the R2 publisher credential |
 | Secret | `CLOUDFLARE_CACHE_PURGE_TOKEN` | Token limited to cache purge for the `dotenc.org` zone |
@@ -239,20 +270,26 @@ Its currently provisioned configuration contract is:
 | Secret | `PACKAGE_RPM_GPG_PRIVATE_KEY_BASE64` | Base64 of a passphrase-protected, ASCII-armored RPM secret-signing-subkey export with only a dummy primary-key stub |
 | Secret | `PACKAGE_RPM_GPG_PASSPHRASE` | Passphrase for the RPM signing subkey |
 | Secret | `PACKAGE_APK_PRIVATE_KEY_BASE64` | Base64 of the unencrypted RSA-4096 Alpine private key in PEM format |
+| Secret | `AUR_SSH_PRIVATE_KEY_BASE64` | Base64 of the dedicated, unencrypted Ed25519 AUR publisher identity |
 
 The Cloudflare/R2 values and secrets live in the protected `linux-packages`
 environment; `LINUX_PACKAGES_ENABLED` is deliberately a repository-level
 variable so its job-level condition can be evaluated before GitHub enters that
 environment. GitHub exposes only secret presence and update timestamps to
 operators; the controlled workflow policy-checks key structure, exact signing
-identities, and passphrases without printing their values. The manual dispatch's
-default `validate_only=true` mode is the only path allowed to enter the
-environment while the publication gate is disabled; it never receives R2 or
-cache-purge secrets in an executing step and every external publication step is
-skipped. `LINUX_PACKAGES_ENABLED` must remain disabled until that validation and
-every other launch criterion pass. The workflow decodes each base64 value only
-into an ephemeral, mode-`0600` file and requires both OpenPGP passphrase secrets
-to be non-empty.
+identities, and passphrases without printing their values. The native
+workflow's default `validate_only=true` mode and the AUR workflow's default
+`publish=false` mode may enter the environment while their publication gates
+are stopped. Neither validation path references R2 or cache-purge secrets in an
+executing step, and every external publication step is skipped.
+Keep `LINUX_PACKAGES_ENABLED=true` during normal production. To contain an
+incident, set it to `false` to block future gated jobs, then cancel every active
+release or Linux-package run and revoke credentials when warranted. The
+variable is evaluated at job admission and does not interrupt an in-flight
+publisher. Re-enable it only after the protected validation and relevant
+recovery checks pass. The workflow decodes each base64 value only into an
+ephemeral, mode-`0600` file and requires both OpenPGP passphrase secrets to be
+non-empty.
 
 APT and RPM imports use separate ephemeral homes exposed only to their GPG
 operations through `DOTENC_APT_GNUPGHOME` and `DOTENC_RPM_GNUPGHOME`; CI rejects
@@ -525,17 +562,18 @@ verify the release-asset SHA-256 digests, so this path does not use the APT,
 RPM, or APK repository-signing keys. Users update through an AUR helper such as
 `yay` or `paru`; plain `pacman` does not synchronize AUR recipes.
 
-**Pre-launch status:** `dotenc-bin` is rendered and tested in this repository
-but is not yet published to AUR. Keep the repository variable
-`AUR_PACKAGES_ENABLED=false` until the first publication is reviewed.
+**Production status:** [`dotenc-bin`](https://aur.archlinux.org/packages/dotenc-bin)
+was first published as `0.12.1-1` on 2026-07-20. Keep the repository variable
+`AUR_PACKAGES_ENABLED=true` during normal production; set it to `false` to
+block future AUR publication, and separately cancel any active AUR job.
 `.github/workflows/publish-aur-package.yml` defaults
 manual dispatches to validation-only; it downloads the exact stable GitHub
 Release inputs and performs a clean `makepkg` build/install in a digest-pinned
 x86_64 Arch container. After that succeeds, a manual run also verifies the
 configured SSH identity against AUR's read-only `help` command. It does not
 clone or push the AUR repository unless both the manual `publish` input and the
-launch gate are `true`. The release workflow calls it only after the GitHub
-Release exists and the launch gate is `true`.
+publication gate are `true`. The release workflow calls it only after the
+GitHub Release exists and the publication gate is `true`.
 
 Publication needs a dedicated, **unencrypted Ed25519** SSH deployment key
 registered to the dotenc AUR account. Store its private key as base64 in the

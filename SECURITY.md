@@ -244,22 +244,23 @@ curl -fsSL https://dotenc.org/install.sh -o install.sh
 sh install.sh
 ```
 
-Alternatively, install via Homebrew, Scoop, npm, the
-`ghcr.io/dotenc/cli` OCI image, or a standalone binary from the
-[GitHub Releases](https://github.com/dotenc/dotenc/releases) page. None of
-these methods use the install script.
+Alternatively, install through the signed APT, RPM, or APK repositories, AUR,
+Homebrew, Scoop, npm, the `ghcr.io/dotenc/cli` OCI image, or a standalone binary
+from the [GitHub Releases](https://github.com/dotenc/dotenc/releases) page.
+None of these methods use the install script.
 
 ---
 
 ## Linux Package Repository Trust Model
 
-Official signed APT, RPM, and APK repositories are being prepared at
-`packages.dotenc.org`, but they are **not a supported installation method yet**.
-The delivery infrastructure exists; launch remains gated on production signing
-key custody and a verified first publication. Until that gate passes, use one
-of the installation methods listed above.
+Official signed APT, RPM, and APK repositories are live at
+`packages.dotenc.org` for amd64 and arm64. The first signed publication was
+`v0.12.1` on 2026-07-20; its protected preflight, clean-install matrix, phased
+R2 publication, and public-edge checks all passed. The exact production trust
+roots and immutable bootstrap objects are recorded in the
+[Linux package repository guide](docs/LINUX_PACKAGES.md#production-trust-roots).
 
-The planned trust model separates authenticity from delivery:
+The trust model separates authenticity from delivery:
 
 - APT and RPM use independent OpenPGP v4 RSA trust roots. Each primary key
   remains offline; CI receives only that ecosystem's RSA-4096 signing-subkey
@@ -284,6 +285,11 @@ The planned trust model separates authenticity from delivery:
   closed on downgrades or unexpected repository state.
 - Package managers verify those signatures against explicitly installed dotenc
   public keys. HTTPS alone is not the package authenticity boundary.
+- The README pins the SHA-256 of each exact APT, RPM, and APK bootstrap key
+  outside the package host, verifies downloaded key bytes before privileged
+  installation, and renders signature-enforcing repository configuration
+  locally. Compromise of `packages.dotenc.org` alone therefore cannot substitute
+  a first-install trust root without failing that digest check.
 - A first package publication accepts Linux binaries only from the immutable
   Actions artifact created earlier in the same release run; manual and
   scheduled invocations are refresh-only. Later refreshes authenticate the
@@ -341,17 +347,20 @@ OpenPGP certificate object names bind both the primary fingerprint and a digest
 of the exact certificate, so a renewed certificate never overwrites an older
 object with the same trust root.
 
-Publication remains disabled unless the GitHub repository variable
+Publication runs only when the GitHub repository variable
 `LINUX_PACKAGES_ENABLED` is exactly `true`; the signing secrets remain scoped to
-the protected `linux-packages` environment. A manual dispatch defaults to a
-non-publishing validation mode that may run while the gate is disabled: it
-policy-checks the production keys, signs all package variants and repository
-roots, verifies them, and installs from clean local repositories, while all
-release-asset, artifact-retention, R2, cache-purge, and public-edge steps remain
-skipped. Both OpenPGP passphrase secrets are mandatory in this production path.
-The gate must stay disabled until that validation, the clean-install matrix,
-edge checks, recovery drill, and first signed publication satisfy the launch
-runbook.
+the protected `linux-packages` environment. `true` is the normal production
+state, while `false` blocks future gated jobs. It is not a kill switch for an
+in-flight publisher: incident response must also cancel active release,
+Linux-package, and AUR runs and revoke credentials when warranted. A manual
+dispatch can select a non-publishing validation mode while publication is
+stopped: it policy-checks the production keys, signs all package variants and
+repository roots, verifies them, and installs from clean local repositories,
+while all release-asset, artifact-retention, R2, cache-purge, public-edge, and
+AUR publication steps remain skipped. Both OpenPGP passphrase secrets are
+mandatory in this production path. Re-enable publication after an incident
+only when that validation and the relevant recovery checks in the launch
+runbook pass.
 
 The operational controls, cache classes, key-custody requirements, publication
 order, verification, and recovery procedures are documented in
