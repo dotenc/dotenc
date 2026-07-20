@@ -238,15 +238,22 @@ jobs:
           cd "$recipe_dir"
           sha256sum PKGBUILD .SRCINFO install-method > RECIPE_SHA256SUMS
 
+          # Container run steps and JavaScript actions resolve runner.temp to
+          # different host/container paths. The workspace is shared by both.
+          artifact_dir="$GITHUB_WORKSPACE/aur-recipe-artifact"
+          install -d -m 0755 "$artifact_dir"
+          install -m 0644 \
+            PKGBUILD \
+            .SRCINFO \
+            install-method \
+            RECIPE_SHA256SUMS \
+            "$artifact_dir/"
+
       - name: Preserve the validated public recipe
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: aur-recipe-v${{ inputs.version }}-${{ github.run_id }}
-          path: |
-            ${{ runner.temp }}/dotenc-bin/PKGBUILD
-            ${{ runner.temp }}/dotenc-bin/.SRCINFO
-            ${{ runner.temp }}/dotenc-bin/install-method
-            ${{ runner.temp }}/dotenc-bin/RECIPE_SHA256SUMS
+          path: aur-recipe-artifact/
           if-no-files-found: error
           include-hidden-files: true
           compression-level: 0

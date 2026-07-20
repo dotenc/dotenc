@@ -180,6 +180,11 @@ describe("AUR publication workflow", () => {
 			"SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4",
 		)
 		expect(workflow).toContain("unset AUR_SSH_PRIVATE_KEY_BASE64")
+		expect(workflow).toContain(
+			'artifact_dir="$GITHUB_WORKSPACE/aur-recipe-artifact"',
+		)
+		expect(workflow).toContain("path: aur-recipe-artifact/")
+		expect(workflow).not.toMatch(/runner\.temp.*dotenc-bin\/PKGBUILD/)
 		expect(workflow).toContain('ssh -F "$ssh_config" -T aur.archlinux.org help')
 		expect(workflow).toContain(
 			'[[ "$PUBLISH_REQUESTED" != "true" || "$AUR_PACKAGES_ENABLED" != "true" ]]',
