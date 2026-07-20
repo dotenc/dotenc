@@ -124,12 +124,34 @@ describe("Linux package publication manifest", () => {
 			),
 			"utf8",
 		)
-		expect(workflow).toContain(
-			"almalinux:9@sha256:d2515c769e7b73f95c4fde38c0a505336ff38f14990c0b7253b77060a049a743",
-		)
 		expect(workflow).toContain("dnf install --assumeyes dotenc")
 		expect(workflow).not.toContain("microdnf")
 		expect(workflow).not.toContain("almalinux:9-minimal")
+	})
+
+	test("pins distinct install images for each validated architecture", () => {
+		const workflow = readFileSync(
+			path.resolve(
+				import.meta.dir,
+				"../../.github/workflows/publish-linux-packages.yml",
+			),
+			"utf8",
+		)
+		for (const image of [
+			"debian:bookworm-slim@sha256:63a496b5d3b99214b39f5ed70eb71a61e590a77979c79cbee4faf991f8c0783e",
+			"debian:bookworm-slim@sha256:9b67294679b30e5d6ab257b40594feeb4a4b81f7fcf4131f4decf0d6a212a9b0",
+			"almalinux:9@sha256:28db580abb508f7ccbc0ac6d53e1d8da9d42a26c77fa3dcc26ac2726673fbe3e",
+			"almalinux:9@sha256:2c999b3bd705fad8b115741d9036ae2499148ba162752f09f2f4ab62b0c07320",
+			"alpine:3.22.3@sha256:e0baf8c394150ac5a14925e179100519f5e37c53547f647acbd9f8eb3e5c4528",
+			"alpine:3.22.3@sha256:42148bde0efbaf68c898a31697c37422abec27c85ffb9cbb1d07278dc3639050",
+		]) {
+			expect(workflow).toContain(image)
+		}
+		for (const imageName of ["debian", "almalinux", "alpine"]) {
+			expect(workflow).toContain(
+				`${imageName}_image=\${${imageName}_images[$index]}`,
+			)
+		}
 	})
 
 	test("keeps manual signing-key validation non-publishing by default", () => {
