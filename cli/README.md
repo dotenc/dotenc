@@ -152,6 +152,8 @@ Only encrypted `.env.*.enc` files are stored and committed. The readable view ex
 
 `dotenc init` configures this automatically. Run it once in every clone. When it detects an existing dotenc project, it configures the clone-local Git driver without changing keys, environments, or access rules.
 
+Optionally, you can also enable [redacted diffs in pull requests](#redacted-pull-request-diffs).
+
 ## Basic Usage
 
 ### Setup
