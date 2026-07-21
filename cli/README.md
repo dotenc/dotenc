@@ -17,7 +17,7 @@
 - 🌍 Supports multiple and extensible environments
 - 👤 Personal encrypted environments per developer
 - 🔄 Automatic data key rotation on edits
-- 🔍 Readable local Git diffs for encrypted environments
+- 🔍 Readable local Git diffs and redacted pull-request reviews
 - 🛡️ Supports both RSA and Ed25519 SSH keys
 - 🤖 Ready for the AI era — check out the official [dotenc skill](https://www.skills.sh/dotenc/skills/dotenc)
 
@@ -77,6 +77,7 @@ npm, a standalone binary, or an OCI image, see the
   - [4. Use dotenc in your CI pipeline](#4-use-dotenc-in-your-ci-pipeline)
   - [GitHub Actions example](#github-actions-example)
   - [Reusable GitHub Actions](#reusable-github-actions)
+  - [Redacted pull-request diffs](#redacted-pull-request-diffs)
   - [Provider runbooks](#provider-runbooks)
 - [Key Management](#key-management)
   - [Supported Key Types](#supported-key-types)
@@ -505,6 +506,62 @@ See [docs/GITHUB_ACTIONS.md](/docs/GITHUB_ACTIONS.md) for examples.
 The redacted diff workflow has its own narrowly granted identity stored as
 `DOTENC_DIFF_PRIVATE_KEY_BASE64`; do not reuse or replace the ordinary CI
 bootstrap identity for it.
+
+### Redacted pull-request diffs
+
+Encrypted files are opaque in GitHub's native diff, so dotenc can add a
+redacted semantic report to each pull request. Install the hardened workflow
+with a dedicated, narrowly granted identity:
+
+```bash
+dotenc tools install-github-diffs \
+  --environment .env.production.enc
+```
+
+The report intentionally exposes variable names, recipient changes, and a
+changed/unchanged equality signal. Install it only when that disclosure is
+acceptable for every pull-request author. Repositories that GitHub reports as
+forks require an explicit `--allow-fork` acknowledgement.
+
+The action posts or updates one comment that looks like this:
+
+> ## dotenc environment diff
+>
+> ### production
+>
+> _Environment modified · <code>.env.production.enc</code>_
+>
+> #### Variables
+>
+> ```diff
+> ~ DATABASE_URL
+> + OPENAI_API_KEY
+> - LEGACY_TOKEN
+> ```
+>
+> #### Access
+>
+> ```diff
+> ~ ci-old → ci-new
+> + ci-production
+> - contractor-john
+> ```
+>
+> ### development
+>
+> _Data key rotated · <code>.env.development.enc</code>_
+
+`+` means added or granted, `-` means removed or revoked, and `~` means
+changed or renamed. A data-key-only rotation verified through the dedicated
+diff recipient gets the compact entry shown above. Formatting-only edits and
+same-key ciphertext churn publish no report; with comments enabled, the action
+removes its stale bot-owned report comments. Reports contain variable names and
+access metadata, never variable values.
+
+The generated workflow is pinned to an immutable action commit and never
+checks out pull-request code into the privileged reporting job. See the
+[GitHub Actions runbook](https://github.com/dotenc/dotenc/blob/main/docs/GITHUB_ACTIONS.md)
+for the security boundary, fork policy, and manual setup.
 
 ### Provider runbooks
 
