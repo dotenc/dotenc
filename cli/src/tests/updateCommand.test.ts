@@ -18,9 +18,11 @@ const spawnMock = mock(() => {
 	throw new Error("spawn should not be called")
 })
 
+const updateHelpers = await import("../helpers/update")
+
 mock.module("../helpers/update", () => ({
+	...updateHelpers,
 	detectInstallMethod: detectInstallMethodMock,
-	GITHUB_RELEASES_URL: "https://github.com/dotenc/dotenc/releases",
 }))
 mock.module("node:child_process", () => ({ spawn: spawnMock }))
 
