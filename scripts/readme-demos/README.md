@@ -7,7 +7,7 @@ normal installs, or CI rendering.
 
 ## Prerequisites
 
-- Bun 1.3.10
+- Bun 1.3.14
 - Node 16 active on `PATH` (for Terminalizer's native PTY)
 - WebP tools (`gif2webp` and `webpmux`; installed by Homebrew's `webp` formula)
 - `git`, `ssh-keygen`, `nano`, and `expect`

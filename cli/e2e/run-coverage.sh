@@ -18,7 +18,7 @@ export DOTENC_E2E_CLI_RUNTIME="node"
 export DOTENC_E2E_CLI_PATH="/app/cli/dist/cli.js"
 export NODE_V8_COVERAGE="/tmp/node-v8-coverage"
 
-bun test /app/cli/e2e/tests/
+bun test --isolate /app/cli/e2e/tests/
 
 rm -rf /cov/*
 bunx c8 report \

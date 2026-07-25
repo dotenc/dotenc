@@ -44,6 +44,7 @@ Bun temp files:
 
 ## Setup / Installs
 
+- Bun version: `1.3.14` (verify with `bun --version`; run `bun upgrade` if needed)
 - Root deps: `bun install`
 - CLI deps: included via root workspace install (or `cd cli && bun install`)
 - Website deps: included via root workspace install (or `cd website && bun install`)
@@ -58,7 +59,7 @@ Root (cross-cutting changes):
 
 CLI (`cli/`):
 
-- `bun run test` (uses a custom patched Bun binary — always use `bun run test`, never call `bun test` directly)
+- `bun run test` (enables Bun's per-file isolation — always use the package script so `--isolate` is not omitted)
 - `bun run typecheck`
 - `bun run build`
 - If touching CLI packaging/bin behavior:
