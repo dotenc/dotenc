@@ -31,5 +31,19 @@ contents:
       mode: 0644
       owner: root
       group: root
+  - src: "${NFPM_APT_PUBLIC_KEY}"
+    dst: /usr/share/keyrings/dotenc-archive-keyring.asc
+    expand: true
+    file_info:
+      mode: 0644
+      owner: root
+      group: root
+  - src: "${NFPM_APT_REPOSITORY_CONFIG}"
+    dst: /etc/apt/sources.list.d/dotenc.sources
+    expand: true
+    file_info:
+      mode: 0644
+      owner: root
+      group: root
 deb:
   compression: xz

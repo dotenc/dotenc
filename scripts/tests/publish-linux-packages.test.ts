@@ -253,6 +253,7 @@ describe("Linux package publication manifest", () => {
 			"Archive the exact repository publication",
 			"Publish repository objects to R2",
 			"Verify the public edge and signed repository roots",
+			"Reconcile native installers on the GitHub release",
 		]) {
 			const escapedStepName = stepName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 			expect(workflow).toMatch(
@@ -261,6 +262,40 @@ describe("Linux package publication manifest", () => {
 				),
 			)
 		}
+	})
+
+	test("publishes stable native installer assets after edge verification", () => {
+		const workflow = readFileSync(
+			path.resolve(
+				import.meta.dir,
+				"../../.github/workflows/publish-linux-packages.yml",
+			),
+			"utf8",
+		)
+
+		for (const asset of [
+			"dotenc-amd64.deb",
+			"dotenc-arm64.deb",
+			"dotenc-x86_64.rpm",
+			"dotenc-aarch64.rpm",
+			"dotenc-linux-installers.sha256",
+		]) {
+			expect(workflow).toContain(asset)
+		}
+		expect(
+			workflow.indexOf("Verify the public edge and signed repository roots"),
+		).toBeLessThan(
+				workflow.indexOf("Reconcile native installers on the GitHub release"),
+			)
+		expect(workflow).toContain("release_has_asset")
+		expect(workflow).toContain("refusing to overwrite it")
+		expect(workflow).toContain("sha256sum --check --strict")
+		expect(workflow).toContain("--enablerepo=dotenc")
+		expect(workflow).toContain("makecache >/dev/null")
+		expect(workflow).toContain(
+			"test ! -e /etc/apt/sources.list.d/dotenc.sources",
+		)
+		expect(workflow).toContain("test ! -e /etc/yum.repos.d/dotenc.repo")
 	})
 
 	test("contains transient nFPM RPM key material inside the scrubbed signing directory", () => {

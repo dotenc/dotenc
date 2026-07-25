@@ -1331,6 +1331,26 @@ ${options.baseUrl}/apk/${options.suite}/${options.component}
 `,
 })
 
+export const renderNativeInstallerConfigs = (options: BuildOptions) => ({
+	apt: `# Managed by the dotenc package. Local changes may be overwritten.
+Types: deb
+URIs: ${options.baseUrl}/apt
+Suites: ${options.suite}
+Components: ${options.component}
+Signed-By: /usr/share/keyrings/dotenc-archive-keyring.asc
+`,
+	rpm: `# Managed by the dotenc package. Local changes may be overwritten.
+[dotenc]
+name=dotenc
+baseurl=${options.baseUrl}/rpm/$basearch
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/dotenc.asc
+sslverify=1
+`,
+})
+
 const createAptByHash = async (indexFile: string): Promise<void> => {
 	const digest = await sha256File(indexFile)
 	const targetDirectory = join(dirname(indexFile), "by-hash", "SHA256")
@@ -1800,6 +1820,16 @@ const buildNativePackages = async (
 		"dotenc",
 	)
 	await mkdir(aptPool, { recursive: true, mode: 0o755 })
+	const installerConfigsDirectory = join(stagingRoot, "native-installers")
+	await mkdir(installerConfigsDirectory, { recursive: true, mode: 0o700 })
+	const installerConfigs = renderNativeInstallerConfigs(options)
+	const aptRepositoryConfig = join(
+		installerConfigsDirectory,
+		"dotenc.sources",
+	)
+	const rpmRepositoryConfig = join(installerConfigsDirectory, "dotenc.repo")
+	await writeFile(aptRepositoryConfig, installerConfigs.apt, { mode: 0o600 })
+	await writeFile(rpmRepositoryConfig, installerConfigs.rpm, { mode: 0o600 })
 
 	for (const architecture of ARCHITECTURES) {
 		const rpmRoot = join(publicRoot, "rpm", architecture.rpm)
@@ -1856,6 +1886,8 @@ const buildNativePackages = async (
 						"assets",
 						"install-method-apt",
 					),
+					NFPM_APT_PUBLIC_KEY: options.aptGpgPublicKey,
+					NFPM_APT_REPOSITORY_CONFIG: aptRepositoryConfig,
 				},
 			},
 		)
@@ -1879,6 +1911,8 @@ const buildNativePackages = async (
 						"assets",
 						"install-method-rpm",
 					),
+					NFPM_RPM_PUBLIC_KEY: options.rpmGpgPublicKey,
+					NFPM_RPM_REPOSITORY_CONFIG: rpmRepositoryConfig,
 					NFPM_RPM_KEY_FILE: rpmPrivateKey,
 					NFPM_RPM_KEY_ID: options.rpmGpgSigningFingerprint.slice(-16),
 				},

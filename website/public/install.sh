@@ -126,11 +126,11 @@ install_apt() {
 		"URIs: $PACKAGES_URL/apt" \
 		'Suites: stable' \
 		'Components: main' \
-		'Signed-By: /etc/apt/keyrings/dotenc.asc' \
+		'Signed-By: /usr/share/keyrings/dotenc-archive-keyring.asc' \
 		>"$TEMP_CONFIG_FILE"
 
-	as_root install -d -m 0755 /etc/apt/keyrings
-	as_root install -m 0644 "$TEMP_KEY_FILE" /etc/apt/keyrings/dotenc.asc
+	as_root install -d -m 0755 /usr/share/keyrings
+	as_root install -m 0644 "$TEMP_KEY_FILE" /usr/share/keyrings/dotenc-archive-keyring.asc
 	as_root install -m 0644 "$TEMP_CONFIG_FILE" /etc/apt/sources.list.d/dotenc.sources
 	as_root apt-get update
 	as_root apt-get install -y dotenc
@@ -158,6 +158,7 @@ install_rpm() {
 
 	as_root install -d -m 0755 /etc/pki/rpm-gpg
 	as_root install -m 0644 "$TEMP_KEY_FILE" /etc/pki/rpm-gpg/dotenc.asc
+	as_root rpm --import "$TEMP_KEY_FILE"
 	as_root install -m 0644 "$TEMP_CONFIG_FILE" /etc/yum.repos.d/dotenc.repo
 	as_root "$rpm_installer" install -y dotenc
 }

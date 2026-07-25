@@ -35,6 +35,7 @@ import {
 	parseOpenPgpKeyListing,
 	parseSecretKeyListing,
 	type RunOptions,
+	renderNativeInstallerConfigs,
 	renderRepositoryConfigs,
 	validateOptions,
 } from "../../../packaging/repository"
@@ -401,6 +402,22 @@ describe("repository artifacts", () => {
 		)
 		expect(configs.apk).toContain(`${options.apkKeyName}.rsa.pub`)
 	})
+
+	test("renders offline-safe native installer update channels", () => {
+		const configs = renderNativeInstallerConfigs(makeOptions("/workspace"))
+
+		expect(configs.apt).toContain(
+			"Signed-By: /usr/share/keyrings/dotenc-archive-keyring.asc",
+		)
+		expect(configs.apt).toContain("URIs: https://packages.dotenc.org/apt")
+		expect(configs.rpm).toContain(
+			"baseurl=https://packages.dotenc.org/rpm/$basearch",
+		)
+		expect(configs.rpm).toContain("gpgkey=file:///etc/pki/rpm-gpg/dotenc.asc")
+		expect(configs.rpm).toContain("gpgcheck=1")
+		expect(configs.rpm).toContain("repo_gpgcheck=1")
+		expect(`${configs.apt}\n${configs.rpm}`).not.toContain("curl")
+	})
 })
 
 type FakeRunnerBehavior = {
@@ -506,6 +523,27 @@ const createFakeRunner = (
 						behavior.transientRpmKeyPaths?.push(transientKey)
 					}
 					if (behavior.failRpmBuild) throw new Error("fake nFPM RPM failure")
+					expect(runOptions.env?.NFPM_RPM_PUBLIC_KEY).toBe(
+						options.rpmGpgPublicKey,
+					)
+					expect(
+						await readFile(
+							runOptions.env?.NFPM_RPM_REPOSITORY_CONFIG as string,
+							"utf8",
+						),
+					).toContain("repo_gpgcheck=1")
+				} else if (args.includes("deb")) {
+					expect(runOptions.env?.NFPM_APT_PUBLIC_KEY).toBe(
+						options.aptGpgPublicKey,
+					)
+					expect(
+						await readFile(
+							runOptions.env?.NFPM_APT_REPOSITORY_CONFIG as string,
+							"utf8",
+						),
+					).toContain(
+						"Signed-By: /usr/share/keyrings/dotenc-archive-keyring.asc",
+					)
 				}
 				const target = args[args.indexOf("--target") + 1]
 				if (target === undefined) throw new Error("missing fake nFPM target")

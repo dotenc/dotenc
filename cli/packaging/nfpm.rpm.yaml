@@ -30,6 +30,20 @@ contents:
       mode: 0644
       owner: root
       group: root
+  - src: "${NFPM_RPM_PUBLIC_KEY}"
+    dst: /etc/pki/rpm-gpg/dotenc.asc
+    expand: true
+    file_info:
+      mode: 0644
+      owner: root
+      group: root
+  - src: "${NFPM_RPM_REPOSITORY_CONFIG}"
+    dst: /etc/yum.repos.d/dotenc.repo
+    expand: true
+    file_info:
+      mode: 0644
+      owner: root
+      group: root
 rpm:
   compression: gzip
   signature:
