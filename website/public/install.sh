@@ -198,8 +198,7 @@ install_aur() {
 install_unix_fallback() {
 	if command -v brew >/dev/null 2>&1; then
 		info "Installing via Homebrew..."
-		brew tap ivanfilhoz/dotenc
-		brew install dotenc
+		brew install ivanfilhoz/dotenc/dotenc
 	elif command -v npm >/dev/null 2>&1; then
 		info "Installing via npm..."
 		npm install -g @dotenc/cli
