@@ -315,8 +315,9 @@ describe("existing platform fallbacks", () => {
 		const result = runInstaller({ commands: ["brew", "npm"], os: "Darwin" })
 
 		expect(result.status).toBe(0)
-		expect(result.calls).toContain("brew\ttap\tivanfilhoz/dotenc")
-		expect(result.calls).toContain("brew\tinstall\tdotenc")
+		expect(result.calls).toContain(
+			"brew\tinstall\tivanfilhoz/dotenc/dotenc",
+		)
 		expect(result.calls).not.toContain("npm\t")
 	})
 
