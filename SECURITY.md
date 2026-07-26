@@ -239,9 +239,11 @@ This is a standard pattern used by many developer tools (Homebrew, Rust, Node.js
 - **Pinned Linux repository bootstrap** — before configuring APT, RPM, or APK,
   the script downloads an immutable public-key object and verifies its exact
   SHA-256. It then renders signature-enforcing repository configuration locally
-  before installing dotenc. The manual installation guide uses shorter mutable
-  key aliases for readability but performs the same exact-byte checksum checks;
-  the aliases alone are not trust roots.
+  before installing dotenc. For RPM systems, `rpm --import` receives only the
+  already verified temporary key; the same bytes are retained for DNF's
+  file-backed `gpgkey`. The manual installation guide uses shorter mutable key
+  aliases for readability but performs the same exact-byte checksum checks; the
+  aliases alone are not trust roots.
 - **Safe privilege selection** — native Linux repositories are selected only
   when the process is root, passwordless `sudo` succeeds, or an interactive
   terminal can accept a `sudo` prompt. Noninteractive callers such as the VS
@@ -263,10 +265,10 @@ curl -fsSL https://dotenc.org/install.sh -o install.sh
 sh install.sh
 ```
 
-Alternatively, follow the direct commands in the
-[installation guide](docs/INSTALLATION.md) for APT, RPM, APK, AUR, Homebrew,
-Scoop, npm, the `ghcr.io/dotenc/cli` OCI image, or a standalone binary. Those
-manual paths do not execute the install script.
+Alternatively, follow the [installation guide](docs/INSTALLATION.md) to install
+a native release package, configure APT or RPM manually, or use APK, AUR,
+Homebrew, Scoop, npm, the `ghcr.io/dotenc/cli` OCI image, or a standalone
+binary. Those paths do not execute the install script.
 
 ---
 
@@ -290,6 +292,15 @@ The trust model separates authenticity from delivery:
   signatures.
 - RPM signs both package files and `repomd.xml`. A separate RSA-4096 Alpine key
   signs APK packages and `APKINDEX.tar.gz` with RSA/SHA-256.
+- New DEB and RPM packages carry only their ecosystem's validated public
+  certificate and signature-enforcing update-channel configuration. They do not
+  contain private keys or fetch trust material from the network during package
+  installation. APT uses the package-managed keyring under
+  `/usr/share/keyrings`; DNF uses the package-managed key under
+  `/etc/pki/rpm-gpg` with both `gpgcheck=1` and `repo_gpgcheck=1`.
+  Their repository files are vendor-managed: upgrades replace them so signing
+  key or verification-policy changes cannot be stranded in an alternate config
+  file, and uninstall removes them.
 - Arch users receive a `dotenc-bin` AUR recipe that pins the SHA-256 of each
   tagged GitHub release archive. AUR stores build metadata rather than a dotenc
   binary repository, so this path uses none of the APT, RPM, or APK signing
@@ -302,12 +313,14 @@ The trust model separates authenticity from delivery:
   validation authenticates with AUR's read-only `help` command, then exits
   without cloning when publication is disabled. Pushes are non-forced and fail
   closed on downgrades or unexpected repository state.
-- Package managers verify those signatures against explicitly installed dotenc
-  public keys. HTTPS alone is not the package authenticity boundary.
-- The installer and the [installation guide](docs/INSTALLATION.md) pin the
-  SHA-256 of each exact APT, RPM, and APK bootstrap key outside the package
-  host, verify downloaded key bytes before privileged repository configuration,
-  and render signature-enforcing configuration locally. Compromise of
+- Package managers verify repository updates against explicitly installed
+  dotenc public keys. HTTPS alone is not the repository package-authenticity
+  boundary.
+- The install script pins the SHA-256 of each exact APT, RPM, and APK bootstrap
+  key outside the package host. The manual APT and RPM blocks in the
+  [installation guide](docs/INSTALLATION.md) apply the same rule. Both paths
+  verify downloaded key bytes before privileged repository configuration and
+  render signature-enforcing configuration locally. Compromise of
   `packages.dotenc.org` alone therefore cannot substitute a first-install trust
   root without failing that digest check.
 - A first package publication accepts Linux binaries only from the immutable
@@ -315,6 +328,13 @@ The trust model separates authenticity from delivery:
   scheduled invocations are refresh-only. Later refreshes authenticate the
   canonical six-package bundle through its APT-subkey-signed digest manifest,
   not through the adjacent mutable checksum alone.
+- After the signed repositories pass clean direct-package, repository, and
+  public-edge verification, the publisher copies the exact DEB and RPM bytes to
+  stable architecture-specific GitHub Release asset names. Existing assets must
+  match byte-for-byte and are never overwritten; a checksum asset is generated
+  from the same staged bytes and round-trip verified. Legacy canonical bundles
+  that predate embedded update-channel files are not exposed as these
+  installers.
 - Versioned packages and content-addressed metadata are immutable. Signed
   mutable repository roots are published last so they never intentionally
   reference objects that have not finished uploading.
@@ -337,6 +357,19 @@ The trust model separates authenticity from delivery:
 - Alpine signing runs in a network-disabled container whose tools are prepared
   before its read-only key mount is attached; the R2 publication step receives
   no signing secrets.
+
+The first installation of a DEB or RPM downloaded directly from GitHub Releases
+trusts GitHub's TLS-protected release delivery. The RPM carries a signature, but
+a clean machine does not yet have the public key needed to authenticate it; the
+DEB has no independent per-package signature. The adjacent checksum detects
+accidental corruption but is delivered through the same trust boundary. Once
+installed, the embedded public key and repository configuration authenticate
+future APT or DNF updates through the signed repository metadata and, for RPM,
+the signed package itself. DNF keeps repository-metadata keys separately from
+RPM's package-signature database, so it can require one local confirmation when
+it first imports the package-provided certificate for metadata verification.
+This bootstrap boundary is why the direct packages must not be described as
+self-authenticating.
 
 The repository objects are stored in the private-write
 `dotenc-packages` Cloudflare R2 bucket and exposed through the

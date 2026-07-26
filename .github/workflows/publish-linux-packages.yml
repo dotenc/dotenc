@@ -980,6 +980,7 @@ jobs:
           REPOSITORY_DIR: ${{ steps.repository.outputs.repository_dir }}
           APK_KEY_NAME: ${{ steps.repository.outputs.apk_key_name }}
           RPM_SIGNING_FINGERPRINT: ${{ steps.repository.outputs.rpm_gpg_signing_fingerprint }}
+          TEST_DIRECT_INSTALLERS: ${{ steps.target.outputs.refresh != 'true' }}
         run: |
           set -euo pipefail
 
@@ -1017,8 +1018,32 @@ jobs:
             docker run --rm --platform "$platform" \
               --volume "$REPOSITORY_DIR/public:/repo:ro" \
               --env EXPECTED_VERSION="$VERSION" \
+              --env TEST_DIRECT_INSTALLERS="$TEST_DIRECT_INSTALLERS" \
               "$debian_image" \
               sh -euc '
+                if [ "$TEST_DIRECT_INSTALLERS" = "true" ]; then
+                  apt-get update >/dev/null
+                  apt-get install --yes \
+                    "/repo/apt/pool/main/d/dotenc/dotenc_${EXPECTED_VERSION}-1_$(dpkg --print-architecture).deb" \
+                    >/dev/null
+                  cmp /repo/keys/dotenc-apt.asc /usr/share/keyrings/dotenc-archive-keyring.asc
+                  grep -Fx "URIs: https://packages.dotenc.org/apt" \
+                    /etc/apt/sources.list.d/dotenc.sources >/dev/null
+                  grep -Fx "Signed-By: /usr/share/keyrings/dotenc-archive-keyring.asc" \
+                    /etc/apt/sources.list.d/dotenc.sources >/dev/null
+                  sed -i "s|^URIs: https://packages.dotenc.org/apt$|URIs: file:/repo/apt|" \
+                    /etc/apt/sources.list.d/dotenc.sources
+                  grep -Fx "URIs: file:/repo/apt" \
+                    /etc/apt/sources.list.d/dotenc.sources >/dev/null
+                  ! grep -F "packages.dotenc.org" \
+                    /etc/apt/sources.list.d/dotenc.sources >/dev/null
+                  apt-get update >/dev/null
+                  test "$(dotenc --version)" = "$EXPECTED_VERSION"
+                  apt-get remove --yes dotenc >/dev/null
+                  test ! -e /etc/apt/sources.list.d/dotenc.sources
+                  test ! -e /usr/share/keyrings/dotenc-archive-keyring.asc
+                fi
+
                 install -D -m 0644 /repo/keys/dotenc-apt.asc /usr/share/keyrings/dotenc-apt.asc
                 printf "%s\n" \
                   "deb [signed-by=/usr/share/keyrings/dotenc-apt.asc] file:/repo/apt stable main" \
@@ -1034,8 +1059,39 @@ jobs:
               --env EXPECTED_VERSION="$VERSION" \
               --env RPM_ARCH="$rpm_arch" \
               --env RPM_KEY_ID="$rpm_key_id" \
+              --env TEST_DIRECT_INSTALLERS="$TEST_DIRECT_INSTALLERS" \
               "$almalinux_image" \
               sh -euc '
+                if [ "$TEST_DIRECT_INSTALLERS" = "true" ]; then
+                  dnf install --assumeyes \
+                    "/repo/rpm/$RPM_ARCH/dotenc-$EXPECTED_VERSION-1.$RPM_ARCH.rpm" \
+                    >/dev/null
+                  cmp /repo/keys/dotenc-rpm.asc /etc/pki/rpm-gpg/dotenc.asc
+                  grep -Fx "baseurl=https://packages.dotenc.org/rpm/\$basearch" \
+                    /etc/yum.repos.d/dotenc.repo >/dev/null
+                  grep -Fx "gpgkey=file:///etc/pki/rpm-gpg/dotenc.asc" \
+                    /etc/yum.repos.d/dotenc.repo >/dev/null
+                  grep -Fx "gpgcheck=1" /etc/yum.repos.d/dotenc.repo >/dev/null
+                  grep -Fx "repo_gpgcheck=1" /etc/yum.repos.d/dotenc.repo >/dev/null
+                  sed -i "s|^baseurl=https://packages.dotenc.org/rpm/.*$|baseurl=file:///repo/rpm/$RPM_ARCH|" \
+                    /etc/yum.repos.d/dotenc.repo
+                  grep -Fx "baseurl=file:///repo/rpm/$RPM_ARCH" \
+                    /etc/yum.repos.d/dotenc.repo >/dev/null
+                  ! grep -F "packages.dotenc.org" \
+                    /etc/yum.repos.d/dotenc.repo >/dev/null
+                  dnf --assumeyes \
+                    --disablerepo="*" \
+                    --enablerepo=dotenc \
+                    makecache >/dev/null
+                  test "$(dotenc --version)" = "$EXPECTED_VERSION"
+                  rpm --erase dotenc
+                  dnf clean all >/dev/null
+                  test ! -e /etc/pki/rpm-gpg/dotenc.asc
+                  test ! -e /etc/yum.repos.d/dotenc.repo
+                  test ! -e /etc/yum.repos.d/dotenc.repo.rpmnew
+                  test ! -e /etc/yum.repos.d/dotenc.repo.rpmsave
+                fi
+
                 rpm --import /repo/keys/dotenc-rpm.asc
                 signature=$(rpmkeys --checksig --verbose "/repo/rpm/$RPM_ARCH/dotenc-$EXPECTED_VERSION-1.$RPM_ARCH.rpm")
                 printf "%s\n" "$signature" | tr "[:upper:]" "[:lower:]" | grep -F "key id $RPM_KEY_ID: ok" >/dev/null
@@ -1079,8 +1135,9 @@ jobs:
             echo
             echo "- Imported and policy-checked the APT, RPM, and APK production keys."
             echo "- Built and signed all x86_64/amd64 and arm64 packages and repository metadata."
-            echo "- Verified repository signatures and installed each package from clean local repositories."
-            echo "- Did not upload GitHub release assets or artifacts, write to R2, purge caches, or query the public package edge."
+            echo "- Installed the DEB and RPM files directly and verified their automatic update-channel configuration."
+            echo "- Verified repository signatures and installed every package from clean local repositories."
+            echo "- Did not upload GitHub release assets or artifacts, write to R2, purge caches, or run post-publication edge verification."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload canonical signed package bundle to the GitHub release
@@ -1416,3 +1473,115 @@ jobs:
             apk --keys-dir /edge/apk-keys verify \
             /edge/apk/stable/main/x86_64/APKINDEX.tar.gz \
             /edge/apk/stable/main/aarch64/APKINDEX.tar.gz
+
+      - name: Reconcile native installers on the GitHub release
+        if: steps.target.outputs.validate_only != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY_DIR: ${{ steps.repository.outputs.repository_dir }}
+        run: |
+          set -euo pipefail
+
+          assets_dir=$(mktemp -d "$RUNNER_TEMP/dotenc-release-installers.XXXXXX")
+          verification_dir=$(mktemp -d "$RUNNER_TEMP/dotenc-release-installer-verification.XXXXXX")
+          cleanup_release_assets() {
+            for directory in "$assets_dir" "$verification_dir"; do
+              if [[ "$directory" == "$RUNNER_TEMP"/dotenc-release-installers.* ||
+                "$directory" == "$RUNNER_TEMP"/dotenc-release-installer-verification.* ]]; then
+                rm -rf -- "$directory"
+              fi
+            done
+          }
+          trap cleanup_release_assets EXIT HUP INT TERM
+
+          deb_probe="$REPOSITORY_DIR/public/apt/pool/main/d/dotenc/dotenc_${VERSION}-1_amd64.deb"
+          rpm_probe="$REPOSITORY_DIR/public/rpm/x86_64/dotenc-${VERSION}-1.x86_64.rpm"
+          deb_contents=$(dpkg-deb --contents "$deb_probe")
+          rpm_contents=$(rpm --query --package --list "$rpm_probe")
+          if ! grep -Fq "./usr/share/keyrings/dotenc-archive-keyring.asc" <<<"$deb_contents" ||
+            ! grep -Fq "./etc/apt/sources.list.d/dotenc.sources" <<<"$deb_contents" ||
+            ! grep -Fxq "/etc/pki/rpm-gpg/dotenc.asc" <<<"$rpm_contents" ||
+            ! grep -Fxq "/etc/yum.repos.d/dotenc.repo" <<<"$rpm_contents"; then
+            echo "::notice title=Legacy native packages::This canonical bundle predates self-configuring release installers; leaving its GitHub release unchanged."
+            exit 0
+          fi
+
+          install -m 0644 \
+            "$REPOSITORY_DIR/public/apt/pool/main/d/dotenc/dotenc_${VERSION}-1_amd64.deb" \
+            "$assets_dir/dotenc-amd64.deb"
+          install -m 0644 \
+            "$REPOSITORY_DIR/public/apt/pool/main/d/dotenc/dotenc_${VERSION}-1_arm64.deb" \
+            "$assets_dir/dotenc-arm64.deb"
+          install -m 0644 \
+            "$REPOSITORY_DIR/public/rpm/x86_64/dotenc-${VERSION}-1.x86_64.rpm" \
+            "$assets_dir/dotenc-x86_64.rpm"
+          install -m 0644 \
+            "$REPOSITORY_DIR/public/rpm/aarch64/dotenc-${VERSION}-1.aarch64.rpm" \
+            "$assets_dir/dotenc-aarch64.rpm"
+
+          installer_assets=(
+            dotenc-amd64.deb
+            dotenc-arm64.deb
+            dotenc-x86_64.rpm
+            dotenc-aarch64.rpm
+          )
+          checksum_asset=dotenc-linux-installers.sha256
+          (
+            cd "$assets_dir"
+            sha256sum "${installer_assets[@]}" > "$checksum_asset"
+          )
+
+          mapfile -t existing_assets < <(
+            gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name'
+          )
+          release_has_asset() {
+            local candidate=$1
+            printf '%s\n' "${existing_assets[@]}" | grep -Fxq "$candidate"
+          }
+          download_release_asset() {
+            local asset=$1
+            local downloaded=false
+            for attempt in 1 2 3 4 5; do
+              rm -f "$verification_dir/$asset"
+              if gh release download "v$VERSION" \
+                --repo "$GITHUB_REPOSITORY" \
+                --dir "$verification_dir" \
+                --pattern "$asset"; then
+                downloaded=true
+                break
+              fi
+              sleep "$attempt"
+            done
+            if [[ "$downloaded" != "true" || ! -f "$verification_dir/$asset" ]]; then
+              echo "Unable to download release asset $asset for verification" >&2
+              exit 1
+            fi
+          }
+
+          for asset in "${installer_assets[@]}" "$checksum_asset"; do
+            if ! release_has_asset "$asset"; then
+              continue
+            fi
+            download_release_asset "$asset"
+            if ! cmp --silent "$assets_dir/$asset" "$verification_dir/$asset"; then
+              echo "Existing release asset $asset does not match the signed repository package; refusing to overwrite it" >&2
+              exit 1
+            fi
+          done
+
+          for asset in "${installer_assets[@]}" "$checksum_asset"; do
+            if release_has_asset "$asset"; then
+              continue
+            fi
+            gh release upload "v$VERSION" \
+              "$assets_dir/$asset" \
+              --repo "$GITHUB_REPOSITORY"
+            download_release_asset "$asset"
+            cmp "$assets_dir/$asset" "$verification_dir/$asset"
+          done
+
+          (
+            cd "$verification_dir"
+            sha256sum --check --strict "$checksum_asset"
+          )

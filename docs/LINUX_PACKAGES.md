@@ -21,7 +21,7 @@ publication. Keeping the package supply chain next to the CLI source and release
 workflow makes the source revision, standalone binaries, native packages, and
 repository metadata reviewable together.
 
-The delivery path has four distinct responsibilities:
+The delivery path has five distinct responsibilities:
 
 1. The dotenc release workflow builds the standalone CLI binaries from a tagged
    source revision and seals the four Linux archives plus `SHA256SUMS` in an
@@ -35,6 +35,10 @@ The delivery path has four distinct responsibilities:
    `dotenc-packages` bucket.
 4. Cloudflare exposes that tree only through `packages.dotenc.org`, enforces the
    HTTP policy, caches objects, and provides its managed DDoS protection.
+5. After the public repositories pass verification, the release workflow copies
+   the exact DEB and RPM bytes to stable architecture-specific assets on the
+   matching GitHub Release. These are first-install delivery aliases, not a
+   second package build.
 
 Cloudflare does not establish package authenticity. A valid repository or
 package signature, as applicable to the ecosystem, is still required even when
@@ -227,7 +231,24 @@ signed packages, a package digest manifest, and that manifest's detached
 APT-subkey signature. Every refresh verifies that detached signature and all
 package hashes before preserving the package set byte for byte and rebuilding
 only repository metadata. The adjacent bundle checksum is a transport-integrity
-check; the detached OpenPGP signature is the durable refresh trust input.
+check; the detached OpenPGP signature is the durable refresh trust input. New
+DEB and RPM builds embed only their validated public certificate and a
+signature-enforcing update-channel configuration. After public-edge checks, the
+workflow exposes those exact package bytes as `dotenc-amd64.deb`,
+`dotenc-arm64.deb`, `dotenc-x86_64.rpm`, and `dotenc-aarch64.rpm`, together with
+`dotenc-linux-installers.sha256`. Existing assets must match byte-for-byte and
+are never overwritten. A legacy canonical bundle without the embedded files is
+left unchanged, so `v0.12.1` is not retroactively presented as self-configuring.
+The base GitHub Release is already public while the protected Linux job runs,
+so its stable installer links can return `404` for a few minutes. Missing assets
+after the job finishes are a publication failure; a refresh safely reconciles
+them from the signed canonical bundle.
+
+The embedded `.sources` and `.repo` files are vendor-managed package files.
+Upgrades deliberately replace local edits instead of creating `.rpmnew` files
+or interactive conffile prompts, ensuring key and verification-policy changes
+are applied. Uninstall removes the managed channel. Operators that need custom
+repository settings must use a separate filename and repository ID.
 
 1. Build packages and metadata in an isolated temporary directory.
 2. Verify package contents, checksums, repository signatures, signing-key
@@ -387,12 +408,14 @@ Rotation is ecosystem-specific and must be rehearsed before launch:
 - Publish and distribute replacement APT trust material before switching the
   sole `InRelease` signature. Existing clients do not automatically replace a
   keyring file that an operator installed under `/etc/apt/keyrings`. The
-  canonical package manifest is also verified against the exact configured APT
-  primary and signing fingerprints; changing either fingerprint therefore
-  requires a new canonical bundle through a new package release under the
-  current workflow. Renewing a certificate without changing those fingerprints
-  can use a new certificate-digest URL without invalidating the old manifest
-  signature.
+  package-managed `/usr/share/keyrings/dotenc-archive-keyring.asc` can be
+  advanced by a package update, but the old and new trust roots must overlap
+  long enough for existing clients to receive it. The canonical package
+  manifest is also verified against the exact configured APT primary and
+  signing fingerprints; changing either fingerprint therefore requires a new
+  canonical bundle through a new package release under the current workflow.
+  Renewing a certificate without changing those fingerprints can use a new
+  certificate-digest URL without invalidating the old manifest signature.
 - Do not rely on RPM 4.x clients updating an imported certificate when only a
   new subkey is added under the same primary key. Use a separately planned RPM
   trust-root transition (normally a new primary certificate) or a tested
@@ -456,7 +479,13 @@ accounting for shared NAT and CI fleets.
   and APK package and `APKINDEX.tar.gz` signatures using only the public keys
   that users will receive.
 - Inspect package contents and install/remove scripts; confirm no private keys,
-  tokens, source `.env` files, or build paths are present.
+  tokens, source `.env` files, build paths, or network-fetching maintainer
+  scripts are present. Confirm each DEB and RPM contains the exact public
+  certificate and signature-enforcing update configuration intended for its
+  package manager.
+- Install both architectures' DEB and RPM files directly in clean containers,
+  then verify their key, repository configuration, and CLI version before
+  exercising normal repository installs.
 - Confirm every output object has its intended immutable or mutable
   `Cache-Control` value.
 
@@ -505,7 +534,11 @@ failure.
 Finally, use fresh containers or VMs to configure each repository using its
 published public key, refresh metadata, install dotenc, compare the installed
 version and checksum with the release manifest, run `dotenc --version`, and
-remove/reinstall the package.
+remove/reinstall the package. For a canonical bundle with the embedded update
+channel, also download every stable installer asset and
+`dotenc-linux-installers.sha256` from the matching GitHub Release, verify the
+checksum, and confirm each installer is byte-identical to its signed-repository
+package.
 
 ## Rollback and incident recovery
 

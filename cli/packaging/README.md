@@ -160,7 +160,7 @@ above without either `DOTENC_APT_GPG_PASSPHRASE_FILE` or
 unless its directory was created first. This direct form is acceptable only
 because the disposable test exports were created with empty passphrases;
 production uses the protected-source and transient-copy flow described above.
-A successful build has already verified:
+The builder verifies:
 
 - APT `InRelease` with isolated `gpgv` and the exact signing subkey;
 - the detached signature on `package-bundle-manifest.json` with that same exact
@@ -169,6 +169,16 @@ A successful build has already verified:
 - both RSA256-signed APK packages and indexes using the fingerprinted key name;
 - package name, version, and architecture metadata; and
 - that unrelated parent-process secrets were not inherited by tool subprocesses.
+
+The production workflow additionally installs both architectures' DEB and RPM
+files directly and verifies their exact embedded certificate, update-channel
+configuration, and CLI version before exercising repository installs.
+
+The embedded `.sources` and `.repo` files are ordinary package-owned files,
+not `noreplace` configuration. Upgrades may replace local edits so key and
+verification-policy changes cannot be stranded in `.rpmnew` or an interactive
+conffile prompt, and uninstalling dotenc removes the managed channel. Put local
+repository customization in a separate file and repository ID.
 
 ## Outputs and publication order
 
@@ -184,6 +194,16 @@ A successful build has already verified:
   detached signature until it can upload that signature and root consecutively,
   and then publishes the remaining phase 3 signed roots. It finally purges every
   listed path together to clear both stale content and cached 404/410 responses.
+- After public-edge verification, the workflow exposes the exact verified DEB
+  and RPM bytes on the matching GitHub Release as stable architecture-specific
+  installer assets plus `dotenc-linux-installers.sha256`. Existing assets are
+  never overwritten. Canonical bundles created before the embedded update
+  channel existed are deliberately left unchanged. Because the base Release is
+  published first, these assets can appear a few minutes later; a failed
+  reconciliation is a failed Linux publication. If a pre-existing asset differs
+  from the verified artifact, resolve or remove that asset before retrying. Once
+  the asset set is consistent, reconciliation is idempotent from the signed
+  canonical bundle.
 
 RPM requires a detached `repomd.xml.asc`, so R2 cannot make that pair fully
 atomic. The publisher uploads the signature immediately before `repomd.xml`;

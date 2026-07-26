@@ -197,7 +197,9 @@ describe("Linux native package selection", () => {
 		expect(result.calls).toContain(
 			`dotenc-apt-7BEFECEEA5921A0C3C431CFAA1A964033C1E2A5B-${APT_KEY_SHA256}.asc`,
 		)
-		expect(result.calls).toContain("FILE\tSigned-By: /etc/apt/keyrings/dotenc.asc")
+		expect(result.calls).toContain(
+			"FILE\tSigned-By: /usr/share/keyrings/dotenc-archive-keyring.asc",
+		)
 		expect(result.calls).toContain("apt-get\tinstall\t-y\tdotenc")
 		expect(result.calls.indexOf("sha256sum")).toBeLessThan(
 			result.calls.indexOf("apt-get"),
@@ -208,7 +210,7 @@ describe("Linux native package selection", () => {
 		"configures the signed RPM repository with %s",
 		(rpmInstaller) => {
 			const result = runInstaller({
-				commands: [rpmInstaller],
+				commands: [rpmInstaller, "rpm"],
 				hash: RPM_KEY_SHA256,
 			})
 
@@ -222,6 +224,10 @@ describe("Linux native package selection", () => {
 				"FILE\tgpgkey=file:///etc/pki/rpm-gpg/dotenc.asc",
 			)
 			expect(result.calls).toContain("FILE\tsslverify=1")
+			expect(result.calls).toContain("rpm\t--import\t")
+			expect(result.calls.indexOf("sha256sum")).toBeLessThan(
+				result.calls.indexOf("rpm\t--import\t"),
+			)
 			expect(result.calls).toContain(`${rpmInstaller}\tinstall\t-y\tdotenc`)
 		},
 	)
