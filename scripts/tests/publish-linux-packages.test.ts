@@ -187,6 +187,52 @@ describe("Linux package publication manifest", () => {
 		expect(workflow).not.toContain("almalinux:9-minimal")
 	})
 
+	test("keeps direct installer verification on local repositories", () => {
+		const workflow = readFileSync(
+			path.resolve(
+				import.meta.dir,
+				"../../.github/workflows/publish-linux-packages.yml",
+			),
+			"utf8",
+		)
+		const directInstallerBlocks = [
+			...workflow.matchAll(
+				/if \[ "\$TEST_DIRECT_INSTALLERS" = "true" \]; then\n([\s\S]*?)\n\s+fi/g,
+			),
+		].map((match) => match[1] ?? "")
+		const aptIsolation = [
+			'sed -i "s|^URIs: https://packages.dotenc.org/apt$|URIs: file:/repo/apt|" \\',
+			"                    /etc/apt/sources.list.d/dotenc.sources",
+			'                  grep -Fx "URIs: file:/repo/apt" \\',
+			"                    /etc/apt/sources.list.d/dotenc.sources >/dev/null",
+			'                  ! grep -F "packages.dotenc.org" \\',
+			"                    /etc/apt/sources.list.d/dotenc.sources >/dev/null",
+			"                  apt-get update >/dev/null",
+		].join("\n")
+		const rpmIsolation = [
+			'sed -i "s|^baseurl=https://packages.dotenc.org/rpm/.*$|baseurl=file:///repo/rpm/$RPM_ARCH|" \\',
+			"                    /etc/yum.repos.d/dotenc.repo",
+			'                  grep -Fx "baseurl=file:///repo/rpm/$RPM_ARCH" \\',
+			"                    /etc/yum.repos.d/dotenc.repo >/dev/null",
+			'                  ! grep -F "packages.dotenc.org" \\',
+			"                    /etc/yum.repos.d/dotenc.repo >/dev/null",
+			"                  dnf --assumeyes \\",
+			'                    --disablerepo="*" \\',
+			"                    --enablerepo=dotenc \\",
+			"                    makecache >/dev/null",
+		].join("\n")
+
+		expect(directInstallerBlocks).toHaveLength(2)
+		expect(directInstallerBlocks[0]).toContain(aptIsolation)
+		expect(directInstallerBlocks[1]).toContain(rpmIsolation)
+		expect(directInstallerBlocks[1]).toContain(
+			"test ! -e /etc/yum.repos.d/dotenc.repo.rpmnew",
+		)
+		expect(directInstallerBlocks[1]).toContain(
+			"test ! -e /etc/yum.repos.d/dotenc.repo.rpmsave",
+		)
+	})
+
 	test("verifies short Linux key aliases at the public edge", () => {
 		const workflow = readFileSync(
 			path.resolve(

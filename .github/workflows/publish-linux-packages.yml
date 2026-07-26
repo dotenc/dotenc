@@ -1031,6 +1031,12 @@ jobs:
                     /etc/apt/sources.list.d/dotenc.sources >/dev/null
                   grep -Fx "Signed-By: /usr/share/keyrings/dotenc-archive-keyring.asc" \
                     /etc/apt/sources.list.d/dotenc.sources >/dev/null
+                  sed -i "s|^URIs: https://packages.dotenc.org/apt$|URIs: file:/repo/apt|" \
+                    /etc/apt/sources.list.d/dotenc.sources
+                  grep -Fx "URIs: file:/repo/apt" \
+                    /etc/apt/sources.list.d/dotenc.sources >/dev/null
+                  ! grep -F "packages.dotenc.org" \
+                    /etc/apt/sources.list.d/dotenc.sources >/dev/null
                   apt-get update >/dev/null
                   test "$(dotenc --version)" = "$EXPECTED_VERSION"
                   apt-get remove --yes dotenc >/dev/null
@@ -1067,6 +1073,12 @@ jobs:
                     /etc/yum.repos.d/dotenc.repo >/dev/null
                   grep -Fx "gpgcheck=1" /etc/yum.repos.d/dotenc.repo >/dev/null
                   grep -Fx "repo_gpgcheck=1" /etc/yum.repos.d/dotenc.repo >/dev/null
+                  sed -i "s|^baseurl=https://packages.dotenc.org/rpm/.*$|baseurl=file:///repo/rpm/$RPM_ARCH|" \
+                    /etc/yum.repos.d/dotenc.repo
+                  grep -Fx "baseurl=file:///repo/rpm/$RPM_ARCH" \
+                    /etc/yum.repos.d/dotenc.repo >/dev/null
+                  ! grep -F "packages.dotenc.org" \
+                    /etc/yum.repos.d/dotenc.repo >/dev/null
                   dnf --assumeyes \
                     --disablerepo="*" \
                     --enablerepo=dotenc \
@@ -1076,6 +1088,8 @@ jobs:
                   dnf clean all >/dev/null
                   test ! -e /etc/pki/rpm-gpg/dotenc.asc
                   test ! -e /etc/yum.repos.d/dotenc.repo
+                  test ! -e /etc/yum.repos.d/dotenc.repo.rpmnew
+                  test ! -e /etc/yum.repos.d/dotenc.repo.rpmsave
                 fi
 
                 rpm --import /repo/keys/dotenc-rpm.asc

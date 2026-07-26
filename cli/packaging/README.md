@@ -200,8 +200,10 @@ repository customization in a separate file and repository ID.
   never overwritten. Canonical bundles created before the embedded update
   channel existed are deliberately left unchanged. Because the base Release is
   published first, these assets can appear a few minutes later; a failed
-  reconciliation is a failed Linux publication and can be repaired
-  idempotently from the signed canonical bundle.
+  reconciliation is a failed Linux publication. If a pre-existing asset differs
+  from the verified artifact, resolve or remove that asset before retrying. Once
+  the asset set is consistent, reconciliation is idempotent from the signed
+  canonical bundle.
 
 RPM requires a detached `repomd.xml.asc`, so R2 cannot make that pair fully
 atomic. The publisher uploads the signature immediately before `repomd.xml`;
