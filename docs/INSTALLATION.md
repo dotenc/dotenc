@@ -67,8 +67,7 @@ paru -S dotenc-bin
 ### Homebrew
 
 ```sh
-brew tap ivanfilhoz/dotenc
-brew install dotenc
+brew install ivanfilhoz/dotenc/dotenc
 ```
 
 ### Scoop
