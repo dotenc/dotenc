@@ -3,7 +3,9 @@ FROM dotenc-e2e
 # Install a Node runtime for the CLI-under-test.
 USER root
 RUN apt-get update && \
-	apt-get install -y nodejs && \
+	apt-get install -y --no-install-recommends nodejs && \
+	mkdir -p /cov && \
+	chown bun:bun /cov && \
 	rm -rf /var/lib/apt/lists/*
 USER bun
 

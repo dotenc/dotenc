@@ -182,6 +182,12 @@ rejected before the development server reads a file.
 **README demo artifacts** use a fixed scene-name allowlist before constructing
 recording, temporary-render, or published asset paths.
 
+**Local E2E coverage artifacts** remain inside the named non-root test
+container while tests run. The Docker client then copies them into a host-owned
+directory created with mode `0700`, and an exit trap removes the temporary
+container. This avoids granting broader host write access just to collect
+coverage.
+
 ---
 
 ## Access Control Model

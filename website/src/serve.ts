@@ -124,7 +124,7 @@ const server = Bun.serve({
 			const publicFile = Bun.file(publicPath)
 			if (await publicFile.exists()) {
 				return new Response(publicFile, {
-					headers: { "Content-Type": getMime(pathname) },
+					headers: { "Content-Type": getMime(publicPath) },
 				})
 			}
 		}
@@ -135,7 +135,7 @@ const server = Bun.serve({
 			const srcFile = Bun.file(srcPath)
 			if (await srcFile.exists()) {
 				return new Response(srcFile, {
-					headers: { "Content-Type": getMime(pathname) },
+					headers: { "Content-Type": getMime(srcPath) },
 				})
 			}
 		}

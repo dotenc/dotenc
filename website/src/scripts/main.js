@@ -1,5 +1,15 @@
 // ===== Copy to Clipboard =====
+const copyButtonStates = new WeakMap()
+
 document.querySelectorAll(".copy-btn").forEach((btn) => {
+	const svg = btn.querySelector("svg")
+	if (!svg) return
+
+	copyButtonStates.set(btn, {
+		originalIcon: [...svg.childNodes],
+		resetTimer: null,
+	})
+
 	btn.addEventListener("click", async () => {
 		const text = btn.dataset.copy
 		if (!text) return
@@ -8,8 +18,11 @@ document.querySelectorAll(".copy-btn").forEach((btn) => {
 			await navigator.clipboard.writeText(text)
 			btn.classList.add("copied")
 
-			const svg = btn.querySelector("svg")
-			const originalIcon = [...svg.childNodes]
+			const state = copyButtonStates.get(btn)
+			if (state.resetTimer !== null) {
+				clearTimeout(state.resetTimer)
+			}
+
 			const checkmark = document.createElementNS(
 				"http://www.w3.org/2000/svg",
 				"path",
@@ -20,9 +33,10 @@ document.querySelectorAll(".copy-btn").forEach((btn) => {
 			checkmark.setAttribute("d", "M5 13l4 4L19 7")
 			svg.replaceChildren(checkmark)
 
-			setTimeout(() => {
+			state.resetTimer = setTimeout(() => {
 				btn.classList.remove("copied")
-				svg.replaceChildren(...originalIcon)
+				svg.replaceChildren(...state.originalIcon)
+				state.resetTimer = null
 			}, 2000)
 		} catch {
 			// Fallback for older browsers

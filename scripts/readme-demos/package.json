@@ -7,6 +7,7 @@
 		"record": "bun run record.ts all",
 		"render": "bun run render.ts all",
 		"check": "bun run test && bun run check.ts",
+		"postinstall": "bun node_modules/electron/install.js",
 		"test": "bun test ./lib.test.ts"
 	},
 	"dependencies": {
@@ -14,6 +15,7 @@
 	},
 	"overrides": {
 		"electron": "^42.7.0",
+		"tmp": "0.2.7",
 		"uuid": "^11.1.1"
 	},
 	"trustedDependencies": [
