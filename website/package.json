@@ -7,6 +7,7 @@
 		"dev": "bun run src/serve.ts",
 		"build": "bun run src/build.ts",
 		"build:css": "bunx @tailwindcss/cli -i src/styles/main.css -o dist/styles.css --minify",
+		"test": "bun test ./tests",
 		"test:installer": "bun test ./tests/install.test.ts"
 	},
 	"devDependencies": {

@@ -173,6 +173,21 @@ await fs.writeFile(tempFilePath, Buffer.alloc(stat.size, 0))
 
 **Decrypted environment content** is parsed with Node's built-in `node:util.parseEnv` parser before variables are passed to child processes.
 
+**Website development requests** are resolved against the explicit `public/`
+and `src/` roots. URL-encoded pathnames are decoded once, malformed encodings
+and null bytes are rejected, and both lexical and canonical paths are checked
+against the selected root. Symlinks that resolve outside a static root are
+rejected before the development server reads a file.
+
+**README demo artifacts** use a fixed scene-name allowlist before constructing
+recording, temporary-render, or published asset paths.
+
+**Local E2E coverage artifacts** remain inside the named non-root test
+container while tests run. The Docker client then copies them into a host-owned
+directory created with mode `0700`, and an exit trap removes the temporary
+container. This avoids granting broader host write access just to collect
+coverage.
+
 ---
 
 ## Access Control Model

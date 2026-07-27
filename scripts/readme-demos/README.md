@@ -19,6 +19,9 @@ Install the pinned authoring dependency with Node 16 active:
 bun install --cwd scripts/readme-demos --frozen-lockfile
 ```
 
+The package postinstall uses Bun to download the pinned Electron binary while
+the active Node 16 runtime selects the matching native PTY ABI.
+
 ## Regenerate
 
 From the repository root:

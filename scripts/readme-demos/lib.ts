@@ -6,6 +6,14 @@ import path from "node:path"
 export const scenes = ["quickstart", "git-diff"] as const
 export type Scene = (typeof scenes)[number]
 
+export function assertScene(value: string): asserts value is Scene {
+	if (!scenes.includes(value as Scene)) {
+		throw new Error(
+			`Unknown demo "${value}". Expected: ${scenes.join(", ")}, or all.`,
+		)
+	}
+}
+
 export const demoDir = import.meta.dir
 export const repoRoot = path.resolve(demoDir, "../..")
 export const recordingsDir = path.join(demoDir, "recordings")
@@ -22,10 +30,8 @@ const nodeVersionPattern = /^v16\./
 
 export const parseSceneSelection = (value = "all"): Scene[] => {
 	if (value === "all") return [...scenes]
-	if (scenes.includes(value as Scene)) return [value as Scene]
-	throw new Error(
-		`Unknown demo "${value}". Expected: ${scenes.join(", ")}, or all.`,
-	)
+	assertScene(value)
+	return [value]
 }
 
 const commandOutput = (command: string, args: string[], env = process.env) => {
@@ -178,10 +184,15 @@ export const ensureOutputDirectories = async () => {
 	await fs.mkdir(assetsDir, { recursive: true })
 }
 
-export const recordingPath = (scene: Scene) =>
-	path.join(recordingsDir, `${scene}.yml`)
+export const recordingPath = (scene: Scene) => {
+	assertScene(scene)
+	return path.join(recordingsDir, `${scene}.yml`)
+}
 
-export const assetPath = (scene: Scene) => path.join(assetsDir, `${scene}.webp`)
+export const assetPath = (scene: Scene) => {
+	assertScene(scene)
+	return path.join(assetsDir, `${scene}.webp`)
+}
 
 export const removeRendererData = async () => {
 	await fs

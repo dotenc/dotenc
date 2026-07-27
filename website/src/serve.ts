@@ -2,6 +2,7 @@ import { watch } from "node:fs"
 import { join } from "node:path"
 import { $ } from "bun"
 import { inlineSvgPlaceholders } from "./helpers"
+import { resolveStaticPath } from "./resolveStaticPath"
 
 const ROOT = join(import.meta.dir, "..")
 const SRC = join(ROOT, "src")
@@ -118,21 +119,25 @@ const server = Bun.serve({
 		}
 
 		// Try public/ (static assets including Tailwind output)
-		const publicPath = join(PUBLIC, pathname)
-		const publicFile = Bun.file(publicPath)
-		if (await publicFile.exists()) {
-			return new Response(publicFile, {
-				headers: { "Content-Type": getMime(pathname) },
-			})
+		const publicPath = resolveStaticPath(PUBLIC, pathname)
+		if (publicPath) {
+			const publicFile = Bun.file(publicPath)
+			if (await publicFile.exists()) {
+				return new Response(publicFile, {
+					headers: { "Content-Type": getMime(publicPath) },
+				})
+			}
 		}
 
 		// Try src/ (JS files served directly)
-		const srcPath = join(SRC, pathname)
-		const srcFile = Bun.file(srcPath)
-		if (await srcFile.exists()) {
-			return new Response(srcFile, {
-				headers: { "Content-Type": getMime(pathname) },
-			})
+		const srcPath = resolveStaticPath(SRC, pathname)
+		if (srcPath) {
+			const srcFile = Bun.file(srcPath)
+			if (await srcFile.exists()) {
+				return new Response(srcFile, {
+					headers: { "Content-Type": getMime(srcPath) },
+				})
+			}
 		}
 
 		return new Response("Not Found", { status: 404 })
