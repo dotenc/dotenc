@@ -1,8 +1,10 @@
 FROM dotenc-e2e
 
 # Install a Node runtime for the CLI-under-test.
+USER root
 RUN apt-get update && \
 	apt-get install -y nodejs && \
 	rm -rf /var/lib/apt/lists/*
+USER bun
 
 ENTRYPOINT ["bash", "/app/cli/e2e/run-coverage.sh"]

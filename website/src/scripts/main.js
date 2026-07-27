@@ -9,20 +9,26 @@ document.querySelectorAll(".copy-btn").forEach((btn) => {
 			btn.classList.add("copied")
 
 			const svg = btn.querySelector("svg")
-			const originalPath = svg.innerHTML
-			svg.innerHTML =
-				'<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>'
+			const originalIcon = [...svg.childNodes]
+			const checkmark = document.createElementNS(
+				"http://www.w3.org/2000/svg",
+				"path",
+			)
+			checkmark.setAttribute("stroke-linecap", "round")
+			checkmark.setAttribute("stroke-linejoin", "round")
+			checkmark.setAttribute("stroke-width", "2")
+			checkmark.setAttribute("d", "M5 13l4 4L19 7")
+			svg.replaceChildren(checkmark)
 
 			setTimeout(() => {
 				btn.classList.remove("copied")
-				svg.innerHTML = originalPath
+				svg.replaceChildren(...originalIcon)
 			}, 2000)
 		} catch {
 			// Fallback for older browsers
 			const textarea = document.createElement("textarea")
 			textarea.value = text
-			textarea.style.position = "fixed"
-			textarea.style.opacity = "0"
+			textarea.className = "fixed fade-in-up"
 			document.body.appendChild(textarea)
 			textarea.select()
 			document.execCommand("copy")

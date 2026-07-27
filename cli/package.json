@@ -1,6 +1,6 @@
 {
   "name": "@dotenc/cli",
-  "version": "0.12.2",
+  "version": "0.12.3",
   "description": "🔐 Git-native encrypted environments powered by your SSH keys",
   "author": "Ivan Filho <i@ivanfilho.com>",
   "license": "MIT",
@@ -28,7 +28,7 @@
     "test": "bun run check:bun-version && bun test --isolate src/tests",
     "test:coverage": "bun run check:bun-version && bun test --isolate src/tests --coverage --coverage-reporter lcov --coverage-dir coverage",
     "test:e2e": "docker build -t dotenc-e2e -f e2e/Dockerfile .. && docker run --rm dotenc-e2e",
-    "test:e2e:coverage": "rm -rf coverage-e2e && mkdir -p coverage-e2e && docker build -t dotenc-e2e -f e2e/Dockerfile .. && docker build -t dotenc-e2e-coverage -f e2e/Dockerfile.coverage .. && docker run --rm -v \"$(pwd)/coverage-e2e:/cov\" dotenc-e2e-coverage"
+    "test:e2e:coverage": "rm -rf coverage-e2e && mkdir -p coverage-e2e && chmod 1777 coverage-e2e && docker build -t dotenc-e2e -f e2e/Dockerfile .. && docker build -t dotenc-e2e-coverage -f e2e/Dockerfile.coverage .. && docker run --rm -v \"$(pwd)/coverage-e2e:/cov\" dotenc-e2e-coverage"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.1.2",
@@ -40,7 +40,7 @@
     "commander": "^13.1.0",
     "consola": "^3.4.2",
     "eciesjs": "^0.4.15",
-    "zod": "^3.24.2"
+    "zod": "^4.4.3"
   },
   "repository": {
     "type": "git",

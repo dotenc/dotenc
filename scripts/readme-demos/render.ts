@@ -3,6 +3,7 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import {
+	assertScene,
 	assertTerminalizer,
 	assetPath,
 	assetsDir,
@@ -17,6 +18,7 @@ import {
 } from "./lib"
 
 export const renderScene = async (scene: Scene, temporaryHome?: string) => {
+	assertScene(scene)
 	await ensureOutputDirectories()
 	const ownsHome = !temporaryHome
 	const rendererHome =

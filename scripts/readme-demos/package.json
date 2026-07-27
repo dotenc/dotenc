@@ -6,10 +6,15 @@
 	"scripts": {
 		"record": "bun run record.ts all",
 		"render": "bun run render.ts all",
-		"check": "bun run check.ts"
+		"check": "bun run test && bun run check.ts",
+		"test": "bun test ./lib.test.ts"
 	},
 	"dependencies": {
 		"terminalizer": "0.12.0"
+	},
+	"overrides": {
+		"electron": "^42.7.0",
+		"uuid": "^11.1.1"
 	},
 	"trustedDependencies": [
 		"@homebridge/node-pty-prebuilt-multiarch",
