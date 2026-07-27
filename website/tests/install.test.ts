@@ -318,6 +318,7 @@ describe("existing platform fallbacks", () => {
 		expect(result.calls).toContain(
 			"brew\tinstall\tivanfilhoz/dotenc/dotenc",
 		)
+		expect(result.calls).not.toContain("brew\ttap")
 		expect(result.calls).not.toContain("npm\t")
 	})
 
