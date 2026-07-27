@@ -69,4 +69,10 @@ if (!generatedOutput || resolve(generatedOutput.path) !== outputPath) {
 	process.exit(1)
 }
 
+const output = await Bun.file(outputPath).text()
+const normalizedOutput = output.replace(/^[\t ]+$/gm, "")
+if (normalizedOutput !== output) {
+	await Bun.write(outputPath, normalizedOutput)
+}
+
 console.log(`Built ${outputPath}`)
