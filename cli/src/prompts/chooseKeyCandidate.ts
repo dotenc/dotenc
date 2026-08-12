@@ -53,10 +53,10 @@ const defaultDeps: ChooseKeyCandidateDeps = {
 	logWarn: (message) => logger.warn(message),
 }
 
-function unsupportedSummary(result: GetKeyCandidatesResult): string {
-	return (result.unsupportedKeys ?? [])
-		.map((key) => `  - ${key.name}: ${key.reason}`)
-		.join("\n")
+function unsupportedSummary(
+	keys: NonNullable<GetKeyCandidatesResult["unsupportedKeys"]>,
+): string {
+	return keys.map((key) => `  - ${key.name}: ${key.reason}`).join("\n")
 }
 
 function selectPreferred(
@@ -150,14 +150,18 @@ function logDiscoveryWarnings(
 	result: GetKeyCandidatesResult,
 	logWarn: (message: string) => void,
 ) {
+	const passphraseProtectedKeySet = new Set(result.passphraseProtectedKeys)
+	const unsupportedKeys = (result.unsupportedKeys ?? []).filter(
+		(key) => !passphraseProtectedKeySet.has(key.name),
+	)
 	const environmentPassphraseKeys =
 		result.passphraseProtectedKeys.filter(isEnvironmentKeyName)
 	if (environmentPassphraseKeys.length > 0) {
 		logWarn(passphraseProtectedKeyError(environmentPassphraseKeys))
 	}
-	if ((result.unsupportedKeys ?? []).length > 0) {
+	if (unsupportedKeys.length > 0) {
 		logWarn(
-			`${chalk.yellow("Warning:")} unsupported SSH keys will be ignored:\n${unsupportedSummary(result)}`,
+			`${chalk.yellow("Warning:")} unsupported SSH keys will be ignored:\n${unsupportedSummary(unsupportedKeys)}`,
 		)
 	}
 	for (const account of result.onePassword.unavailableAccounts) {
@@ -216,7 +220,7 @@ export async function _runChooseKeyCandidatePrompt(
 			}
 			if ((result.unsupportedKeys ?? []).length > 0) {
 				throw new Error(
-					`No supported SSH keys found.\n\nUnsupported keys:\n${unsupportedSummary(result)}\n\nGenerate a new key with:\n  ssh-keygen -t ed25519 -N ""`,
+					`No supported SSH keys found.\n\nUnsupported keys:\n${unsupportedSummary(result.unsupportedKeys ?? [])}\n\nGenerate a new key with:\n  ssh-keygen -t ed25519 -N ""`,
 				)
 			}
 			throw new Error(

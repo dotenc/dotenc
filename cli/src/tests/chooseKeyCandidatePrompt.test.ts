@@ -167,6 +167,29 @@ describe("chooseKeyCandidatePrompt", () => {
 		expect(testDeps.createPasswordlessSshKeyCopy).not.toHaveBeenCalled()
 	})
 
+	test("does not flag selectable passphrase keys as unsupported", async () => {
+		const filesystem = localCandidate("id_ed25519")
+		const value = result([filesystem])
+		value.passphraseProtectedKeys = ["id_locked"]
+		value.unsupportedKeys = [
+			{ name: "id_locked", reason: "passphrase-protected" },
+		]
+		const testDeps = deps(value, filesystem.selector)
+
+		await expect(
+			_runChooseKeyCandidatePrompt("Choose", testDeps),
+		).resolves.toBe(filesystem)
+		expect(testDeps.logWarn).not.toHaveBeenCalled()
+		const options = (testDeps.promptGroupedSelect as ReturnType<typeof mock>)
+			.mock.calls[0][1].options as Array<{ label: string; hint?: string }>
+		expect(options).toContainEqual(
+			expect.objectContaining({
+				label: "id_locked",
+				hint: "passphrase-protected",
+			}),
+		)
+	})
+
 	test("rejects a crafted environment-key local-copy selection", async () => {
 		const filesystem = localCandidate("id_ed25519")
 		const value = result([filesystem])
