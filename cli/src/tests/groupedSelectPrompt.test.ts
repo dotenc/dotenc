@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test"
 import { stripVTControlCharacters } from "node:util"
-import { _renderGroupedSelect, _renderGroupedSpinner } from "../ui/prompts"
+import {
+	_renderGroupedSelect,
+	_renderGroupedSpinner,
+	runWithGroupedSpinner,
+} from "../ui/prompts"
 
 describe("grouped select prompt", () => {
 	const options = [
@@ -60,5 +64,15 @@ describe("grouped select prompt", () => {
 
 		expect(first).toBe("1Password\n◒ Loading SSH keys...")
 		expect(second).toBe("1Password\n◐ Loading SSH keys...")
+	})
+
+	test("runs the grouped spinner task directly outside an interactive terminal", async () => {
+		await expect(
+			runWithGroupedSpinner(
+				"1Password",
+				"Loading SSH keys...",
+				async () => "loaded",
+			),
+		).resolves.toBe("loaded")
 	})
 })

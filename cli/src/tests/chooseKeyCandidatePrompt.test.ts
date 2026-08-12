@@ -194,6 +194,31 @@ describe("chooseKeyCandidatePrompt", () => {
 		}
 	})
 
+	test("reports unsupported keys and unavailable accounts after discovery", async () => {
+		const local = localCandidate("id_ed25519")
+		const value = result([local])
+		value.unsupportedKeys = [
+			{ name: "legacy-key", reason: "unsupported algorithm" },
+		]
+		value.onePassword.unavailableAccounts = [
+			{
+				label: "1Password - unavailable.example [AAAA...AAAA]",
+				reason: "authorization-or-access-failed",
+			},
+		]
+		const testDeps = deps(value, local.selector)
+
+		await expect(
+			_runChooseKeyCandidatePrompt("Choose", testDeps),
+		).resolves.toBe(local)
+		expect(testDeps.logWarn).toHaveBeenCalledWith(
+			expect.stringContaining("legacy-key: unsupported algorithm"),
+		)
+		expect(testDeps.logWarn).toHaveBeenCalledWith(
+			expect.stringContaining("authorization-or-access-failed"),
+		)
+	})
+
 	test("renders stable account categories and returns the selected public candidate", async () => {
 		const first = candidate(
 			ACCOUNT_A,
@@ -260,6 +285,29 @@ describe("chooseKeyCandidatePrompt", () => {
 		})
 		expect(testDeps.runWithGroupedSpinner).not.toHaveBeenCalled()
 		expect(testDeps.promptGroupedSelect).not.toHaveBeenCalled()
+	})
+
+	test("loads 1Password before rejecting an unresolved preferred key", async () => {
+		const localResult = result([], "not-requested")
+		const providerResult = result([])
+		const getKeyCandidates = mock()
+			.mockResolvedValueOnce(localResult)
+			.mockResolvedValueOnce(providerResult)
+		const testDeps = {
+			...deps(localResult),
+			getKeyCandidates: getKeyCandidates as never,
+		}
+
+		await expect(
+			_runChooseKeyCandidatePrompt("Choose", testDeps, {
+				preferredKeyName: "missing",
+			}),
+		).rejects.toThrow("was not found")
+		expect(testDeps.runWithGroupedSpinner).toHaveBeenCalledTimes(1)
+		expect(getKeyCandidates.mock.calls).toEqual([
+			[{ includeOnePassword: false }],
+			[{ includeOnePassword: true }],
+		])
 	})
 
 	test("keeps environment passphrase keys out of the local-copy choices", async () => {
@@ -391,6 +439,13 @@ describe("chooseKeyCandidatePrompt", () => {
 				isInteractive: () => false,
 			}),
 		).rejects.toThrow("configured 1Password accounts")
+
+		await expect(
+			_runChooseKeyCandidatePrompt("Choose", {
+				...deps(result([])),
+				isInteractive: () => false,
+			}),
+		).rejects.toThrow("No SSH keys found in ~/.ssh/.")
 	})
 
 	test("handles preferred passphrase, unsupported, and missing selectors", async () => {
@@ -440,6 +495,28 @@ describe("chooseKeyCandidatePrompt", () => {
 		)
 	})
 
+	test("keeps the picker usable when local key creation fails", async () => {
+		const local = localCandidate("id_ed25519")
+		const value = result([local])
+		const promptGroupedSelect = mock()
+			.mockResolvedValueOnce(CREATE_NEW_PRIVATE_KEY_CHOICE)
+			.mockResolvedValueOnce(local.selector)
+		const testDeps = {
+			...deps(value),
+			promptGroupedSelect: promptGroupedSelect as never,
+			createEd25519SshKey: mock(async () => {
+				throw new Error("creation failed")
+			}) as never,
+		}
+
+		await expect(
+			_runChooseKeyCandidatePrompt("Choose", testDeps),
+		).resolves.toBe(local)
+		expect(testDeps.logWarn).toHaveBeenCalledWith(
+			expect.stringContaining("creation failed"),
+		)
+	})
+
 	test("creates a passwordless copy only for a filesystem key", async () => {
 		const initial = result([])
 		initial.passphraseProtectedKeys = ["id_rsa"]
@@ -465,6 +542,30 @@ describe("chooseKeyCandidatePrompt", () => {
 		).resolves.toBe(copied)
 		expect(testDeps.createPasswordlessSshKeyCopy).toHaveBeenCalledWith(
 			"/home/tester/.ssh/id_rsa",
+		)
+	})
+
+	test("keeps the picker usable when passwordless copy creation fails", async () => {
+		const local = localCandidate("id_ed25519")
+		const value = result([local])
+		value.passphraseProtectedKeys = ["id_rsa"]
+		const promptGroupedSelect = mock()
+			.mockResolvedValueOnce("__dotenc_passphrase_protected_key__:id_rsa")
+			.mockResolvedValueOnce(local.selector)
+		const testDeps = {
+			...deps(value),
+			promptConfirm: mock(async () => true) as never,
+			promptGroupedSelect: promptGroupedSelect as never,
+			createPasswordlessSshKeyCopy: mock(async () => {
+				throw new Error("copy failed")
+			}) as never,
+		}
+
+		await expect(
+			_runChooseKeyCandidatePrompt("Choose", testDeps),
+		).resolves.toBe(local)
+		expect(testDeps.logWarn).toHaveBeenCalledWith(
+			expect.stringContaining("copy failed"),
 		)
 	})
 })
