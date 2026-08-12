@@ -20106,7 +20106,7 @@ var decryptDataKey = (keyInfo, encryptedDataKey) => {
 };
 
 // cli/src/helpers/decryptEnvironment.ts
-var import_node_crypto9 = require("node:crypto");
+var import_node_crypto10 = require("node:crypto");
 
 // node_modules/chalk/source/vendor/ansi-styles/index.js
 var ANSI_BACKGROUND_OFFSET = 10;
@@ -20701,68 +20701,89 @@ function isOpenSSHKeyEncrypted(content) {
 // cli/src/helpers/parseOpenSSHKey.ts
 var import_node_crypto4 = __toESM(require("node:crypto"));
 function parseOpenSSHPrivateKey(content) {
-  const lines = content.split(`
-`);
-  const startIdx = lines.findIndex((l) => l.trim().startsWith("-----BEGIN OPENSSH PRIVATE KEY-----"));
-  const endIdx = lines.findIndex((l) => l.trim().startsWith("-----END OPENSSH PRIVATE KEY-----"));
-  if (startIdx === -1 || endIdx === -1)
+  const base643 = extractOpenSshBase64(content);
+  if (!base643)
     return null;
-  const base643 = lines.slice(startIdx + 1, endIdx).map((l) => l.trim()).join("");
   const buf = Buffer.from(base643, "base64");
-  let offset = 0;
-  const MAGIC = "openssh-key-v1\x00";
-  const magic = buf.subarray(0, MAGIC.length).toString("ascii");
-  if (magic !== MAGIC)
+  try {
+    let offset = 0;
+    const MAGIC = "openssh-key-v1\x00";
+    const magic = buf.subarray(0, MAGIC.length).toString("ascii");
+    if (magic !== MAGIC)
+      return null;
+    offset += MAGIC.length;
+    const ciphername = readString(buf, offset);
+    if (!ciphername)
+      return null;
+    offset = ciphername.nextOffset;
+    if (ciphername.value !== "none")
+      return null;
+    const kdfname = readString(buf, offset);
+    if (!kdfname)
+      return null;
+    offset = kdfname.nextOffset;
+    const kdfoptions = readString(buf, offset);
+    if (!kdfoptions)
+      return null;
+    offset = kdfoptions.nextOffset;
+    if (offset + 4 > buf.length)
+      return null;
+    const numKeys2 = buf.readUInt32BE(offset);
+    offset += 4;
+    if (numKeys2 !== 1)
+      return null;
+    const pubKeyBlob = readString(buf, offset);
+    if (!pubKeyBlob)
+      return null;
+    offset = pubKeyBlob.nextOffset;
+    const privBlob = readBytes(buf, offset);
+    if (!privBlob)
+      return null;
+    const priv = privBlob.value;
+    let pOffset = 0;
+    if (pOffset + 8 > priv.length)
+      return null;
+    const check1 = priv.readUInt32BE(pOffset);
+    pOffset += 4;
+    const check2 = priv.readUInt32BE(pOffset);
+    pOffset += 4;
+    if (check1 !== check2)
+      return null;
+    const keyType = readString(priv, pOffset);
+    if (!keyType)
+      return null;
+    pOffset = keyType.nextOffset;
+    if (keyType.value === "ssh-ed25519") {
+      return parseEd25519(priv, pOffset);
+    }
+    if (keyType.value === "ssh-rsa") {
+      return parseRSA(priv, pOffset);
+    }
     return null;
-  offset += MAGIC.length;
-  const ciphername = readString(buf, offset);
-  if (!ciphername)
-    return null;
-  offset = ciphername.nextOffset;
-  if (ciphername.value !== "none")
-    return null;
-  const kdfname = readString(buf, offset);
-  if (!kdfname)
-    return null;
-  offset = kdfname.nextOffset;
-  const kdfoptions = readString(buf, offset);
-  if (!kdfoptions)
-    return null;
-  offset = kdfoptions.nextOffset;
-  if (offset + 4 > buf.length)
-    return null;
-  const numKeys2 = buf.readUInt32BE(offset);
-  offset += 4;
-  if (numKeys2 !== 1)
-    return null;
-  const pubKeyBlob = readString(buf, offset);
-  if (!pubKeyBlob)
-    return null;
-  offset = pubKeyBlob.nextOffset;
-  const privBlob = readBytes(buf, offset);
-  if (!privBlob)
-    return null;
-  const priv = privBlob.value;
-  let pOffset = 0;
-  if (pOffset + 8 > priv.length)
-    return null;
-  const check1 = priv.readUInt32BE(pOffset);
-  pOffset += 4;
-  const check2 = priv.readUInt32BE(pOffset);
-  pOffset += 4;
-  if (check1 !== check2)
-    return null;
-  const keyType = readString(priv, pOffset);
-  if (!keyType)
-    return null;
-  pOffset = keyType.nextOffset;
-  if (keyType.value === "ssh-ed25519") {
-    return parseEd25519(priv, pOffset);
+  } finally {
+    buf.fill(0);
   }
-  if (keyType.value === "ssh-rsa") {
-    return parseRSA(priv, pOffset);
+}
+var OPENSSH_BEGIN = "-----BEGIN OPENSSH PRIVATE KEY-----";
+var OPENSSH_END = "-----END OPENSSH PRIVATE KEY-----";
+function extractOpenSshBase64(content) {
+  if (typeof content === "string") {
+    const lines = content.split(`
+`);
+    const startIdx2 = lines.findIndex((line) => line.trim().startsWith(OPENSSH_BEGIN));
+    const endIdx2 = lines.findIndex((line) => line.trim().startsWith(OPENSSH_END));
+    if (startIdx2 === -1 || endIdx2 <= startIdx2)
+      return null;
+    return lines.slice(startIdx2 + 1, endIdx2).map((line) => line.trim()).join("");
   }
-  return null;
+  const startIdx = content.indexOf(OPENSSH_BEGIN);
+  if (startIdx === -1)
+    return null;
+  const bodyStart = startIdx + OPENSSH_BEGIN.length;
+  const endIdx = content.indexOf(OPENSSH_END, bodyStart);
+  if (endIdx === -1)
+    return null;
+  return content.subarray(bodyStart, endIdx).toString("ascii").replace(/\s+/g, "");
 }
 function parseEd25519(priv, offset) {
   const pubKey = readBytes(priv, offset);
@@ -20796,6 +20817,8 @@ function parseEd25519(priv, offset) {
     return import_node_crypto4.default.createPrivateKey({ key: der, format: "der", type: "pkcs8" });
   } catch {
     return null;
+  } finally {
+    der.fill(0);
   }
 }
 function parseRSA(priv, offset) {
@@ -20881,7 +20904,12 @@ function readMpint(buf, offset) {
   return { value, nextOffset: bytes.nextOffset };
 }
 function bufToBase64Url(buf) {
-  return Buffer.from(buf).toString("base64url");
+  const copy = Buffer.from(buf);
+  try {
+    return copy.toString("base64url");
+  } finally {
+    copy.fill(0);
+  }
 }
 function bufToBigInt(buf) {
   let result = 0n;
@@ -20895,7 +20923,12 @@ function bigIntToBase64Url(n) {
     return "AA";
   const hex3 = n.toString(16);
   const padded = hex3.length % 2 ? `0${hex3}` : hex3;
-  return Buffer.from(padded, "hex").toString("base64url");
+  const bytes = Buffer.from(padded, "hex");
+  try {
+    return bytes.toString("base64url");
+  } finally {
+    bytes.fill(0);
+  }
 }
 
 // cli/src/helpers/parsePassphraseProtectedPrivateKey.ts
@@ -21277,9 +21310,96 @@ var getPrivateKeys = async (options = {}) => {
 
 // cli/src/helpers/onePasswordKeyProvider.ts
 var import_node_child_process2 = require("node:child_process");
-var import_node_crypto8 = __toESM(require("node:crypto"));
+var import_node_crypto9 = __toESM(require("node:crypto"));
+// cli/src/helpers/onePasswordLocatorCache.ts
+var import_node_crypto7 = require("node:crypto");
+var import_promises4 = __toESM(require("node:fs/promises"));
+var import_node_os4 = __toESM(require("node:os"));
+var import_node_path4 = __toESM(require("node:path"));
+var ONE_PASSWORD_ID_PATTERN = /^[A-Za-z0-9]{26}$/;
+var MAX_CACHE_ENTRY_BYTES = 4 * 1024;
+var locatorSchema = exports_external.strictObject({
+  accountId: exports_external.string().regex(ONE_PASSWORD_ID_PATTERN),
+  vaultId: exports_external.string().regex(ONE_PASSWORD_ID_PATTERN),
+  itemId: exports_external.string().regex(ONE_PASSWORD_ID_PATTERN)
+});
+var cacheEntrySchema = exports_external.strictObject({
+  version: exports_external.literal(1),
+  fingerprint: exports_external.string().min(1).max(256),
+  locator: locatorSchema
+});
+function getOnePasswordLocatorCacheDirectory(deps = {}) {
+  const env2 = deps.env ?? process.env;
+  const homedir = deps.homedir ?? import_node_os4.default.homedir;
+  const platform = deps.platform ?? process.platform;
+  if (env2.XDG_CACHE_HOME && import_node_path4.default.isAbsolute(env2.XDG_CACHE_HOME)) {
+    return import_node_path4.default.join(env2.XDG_CACHE_HOME, "dotenc");
+  }
+  if (platform === "win32" && env2.LOCALAPPDATA && import_node_path4.default.isAbsolute(env2.LOCALAPPDATA)) {
+    return import_node_path4.default.join(env2.LOCALAPPDATA, "dotenc", "Cache");
+  }
+  if (platform === "win32") {
+    return import_node_path4.default.join(homedir(), "AppData", "Local", "dotenc", "Cache");
+  }
+  return import_node_path4.default.join(homedir(), ".cache", "dotenc");
+}
+function cacheEntryPath(fingerprint, cacheDirectory) {
+  const cacheKey = import_node_crypto7.createHash("sha256").update(fingerprint).digest("hex");
+  return import_node_path4.default.join(cacheDirectory, "onepassword-locators-v1", `${cacheKey}.json`);
+}
+async function readOnePasswordLocator(fingerprint, options = {}) {
+  const cacheDirectory = options.cacheDirectory ?? getOnePasswordLocatorCacheDirectory();
+  const filePath = cacheEntryPath(fingerprint, cacheDirectory);
+  try {
+    const handle = await import_promises4.default.open(filePath, "r");
+    try {
+      const stat = await handle.stat();
+      if (!stat.isFile() || stat.size > MAX_CACHE_ENTRY_BYTES)
+        return;
+      const entry = cacheEntrySchema.parse(JSON.parse(await handle.readFile("utf8")));
+      return entry.fingerprint === fingerprint ? entry.locator : undefined;
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return;
+  }
+}
+async function writeOnePasswordLocator(fingerprint, locator, options = {}) {
+  const parsedLocator = locatorSchema.safeParse(locator);
+  if (!parsedLocator.success || fingerprint.length === 0 || fingerprint.length > 256) {
+    return false;
+  }
+  const cacheDirectory = options.cacheDirectory ?? getOnePasswordLocatorCacheDirectory();
+  const filePath = cacheEntryPath(fingerprint, cacheDirectory);
+  const directory = import_node_path4.default.dirname(filePath);
+  const temporaryPath = import_node_path4.default.join(directory, `.${import_node_path4.default.basename(filePath)}.${process.pid}-${import_node_crypto7.randomUUID()}.tmp`);
+  try {
+    await import_promises4.default.mkdir(cacheDirectory, { recursive: true, mode: 448 });
+    await import_promises4.default.chmod(cacheDirectory, 448);
+    await import_promises4.default.mkdir(directory, { recursive: true, mode: 448 });
+    await import_promises4.default.chmod(directory, 448);
+    await import_promises4.default.writeFile(temporaryPath, JSON.stringify({
+      version: 1,
+      fingerprint,
+      locator: parsedLocator.data
+    }), { flag: "wx", mode: 384 });
+    await import_promises4.default.rename(temporaryPath, filePath);
+    await import_promises4.default.chmod(filePath, 384);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await import_promises4.default.rm(temporaryPath, { force: true }).catch(() => {});
+  }
+}
+async function removeOnePasswordLocator(fingerprint, options = {}) {
+  const cacheDirectory = options.cacheDirectory ?? getOnePasswordLocatorCacheDirectory();
+  await import_promises4.default.rm(cacheEntryPath(fingerprint, cacheDirectory), { force: true }).catch(() => {});
+}
+
 // cli/src/helpers/parseOpenSSHPublicKey.ts
-var import_node_crypto7 = __toESM(require("node:crypto"));
+var import_node_crypto8 = __toESM(require("node:crypto"));
 function readBytes2(buffer, offset) {
   if (offset + 4 > buffer.length)
     return null;
@@ -21315,7 +21435,7 @@ function parseEd255192(buffer, offset) {
   const spkiPrefix = Buffer.from("302a300506032b6570032100", "hex");
   const der = Buffer.concat([spkiPrefix, rawPublicKey.value]);
   try {
-    return import_node_crypto7.default.createPublicKey({ key: der, format: "der", type: "spki" });
+    return import_node_crypto8.default.createPublicKey({ key: der, format: "der", type: "spki" });
   } catch {
     return null;
   } finally {
@@ -21330,7 +21450,7 @@ function parseRsa(buffer, offset) {
   if (!modulus || modulus.nextOffset !== buffer.length)
     return null;
   try {
-    return import_node_crypto7.default.createPublicKey({
+    return import_node_crypto8.default.createPublicKey({
       key: {
         kty: "RSA",
         e: stripMpintPadding(exponent.value).toString("base64url"),
@@ -21443,18 +21563,18 @@ var OP_ITEM_GET_CONCURRENCY = 4;
 var OP_METADATA_MAX_BYTES = 4 * 1024 * 1024;
 var OP_PRIVATE_KEY_MAX_BYTES = 256 * 1024;
 var OP_ERROR_MAX_BYTES = 256 * 1024;
-var ONE_PASSWORD_ID_PATTERN = /^[A-Za-z0-9]{26}$/;
+var ONE_PASSWORD_ID_PATTERN2 = /^[A-Za-z0-9]{26}$/;
 var accountSchema = exports_external.looseObject({
-  account_uuid: exports_external.string().regex(ONE_PASSWORD_ID_PATTERN),
+  account_uuid: exports_external.string().regex(ONE_PASSWORD_ID_PATTERN2),
   email: exports_external.string().optional(),
   url: exports_external.string().optional()
 });
 var accountsSchema = exports_external.array(accountSchema);
 var itemOverviewSchema = exports_external.looseObject({
-  id: exports_external.string().regex(ONE_PASSWORD_ID_PATTERN),
+  id: exports_external.string().regex(ONE_PASSWORD_ID_PATTERN2),
   title: exports_external.string(),
   vault: exports_external.looseObject({
-    id: exports_external.string().regex(ONE_PASSWORD_ID_PATTERN),
+    id: exports_external.string().regex(ONE_PASSWORD_ID_PATTERN2),
     name: exports_external.string().optional()
   })
 });
@@ -21500,6 +21620,10 @@ var runOpCommand = (args, options = {}) => new Promise((resolve, reject) => {
   }, timeoutMs);
   child.stdout.on("data", (chunk) => {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    if (settled) {
+      bytes.fill(0);
+      return;
+    }
     stdoutBytes += bytes.length;
     if (stdoutBytes > maxOutputBytes) {
       bytes.fill(0);
@@ -21601,12 +21725,11 @@ function detectAlgorithm2(key) {
   return null;
 }
 function parsePrivateKey(buffer) {
-  const content = buffer.toString("utf8");
   try {
     try {
-      return import_node_crypto8.default.createPrivateKey(content);
+      return import_node_crypto9.default.createPrivateKey(buffer);
     } catch {
-      return parseOpenSSHPrivateKey(content);
+      return parseOpenSSHPrivateKey(buffer);
     }
   } finally {
     buffer.fill(0);
@@ -21623,7 +21746,7 @@ function privateKeyEntry(name, privateKey) {
     algorithm
   };
   if (algorithm === "ed25519") {
-    const publicDer = import_node_crypto8.default.createPublicKey(privateKey).export({ type: "spki", format: "der" });
+    const publicDer = import_node_crypto9.default.createPublicKey(privateKey).export({ type: "spki", format: "der" });
     entry.rawPublicKey = Buffer.from(publicDer.subarray(publicDer.length - 32));
     publicDer.fill(0);
   }
@@ -21639,13 +21762,40 @@ function itemHint(item, algorithm) {
 function itemSelector(accountId, item) {
   return `1password:${accountId}:${item.vault.id}:${item.id}`;
 }
-function privateKeyReference(accountId, item) {
-  if (!ONE_PASSWORD_ID_PATTERN.test(accountId) || !ONE_PASSWORD_ID_PATTERN.test(item.vault.id) || !ONE_PASSWORD_ID_PATTERN.test(item.id)) {
+function privateKeyReference(locator) {
+  if (!ONE_PASSWORD_ID_PATTERN2.test(locator.accountId) || !ONE_PASSWORD_ID_PATTERN2.test(locator.vaultId) || !ONE_PASSWORD_ID_PATTERN2.test(locator.itemId)) {
     throw new OnePasswordProviderError("1Password returned an invalid object identifier.", "invalid-response");
   }
-  return `op://${item.vault.id}/${item.id}/private_key?ssh-format=openssh`;
+  return `op://${locator.vaultId}/${locator.itemId}/private_key?ssh-format=openssh`;
 }
-function createCandidate(account, item, publicKey, runCommand) {
+async function loadPrivateKeyFromLocator(fingerprint, locator, name, runCommand, preserveSerializedKey = false) {
+  let output;
+  try {
+    output = await runCommand(["read", "--account", locator.accountId, privateKeyReference(locator)], { maxOutputBytes: OP_PRIVATE_KEY_MAX_BYTES });
+  } catch (error51) {
+    throw new OnePasswordProviderError(`Unable to retrieve ${name} from 1Password.`, "command-failed", { cause: error51 });
+  }
+  const serializedKey = preserveSerializedKey ? Buffer.from(output) : undefined;
+  try {
+    const privateKey = parsePrivateKey(output);
+    if (!privateKey) {
+      throw new OnePasswordProviderError(`1Password returned an invalid private key for ${name}.`, "invalid-private-key");
+    }
+    const entry = privateKeyEntry(name, privateKey);
+    if (!entry) {
+      throw new OnePasswordProviderError(`1Password returned an unsupported private key for ${name}.`, "invalid-private-key");
+    }
+    if (entry.fingerprint !== fingerprint) {
+      entry.rawPublicKey?.fill(0);
+      throw new OnePasswordProviderError(`The private key returned by 1Password no longer matches ${name}.`, "fingerprint-mismatch");
+    }
+    return { entry, serializedKey };
+  } catch (error51) {
+    serializedKey?.fill(0);
+    throw error51;
+  }
+}
+function createCandidate(account, item, publicKey, runCommand, rememberLocator) {
   const algorithm = detectAlgorithm2(publicKey);
   if (!algorithm) {
     throw new OnePasswordProviderError("1Password SSH key uses an unsupported algorithm.", "invalid-response");
@@ -21657,6 +21807,11 @@ function createCandidate(account, item, publicKey, runCommand) {
   const name = itemName(item);
   const fingerprint = getKeyFingerprint(publicKey);
   const label = accountLabel(account);
+  const locator = {
+    accountId: account.account_uuid,
+    vaultId: item.vault.id,
+    itemId: item.id
+  };
   return {
     source: "1password",
     selector: itemSelector(account.account_uuid, item),
@@ -21670,37 +21825,55 @@ function createCandidate(account, item, publicKey, runCommand) {
     fingerprint,
     algorithm,
     loadPrivateKey: async () => {
-      let output;
-      try {
-        output = await runCommand([
-          "read",
-          "--account",
-          account.account_uuid,
-          privateKeyReference(account.account_uuid, item)
-        ], { maxOutputBytes: OP_PRIVATE_KEY_MAX_BYTES });
-      } catch (error51) {
-        throw new OnePasswordProviderError(`Unable to retrieve ${name} from ${label}.`, "command-failed", { cause: error51 });
-      }
-      const privateKey = parsePrivateKey(output);
-      if (!privateKey) {
+      const { entry } = await loadPrivateKeyFromLocator(fingerprint, locator, `${label} / ${name}`, runCommand);
+      await rememberLocator?.(fingerprint, locator);
+      return entry;
+    },
+    exportPrivateKey: async () => {
+      const { serializedKey } = await loadPrivateKeyFromLocator(fingerprint, locator, `${label} / ${name}`, runCommand, true);
+      if (!serializedKey) {
         throw new OnePasswordProviderError(`1Password returned an invalid private key for ${name}.`, "invalid-private-key");
       }
-      const entry = privateKeyEntry(`${label} / ${name}`, privateKey);
-      if (!entry) {
-        throw new OnePasswordProviderError(`1Password returned an unsupported private key for ${name}.`, "invalid-private-key");
+      try {
+        await rememberLocator?.(fingerprint, locator);
+        return serializedKey;
+      } catch (error51) {
+        serializedKey.fill(0);
+        throw error51;
       }
-      if (entry.fingerprint !== fingerprint) {
-        entry.rawPublicKey?.fill(0);
-        throw new OnePasswordProviderError(`The private key returned by 1Password no longer matches ${name}.`, "fingerprint-mismatch");
-      }
-      return entry;
     }
   };
+}
+var defaultCachedKeyDeps = {
+  runOpCommand,
+  readLocator: readOnePasswordLocator,
+  removeLocator: removeOnePasswordLocator
+};
+async function loadCachedOnePasswordPrivateKey(fingerprints, deps = defaultCachedKeyDeps) {
+  const cached2 = (await Promise.all([...new Set(fingerprints)].map(async (fingerprint) => {
+    const locator = await deps.readLocator(fingerprint);
+    return locator ? { fingerprint, locator } : undefined;
+  }))).filter((entry) => entry !== undefined).sort((left, right) => {
+    const leftSelector = `${left.locator.accountId}:${left.locator.vaultId}:${left.locator.itemId}`;
+    const rightSelector = `${right.locator.accountId}:${right.locator.vaultId}:${right.locator.itemId}`;
+    return leftSelector.localeCompare(rightSelector);
+  });
+  for (const { fingerprint, locator } of cached2) {
+    try {
+      return (await loadPrivateKeyFromLocator(fingerprint, locator, "cached SSH key", deps.runOpCommand)).entry;
+    } catch {
+      await deps.removeLocator(fingerprint);
+    }
+  }
+  return;
 }
 function emptyResult(status) {
   return { status, keys: [], unsupportedKeys: [], unavailableAccounts: [] };
 }
-var defaultDeps = { runOpCommand };
+var defaultDeps = {
+  runOpCommand,
+  rememberLocator: writeOnePasswordLocator
+};
 async function discoverOnePasswordKeyCandidates(deps = defaultDeps) {
   const now = deps.now ?? Date.now;
   const deadline = now() + Math.max(1, deps.discoveryTimeoutMs ?? OP_DISCOVERY_TIMEOUT_MS);
@@ -21823,7 +21996,7 @@ async function discoverOnePasswordKeyCandidates(deps = defaultDeps) {
           }
           const publicKey = parseItemPublicKey(parseJsonAndClear(output));
           itemResults[itemIndex] = {
-            candidate: createCandidate(account, item, publicKey, deps.runOpCommand)
+            candidate: createCandidate(account, item, publicKey, deps.runOpCommand, deps.rememberLocator)
           };
         } catch (error51) {
           if (deadlineExpired() || error51 instanceof OnePasswordProviderError && error51.code === "timeout") {
@@ -21858,17 +22031,20 @@ async function discoverOnePasswordKeyCandidates(deps = defaultDeps) {
 // cli/src/helpers/decryptEnvironment.ts
 var defaultDecryptEnvironmentDataDeps = {
   getPrivateKeys,
+  loadCachedOnePasswordPrivateKey,
   discoverOnePasswordKeyCandidates,
   decryptDataKey,
   decryptData
 };
 var createDecryptionKeyContext = (deps = {
   getPrivateKeys,
+  loadCachedOnePasswordPrivateKey,
   discoverOnePasswordKeyCandidates
 }) => {
   let privateKeysPromise;
   let discoveryPromise;
   const privateKeyPromises = new Map;
+  const cachedPrivateKeyPromises = new Map;
   let disposed = false;
   const discoverOnePassword = deps.discoverOnePasswordKeyCandidates;
   const loadPrivateKey = deps.loadPrivateKey ?? ((candidate) => candidate.loadPrivateKey());
@@ -21877,6 +22053,15 @@ var createDecryptionKeyContext = (deps = {
       privateKeysPromise ??= deps.getPrivateKeys();
       return privateKeysPromise;
     },
+    loadCachedOnePasswordPrivateKey: deps.loadCachedOnePasswordPrivateKey ? (fingerprints) => {
+      const cacheKey = [...new Set(fingerprints)].sort().join("\x00");
+      let privateKeyPromise = cachedPrivateKeyPromises.get(cacheKey);
+      if (!privateKeyPromise) {
+        privateKeyPromise = deps.loadCachedOnePasswordPrivateKey?.(fingerprints);
+        cachedPrivateKeyPromises.set(cacheKey, privateKeyPromise);
+      }
+      return privateKeyPromise;
+    } : undefined,
     discoverOnePasswordKeyCandidates: discoverOnePassword ? () => {
       discoveryPromise ??= discoverOnePassword();
       return discoveryPromise;
@@ -21896,6 +22081,7 @@ var createDecryptionKeyContext = (deps = {
       privateKeysPromise = undefined;
       discoveryPromise = undefined;
       privateKeyPromises.clear();
+      cachedPrivateKeyPromises.clear();
     }
   };
 };
@@ -21921,6 +22107,7 @@ var unwrapEnvironmentDataKey = async (environment, deps) => {
   let selectedPrivateKey;
   let providerStatus;
   let providerKeyNames = [];
+  let unavailableProviderAccountLabels = [];
   for (const privateKeyEntry2 of availablePrivateKeys) {
     grantedKey = environment.keys.find((key) => {
       return key.fingerprint === privateKeyEntry2.fingerprint;
@@ -21930,10 +22117,17 @@ var unwrapEnvironmentDataKey = async (environment, deps) => {
       break;
     }
   }
+  if (!grantedKey && deps.loadCachedOnePasswordPrivateKey) {
+    selectedPrivateKey = await deps.loadCachedOnePasswordPrivateKey(environment.keys.map((key) => key.fingerprint));
+    if (selectedPrivateKey) {
+      grantedKey = environment.keys.find((key) => key.fingerprint === selectedPrivateKey?.fingerprint);
+    }
+  }
   if (!grantedKey && deps.discoverOnePasswordKeyCandidates) {
     const discovery = await deps.discoverOnePasswordKeyCandidates();
     providerStatus = discovery.status;
     providerKeyNames = discovery.keys.map((candidate) => `${candidate.group.label} / ${candidate.name}`);
+    unavailableProviderAccountLabels = discovery.unavailableAccounts.map((account) => account.label);
     const matchingCandidates = discovery.keys.filter((candidate) => environment.keys.some((key) => key.fingerprint === candidate.fingerprint)).sort((left, right) => left.selector.localeCompare(right.selector));
     if (matchingCandidates.length > 0) {
       const candidate = matchingCandidates[0];
@@ -21948,8 +22142,10 @@ var unwrapEnvironmentDataKey = async (environment, deps) => {
     if (providerStatus === "unsupported-version") {
       throw new Error("The installed 1Password CLI version is unsupported. dotenc requires op 2.x.");
     }
-    if (availablePrivateKeys.length === 0 && (!deps.discoverOnePasswordKeyCandidates || providerStatus === "not-installed" || providerStatus === "no-accounts" || providerStatus === "unavailable")) {
-      throw new Error("No private keys found. Please ensure you have SSH keys in ~/.ssh/ or set DOTENC_PRIVATE_KEY_BASE64.");
+    if (availablePrivateKeys.length === 0 && providerKeyNames.length === 0) {
+      const unavailableAccounts = [...new Set(unavailableProviderAccountLabels)];
+      const providerGuidance = unavailableAccounts.length > 0 ? ` 1Password access was unavailable for: ${unavailableAccounts.join(", ")}.` : "";
+      throw new Error(`No private keys found. Please ensure you have SSH keys in ~/.ssh/ or set DOTENC_PRIVATE_KEY_BASE64.${providerGuidance}`);
     }
     throw new EnvironmentAccessDeniedError([
       ...new Set([
@@ -21983,7 +22179,7 @@ var environmentDataKeysEqual = async (base, head, deps = defaultDecryptEnvironme
       ...deps,
       ...keyContext
     });
-    return import_node_crypto9.timingSafeEqual(baseDataKey, headDataKey);
+    return import_node_crypto10.timingSafeEqual(baseDataKey, headDataKey);
   } finally {
     baseDataKey?.fill(0);
     headDataKey?.fill(0);
@@ -22604,7 +22800,7 @@ var createEnvironmentDiffReport = async (input, options = {}) => {
 };
 
 // actions/diff/src/action-io.ts
-var import_promises4 = __toESM(require("node:fs/promises"));
+var import_promises5 = __toESM(require("node:fs/promises"));
 
 // actions/diff/src/safety.ts
 var import_node_buffer2 = require("node:buffer");
@@ -22660,14 +22856,14 @@ var defaultActionIo = {
     const outputPath = process.env.GITHUB_OUTPUT;
     if (!outputPath)
       throw new SafeActionError("missing_action_output");
-    await import_promises4.default.appendFile(outputPath, `${name}=${value}
+    await import_promises5.default.appendFile(outputPath, `${name}=${value}
 `, "utf8");
   },
   async writeSummary(markdown) {
     const summaryPath = process.env.GITHUB_STEP_SUMMARY;
     if (!summaryPath)
       throw new SafeActionError("missing_step_summary");
-    await import_promises4.default.appendFile(summaryPath, markdown, "utf8");
+    await import_promises5.default.appendFile(summaryPath, markdown, "utf8");
   },
   annotate(level, message) {
     const command = level === "error" ? "error" : "warning";
@@ -22676,7 +22872,7 @@ var defaultActionIo = {
 };
 
 // actions/diff/src/context.ts
-var import_promises5 = __toESM(require("node:fs/promises"));
+var import_promises6 = __toESM(require("node:fs/promises"));
 
 // actions/diff/src/limits.ts
 var ACTION_LIMITS = Object.freeze({
@@ -22740,11 +22936,11 @@ var readPullRequestEvent = async (eventPath, limits = ACTION_LIMITS) => {
     throw new SafeActionError("missing_event");
   let raw;
   try {
-    const stat = await import_promises5.default.stat(eventPath);
+    const stat = await import_promises6.default.stat(eventPath);
     if (!stat.isFile() || stat.size > limits.eventBytes) {
       throw new SafeActionError("invalid_event");
     }
-    raw = await import_promises5.default.readFile(eventPath, "utf8");
+    raw = await import_promises6.default.readFile(eventPath, "utf8");
   } catch (error51) {
     if (error51 instanceof SafeActionError)
       throw error51;
@@ -22764,7 +22960,7 @@ var readPullRequestEvent = async (eventPath, limits = ACTION_LIMITS) => {
 
 // actions/diff/src/github.ts
 var import_node_buffer3 = require("node:buffer");
-var import_node_crypto10 = require("node:crypto");
+var import_node_crypto11 = require("node:crypto");
 var API_VERSION = "2022-11-28";
 var environmentPathPattern = /^\.env\..+\.enc$/;
 var isEnvironmentPath = (filePath) => {
@@ -22799,7 +22995,7 @@ var decodeBase64 = (value) => {
   return decoded;
 };
 var verifyGitBlob = (expectedSha, content) => {
-  const actualSha = import_node_crypto10.createHash("sha1").update(`blob ${content.byteLength}\x00`, "utf8").update(content).digest("hex");
+  const actualSha = import_node_crypto11.createHash("sha1").update(`blob ${content.byteLength}\x00`, "utf8").update(content).digest("hex");
   if (actualSha !== expectedSha.toLowerCase()) {
     throw new SafeActionError("blob_identity_mismatch");
   }
