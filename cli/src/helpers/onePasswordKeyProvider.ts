@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process"
 import crypto from "node:crypto"
-import { z } from "zod"
+import { z } from "zod/v4"
 import { getKeyFingerprint } from "./getKeyFingerprint"
 import type {
 	PrivateKeyEntry,
@@ -12,33 +12,29 @@ import { parseOpenSSHPublicKey } from "./parseOpenSSHPublicKey"
 import { validatePublicKey } from "./validatePublicKey"
 
 const OP_TIMEOUT_MS = 60_000
+const OP_DISCOVERY_TIMEOUT_MS = 60_000
+const OP_ITEM_GET_CONCURRENCY = 4
 const OP_METADATA_MAX_BYTES = 4 * 1024 * 1024
 const OP_PRIVATE_KEY_MAX_BYTES = 256 * 1024
 const OP_ERROR_MAX_BYTES = 256 * 1024
 const ONE_PASSWORD_ID_PATTERN = /^[A-Za-z0-9]{26}$/
 
-const accountSchema = z
-	.object({
-		account_uuid: z.string().regex(ONE_PASSWORD_ID_PATTERN),
-		email: z.string().optional(),
-		url: z.string().optional(),
-	})
-	.passthrough()
+const accountSchema = z.looseObject({
+	account_uuid: z.string().regex(ONE_PASSWORD_ID_PATTERN),
+	email: z.string().optional(),
+	url: z.string().optional(),
+})
 
 const accountsSchema = z.array(accountSchema)
 
-const itemOverviewSchema = z
-	.object({
+const itemOverviewSchema = z.looseObject({
+	id: z.string().regex(ONE_PASSWORD_ID_PATTERN),
+	title: z.string(),
+	vault: z.looseObject({
 		id: z.string().regex(ONE_PASSWORD_ID_PATTERN),
-		title: z.string(),
-		vault: z
-			.object({
-				id: z.string().regex(ONE_PASSWORD_ID_PATTERN),
-				name: z.string().optional(),
-			})
-			.passthrough(),
-	})
-	.passthrough()
+		name: z.string().optional(),
+	}),
+})
 
 const itemOverviewsSchema = z.array(itemOverviewSchema)
 
@@ -57,11 +53,19 @@ type OnePasswordItemOverview = z.infer<typeof itemOverviewSchema>
 
 export type UnavailableOnePasswordAccount = {
 	label: string
-	reason: "authorization-or-access-failed" | "invalid-response"
+	reason:
+		| "authorization-or-access-failed"
+		| "discovery-timeout"
+		| "invalid-response"
 }
 
 export type OnePasswordDiscoveryResult = {
-	status: "available" | "not-installed" | "no-accounts" | "unavailable"
+	status:
+		| "available"
+		| "not-installed"
+		| "no-accounts"
+		| "unavailable"
+		| "unsupported-version"
 	keys: KeyCandidate[]
 	unsupportedKeys: UnsupportedPrivateKeyEntry[]
 	unavailableAccounts: UnavailableOnePasswordAccount[]
@@ -452,6 +456,9 @@ function emptyResult(
 
 type DiscoverOnePasswordDeps = {
 	runOpCommand: RunOpCommand
+	discoveryTimeoutMs?: number
+	itemConcurrency?: number
+	now?: () => number
 }
 
 const defaultDeps: DiscoverOnePasswordDeps = { runOpCommand }
@@ -459,9 +466,34 @@ const defaultDeps: DiscoverOnePasswordDeps = { runOpCommand }
 export async function discoverOnePasswordKeyCandidates(
 	deps: DiscoverOnePasswordDeps = defaultDeps,
 ): Promise<OnePasswordDiscoveryResult> {
+	const now = deps.now ?? Date.now
+	const deadline =
+		now() + Math.max(1, deps.discoveryTimeoutMs ?? OP_DISCOVERY_TIMEOUT_MS)
+	const itemConcurrency = Math.max(
+		1,
+		Math.floor(deps.itemConcurrency ?? OP_ITEM_GET_CONCURRENCY),
+	)
+	const deadlineExpired = () => now() >= deadline
+	const runDiscoveryCommand: RunOpCommand = (args, options = {}) => {
+		const remainingMs = deadline - now()
+		if (remainingMs <= 0) {
+			throw new OnePasswordProviderError(
+				"1Password key discovery exceeded its overall time limit.",
+				"timeout",
+			)
+		}
+		return deps.runOpCommand(args, {
+			...options,
+			timeoutMs: Math.max(
+				1,
+				Math.min(options.timeoutMs ?? OP_TIMEOUT_MS, remainingMs),
+			),
+		})
+	}
+
 	let versionOutput: Buffer
 	try {
-		versionOutput = await deps.runOpCommand(["--version"], {
+		versionOutput = await runDiscoveryCommand(["--version"], {
 			maxOutputBytes: 1024,
 		})
 	} catch (error) {
@@ -476,11 +508,11 @@ export async function discoverOnePasswordKeyCandidates(
 
 	const version = versionOutput.toString("utf8").trim()
 	versionOutput.fill(0)
-	if (!/^2(?:\.|$)/.test(version)) return emptyResult("unavailable")
+	if (!/^2(?:\.|$)/.test(version)) return emptyResult("unsupported-version")
 
 	let accounts: OnePasswordAccount[]
 	try {
-		const output = await deps.runOpCommand([
+		const output = await runDiscoveryCommand([
 			"account",
 			"list",
 			"--format",
@@ -504,11 +536,29 @@ export async function discoverOnePasswordKeyCandidates(
 	})
 
 	const result = emptyResult("available")
+	const unavailableAccountReasons = new Set<string>()
+	const markUnavailable = (
+		account: OnePasswordAccount,
+		reason: UnavailableOnePasswordAccount["reason"],
+	) => {
+		const reasonKey = `${account.account_uuid}:${reason}`
+		if (unavailableAccountReasons.has(reasonKey)) return
+		unavailableAccountReasons.add(reasonKey)
+		const label = accountLabel(account)
+		result.unavailableAccounts.push({ label, reason })
+	}
 
-	for (const account of accounts) {
+	for (const [accountIndex, account] of accounts.entries()) {
+		if (deadlineExpired()) {
+			for (const remainingAccount of accounts.slice(accountIndex)) {
+				markUnavailable(remainingAccount, "discovery-timeout")
+			}
+			break
+		}
+
 		let items: OnePasswordItemOverview[]
 		try {
-			const output = await deps.runOpCommand([
+			const output = await runDiscoveryCommand([
 				"item",
 				"list",
 				"--categories",
@@ -521,14 +571,17 @@ export async function discoverOnePasswordKeyCandidates(
 			])
 			items = itemOverviewsSchema.parse(parseJsonAndClear(output))
 		} catch (error) {
-			result.unavailableAccounts.push({
-				label: accountLabel(account),
-				reason:
-					error instanceof OnePasswordProviderError &&
-					error.code === "invalid-response"
+			markUnavailable(
+				account,
+				deadlineExpired() ||
+					(error instanceof OnePasswordProviderError &&
+						error.code === "timeout")
+					? "discovery-timeout"
+					: error instanceof OnePasswordProviderError &&
+							error.code === "invalid-response"
 						? "invalid-response"
 						: "authorization-or-access-failed",
-			})
+			)
 			continue
 		}
 
@@ -537,33 +590,84 @@ export async function discoverOnePasswordKeyCandidates(
 			return titleComparison || left.id.localeCompare(right.id)
 		})
 
-		for (const item of items) {
-			try {
-				const output = await deps.runOpCommand([
-					"item",
-					"get",
-					item.id,
-					"--vault",
-					item.vault.id,
-					"--format",
-					"json",
-					"--no-color",
-					"--account",
-					account.account_uuid,
-				])
-				const publicKey = parseItemPublicKey(parseJsonAndClear(output))
-				result.keys.push(
-					createCandidate(account, item, publicKey, deps.runOpCommand),
-				)
-			} catch (error) {
-				result.unsupportedKeys.push({
-					name: `${accountLabel(account)} / ${itemName(item)}`,
-					reason:
-						error instanceof OnePasswordProviderError
-							? error.message
-							: "invalid 1Password SSH Key item",
-				})
+		type ItemResult =
+			| { candidate: KeyCandidate }
+			| { unsupported: UnsupportedPrivateKeyEntry }
+		const itemResults: Array<ItemResult | undefined> = Array(items.length)
+		let nextItemIndex = 0
+		let discoveryTimedOut = false
+
+		const worker = async () => {
+			while (!discoveryTimedOut) {
+				if (deadlineExpired()) {
+					discoveryTimedOut = true
+					return
+				}
+				const itemIndex = nextItemIndex
+				if (itemIndex >= items.length) return
+				nextItemIndex += 1
+				const item = items[itemIndex]
+
+				try {
+					const output = await runDiscoveryCommand([
+						"item",
+						"get",
+						item.id,
+						"--vault",
+						item.vault.id,
+						"--format",
+						"json",
+						"--no-color",
+						"--account",
+						account.account_uuid,
+					])
+					if (deadlineExpired()) {
+						output.fill(0)
+						discoveryTimedOut = true
+						return
+					}
+					const publicKey = parseItemPublicKey(parseJsonAndClear(output))
+					itemResults[itemIndex] = {
+						candidate: createCandidate(
+							account,
+							item,
+							publicKey,
+							deps.runOpCommand,
+						),
+					}
+				} catch (error) {
+					if (
+						deadlineExpired() ||
+						(error instanceof OnePasswordProviderError &&
+							error.code === "timeout")
+					) {
+						discoveryTimedOut = true
+						return
+					}
+					itemResults[itemIndex] = {
+						unsupported: {
+							name: `${accountLabel(account)} / ${itemName(item)}`,
+							reason:
+								error instanceof OnePasswordProviderError
+									? error.message
+									: "invalid 1Password SSH Key item",
+						},
+					}
+				}
 			}
+		}
+
+		await Promise.all(
+			Array.from({ length: Math.min(itemConcurrency, items.length) }, worker),
+		)
+
+		for (const itemResult of itemResults) {
+			if (!itemResult) continue
+			if ("candidate" in itemResult) result.keys.push(itemResult.candidate)
+			else result.unsupportedKeys.push(itemResult.unsupported)
+		}
+		if (discoveryTimedOut || nextItemIndex < items.length) {
+			markUnavailable(account, "discovery-timeout")
 		}
 	}
 

@@ -78,11 +78,17 @@ const unwrapEnvironmentDataKey = async (
 		) {
 			throw new Error(passphraseProtectedKeyError(passphraseProtectedKeys))
 		}
+		if (providerStatus === "unsupported-version") {
+			throw new Error(
+				"The installed 1Password CLI version is unsupported. dotenc requires op 2.x.",
+			)
+		}
 		if (
 			availablePrivateKeys.length === 0 &&
 			(!deps.discoverOnePasswordKeyCandidates ||
 				providerStatus === "not-installed" ||
-				providerStatus === "no-accounts")
+				providerStatus === "no-accounts" ||
+				providerStatus === "unavailable")
 		) {
 			throw new Error(
 				"No private keys found. Please ensure you have SSH keys in ~/.ssh/ or set DOTENC_PRIVATE_KEY_BASE64.",

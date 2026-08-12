@@ -20106,7 +20106,7 @@ var decryptDataKey = (keyInfo, encryptedDataKey) => {
 };
 
 // cli/src/helpers/decryptEnvironment.ts
-var import_node_crypto7 = require("node:crypto");
+var import_node_crypto9 = require("node:crypto");
 
 // node_modules/chalk/source/vendor/ansi-styles/index.js
 var ANSI_BACKGROUND_OFFSET = 10;
@@ -21275,32 +21275,627 @@ var getPrivateKeys = async (options = {}) => {
   return { keys: privateKeys, passphraseProtectedKeys, unsupportedKeys };
 };
 
+// cli/src/helpers/onePasswordKeyProvider.ts
+var import_node_child_process2 = require("node:child_process");
+var import_node_crypto8 = __toESM(require("node:crypto"));
+// cli/src/helpers/parseOpenSSHPublicKey.ts
+var import_node_crypto7 = __toESM(require("node:crypto"));
+function readBytes2(buffer, offset) {
+  if (offset + 4 > buffer.length)
+    return null;
+  const length = buffer.readUInt32BE(offset);
+  const start = offset + 4;
+  const end = start + length;
+  if (end > buffer.length)
+    return null;
+  return { value: buffer.subarray(start, end), nextOffset: end };
+}
+function readString2(buffer, offset) {
+  const bytes = readBytes2(buffer, offset);
+  if (!bytes)
+    return null;
+  return {
+    value: bytes.value.toString("ascii"),
+    nextOffset: bytes.nextOffset
+  };
+}
+function stripMpintPadding(value) {
+  let offset = 0;
+  while (offset < value.length - 1 && value[offset] === 0) {
+    offset += 1;
+  }
+  return value.subarray(offset);
+}
+function parseEd255192(buffer, offset) {
+  const rawPublicKey = readBytes2(buffer, offset);
+  if (!rawPublicKey || rawPublicKey.value.length !== 32)
+    return null;
+  if (rawPublicKey.nextOffset !== buffer.length)
+    return null;
+  const spkiPrefix = Buffer.from("302a300506032b6570032100", "hex");
+  const der = Buffer.concat([spkiPrefix, rawPublicKey.value]);
+  try {
+    return import_node_crypto7.default.createPublicKey({ key: der, format: "der", type: "spki" });
+  } catch {
+    return null;
+  } finally {
+    der.fill(0);
+  }
+}
+function parseRsa(buffer, offset) {
+  const exponent = readBytes2(buffer, offset);
+  if (!exponent)
+    return null;
+  const modulus = readBytes2(buffer, exponent.nextOffset);
+  if (!modulus || modulus.nextOffset !== buffer.length)
+    return null;
+  try {
+    return import_node_crypto7.default.createPublicKey({
+      key: {
+        kty: "RSA",
+        e: stripMpintPadding(exponent.value).toString("base64url"),
+        n: stripMpintPadding(modulus.value).toString("base64url")
+      },
+      format: "jwk"
+    });
+  } catch {
+    return null;
+  }
+}
+function parseOpenSSHPublicKey(content) {
+  const trimmed = content.trim();
+  if (!trimmed || trimmed.includes(`
+`) || trimmed.includes("\r"))
+    return null;
+  const [declaredType, base643] = trimmed.split(/\s+/, 3);
+  if (declaredType !== "ssh-ed25519" && declaredType !== "ssh-rsa" || !base643 || !/^[A-Za-z0-9+/]+={0,2}$/.test(base643)) {
+    return null;
+  }
+  const buffer = Buffer.from(base643, "base64");
+  try {
+    const embeddedType = readString2(buffer, 0);
+    if (!embeddedType || embeddedType.value !== declaredType)
+      return null;
+    if (declaredType === "ssh-ed25519") {
+      return parseEd255192(buffer, embeddedType.nextOffset);
+    }
+    return parseRsa(buffer, embeddedType.nextOffset);
+  } finally {
+    buffer.fill(0);
+  }
+}
+
+// cli/src/helpers/validatePublicKey.ts
+function getRsaModulusLength(key) {
+  const der = key.export({ type: "spki", format: "der" });
+  let i = 0;
+  i += 1;
+  i += der[i] & 128 ? (der[i] & 127) + 1 : 1;
+  i += 1;
+  let algLen = 0;
+  if (der[i] & 128) {
+    const n = der[i] & 127;
+    for (let j = 1;j <= n; j++)
+      algLen = algLen << 8 | der[i + j];
+    i += n + 1;
+  } else {
+    algLen = der[i];
+    i += 1;
+  }
+  i += algLen;
+  i += 1;
+  i += der[i] & 128 ? (der[i] & 127) + 1 : 1;
+  i += 1;
+  i += 1;
+  i += der[i] & 128 ? (der[i] & 127) + 1 : 1;
+  i += 1;
+  let modLen = 0;
+  if (der[i] & 128) {
+    const n = der[i] & 127;
+    for (let j = 1;j <= n; j++)
+      modLen = modLen << 8 | der[i + j];
+    i += n + 1;
+  } else {
+    modLen = der[i];
+    i += 1;
+  }
+  if (der[i] === 0)
+    modLen -= 1;
+  return modLen * 8;
+}
+function validatePublicKey(key) {
+  const keyType = key.asymmetricKeyType;
+  switch (keyType) {
+    case "rsa": {
+      const modulusLength = getRsaModulusLength(key);
+      if (modulusLength < 2048) {
+        return {
+          valid: false,
+          reason: `RSA key is ${modulusLength} bits, minimum is 2048 bits.`
+        };
+      }
+      return { valid: true };
+    }
+    case "ed25519":
+      return { valid: true };
+    case "dsa":
+      return {
+        valid: false,
+        reason: "DSA keys are not supported. Use Ed25519 or RSA (2048+ bits)."
+      };
+    case "ec":
+      return {
+        valid: false,
+        reason: "ECDSA keys are not supported. Use Ed25519 or RSA (2048+ bits)."
+      };
+    default:
+      return {
+        valid: false,
+        reason: `Unsupported key type: ${keyType}. Use Ed25519 or RSA (2048+ bits).`
+      };
+  }
+}
+
+// cli/src/helpers/onePasswordKeyProvider.ts
+var OP_TIMEOUT_MS = 60000;
+var OP_DISCOVERY_TIMEOUT_MS = 60000;
+var OP_ITEM_GET_CONCURRENCY = 4;
+var OP_METADATA_MAX_BYTES = 4 * 1024 * 1024;
+var OP_PRIVATE_KEY_MAX_BYTES = 256 * 1024;
+var OP_ERROR_MAX_BYTES = 256 * 1024;
+var ONE_PASSWORD_ID_PATTERN = /^[A-Za-z0-9]{26}$/;
+var accountSchema = exports_external.looseObject({
+  account_uuid: exports_external.string().regex(ONE_PASSWORD_ID_PATTERN),
+  email: exports_external.string().optional(),
+  url: exports_external.string().optional()
+});
+var accountsSchema = exports_external.array(accountSchema);
+var itemOverviewSchema = exports_external.looseObject({
+  id: exports_external.string().regex(ONE_PASSWORD_ID_PATTERN),
+  title: exports_external.string(),
+  vault: exports_external.looseObject({
+    id: exports_external.string().regex(ONE_PASSWORD_ID_PATTERN),
+    name: exports_external.string().optional()
+  })
+});
+var itemOverviewsSchema = exports_external.array(itemOverviewSchema);
+
+class OnePasswordProviderError extends Error {
+  code;
+  constructor(message, code, options) {
+    super(message, options);
+    this.code = code;
+    this.name = "OnePasswordProviderError";
+  }
+}
+function clearChunks(chunks) {
+  for (const chunk of chunks)
+    chunk.fill(0);
+}
+var runOpCommand = (args, options = {}) => new Promise((resolve, reject) => {
+  const maxOutputBytes = options.maxOutputBytes ?? OP_METADATA_MAX_BYTES;
+  const timeoutMs = options.timeoutMs ?? OP_TIMEOUT_MS;
+  const stdoutChunks = [];
+  let stdoutBytes = 0;
+  let stderrBytes = 0;
+  let settled = false;
+  let timer;
+  const child = import_node_child_process2.spawn("op", args, {
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true
+  });
+  const finishWithError = (error51) => {
+    if (settled)
+      return;
+    settled = true;
+    clearTimeout(timer);
+    clearChunks(stdoutChunks);
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGKILL");
+    }
+    reject(error51);
+  };
+  timer = setTimeout(() => {
+    finishWithError(new OnePasswordProviderError("1Password CLI did not respond before the authorization timeout.", "timeout"));
+  }, timeoutMs);
+  child.stdout.on("data", (chunk) => {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    stdoutBytes += bytes.length;
+    if (stdoutBytes > maxOutputBytes) {
+      bytes.fill(0);
+      finishWithError(new OnePasswordProviderError("1Password CLI returned more data than dotenc can safely process.", "output-limit"));
+      return;
+    }
+    stdoutChunks.push(bytes);
+  });
+  child.stderr.on("data", (chunk) => {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    stderrBytes += bytes.length;
+    bytes.fill(0);
+    if (stderrBytes > OP_ERROR_MAX_BYTES) {
+      finishWithError(new OnePasswordProviderError("1Password CLI returned excessive error output.", "output-limit"));
+    }
+  });
+  child.once("error", (error51) => {
+    finishWithError(new OnePasswordProviderError(error51.code === "ENOENT" ? "1Password CLI is not installed." : "1Password CLI could not be started.", error51.code === "ENOENT" ? "not-installed" : "command-failed", { cause: error51 }));
+  });
+  child.once("close", (code) => {
+    if (settled)
+      return;
+    if (code !== 0) {
+      finishWithError(new OnePasswordProviderError("1Password CLI could not complete the requested operation.", "command-failed"));
+      return;
+    }
+    settled = true;
+    clearTimeout(timer);
+    resolve(Buffer.concat(stdoutChunks, stdoutBytes));
+    clearChunks(stdoutChunks);
+  });
+});
+function sanitizeDisplayText(value, fallback) {
+  const sanitized = Array.from(value).filter((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint >= 32 && codePoint !== 127 && codePoint !== 155;
+  }).join("").trim();
+  return (sanitized || fallback).slice(0, 120);
+}
+function shortId(id) {
+  return `${id.slice(0, 4)}...${id.slice(-4)}`;
+}
+function accountLabel(account) {
+  const display = sanitizeDisplayText(account.url ?? account.email ?? "1Password account", "1Password account");
+  return `1Password - ${display} [${shortId(account.account_uuid)}]`;
+}
+function parseJson(buffer) {
+  try {
+    return JSON.parse(buffer.toString("utf8"));
+  } catch (error51) {
+    throw new OnePasswordProviderError("1Password CLI returned invalid structured data.", "invalid-response", { cause: error51 });
+  }
+}
+function parseJsonAndClear(buffer) {
+  try {
+    return parseJson(buffer);
+  } finally {
+    buffer.fill(0);
+  }
+}
+function collectOpenSshPublicKeys(value, found = new Set) {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (/^(ssh-ed25519|ssh-rsa)\s+[A-Za-z0-9+/]+={0,2}(?:\s+.*)?$/.test(trimmed)) {
+      found.add(trimmed);
+    }
+    return found;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value)
+      collectOpenSshPublicKeys(entry, found);
+    return found;
+  }
+  if (value && typeof value === "object") {
+    for (const entry of Object.values(value)) {
+      collectOpenSshPublicKeys(entry, found);
+    }
+  }
+  return found;
+}
+function parseItemPublicKey(item) {
+  const parsedKeys = new Map;
+  for (const content of collectOpenSshPublicKeys(item)) {
+    const publicKey = parseOpenSSHPublicKey(content);
+    if (!publicKey)
+      continue;
+    parsedKeys.set(getKeyFingerprint(publicKey), publicKey);
+  }
+  if (parsedKeys.size !== 1) {
+    throw new OnePasswordProviderError(parsedKeys.size === 0 ? "1Password SSH Key item did not expose a supported public key." : "1Password SSH Key item exposed conflicting public keys.", "invalid-response");
+  }
+  return parsedKeys.values().next().value;
+}
+function detectAlgorithm2(key) {
+  if (key.asymmetricKeyType === "rsa")
+    return "rsa";
+  if (key.asymmetricKeyType === "ed25519")
+    return "ed25519";
+  return null;
+}
+function parsePrivateKey(buffer) {
+  const content = buffer.toString("utf8");
+  try {
+    try {
+      return import_node_crypto8.default.createPrivateKey(content);
+    } catch {
+      return parseOpenSSHPrivateKey(content);
+    }
+  } finally {
+    buffer.fill(0);
+  }
+}
+function privateKeyEntry(name, privateKey) {
+  const algorithm = detectAlgorithm2(privateKey);
+  if (!algorithm)
+    return null;
+  const entry = {
+    name,
+    privateKey,
+    fingerprint: getKeyFingerprint(privateKey),
+    algorithm
+  };
+  if (algorithm === "ed25519") {
+    const publicDer = import_node_crypto8.default.createPublicKey(privateKey).export({ type: "spki", format: "der" });
+    entry.rawPublicKey = Buffer.from(publicDer.subarray(publicDer.length - 32));
+    publicDer.fill(0);
+  }
+  return entry;
+}
+function itemName(item) {
+  return sanitizeDisplayText(item.title, `SSH key ${shortId(item.id)}`);
+}
+function itemHint(item, algorithm) {
+  const vault = sanitizeDisplayText(item.vault.name ?? "vault", `vault ${shortId(item.vault.id)}`);
+  return `${algorithm} - ${vault}`;
+}
+function itemSelector(accountId, item) {
+  return `1password:${accountId}:${item.vault.id}:${item.id}`;
+}
+function privateKeyReference(accountId, item) {
+  if (!ONE_PASSWORD_ID_PATTERN.test(accountId) || !ONE_PASSWORD_ID_PATTERN.test(item.vault.id) || !ONE_PASSWORD_ID_PATTERN.test(item.id)) {
+    throw new OnePasswordProviderError("1Password returned an invalid object identifier.", "invalid-response");
+  }
+  return `op://${item.vault.id}/${item.id}/private key?ssh-format=openssh`;
+}
+function createCandidate(account, item, publicKey, runCommand) {
+  const algorithm = detectAlgorithm2(publicKey);
+  if (!algorithm) {
+    throw new OnePasswordProviderError("1Password SSH key uses an unsupported algorithm.", "invalid-response");
+  }
+  const validation = validatePublicKey(publicKey);
+  if (!validation.valid) {
+    throw new OnePasswordProviderError(validation.reason, "invalid-response");
+  }
+  const name = itemName(item);
+  const fingerprint = getKeyFingerprint(publicKey);
+  const label = accountLabel(account);
+  return {
+    source: "1password",
+    selector: itemSelector(account.account_uuid, item),
+    name,
+    hint: itemHint(item, algorithm),
+    group: {
+      id: `1password:${account.account_uuid}`,
+      label
+    },
+    publicKey,
+    fingerprint,
+    algorithm,
+    loadPrivateKey: async () => {
+      let output;
+      try {
+        output = await runCommand([
+          "read",
+          "--account",
+          account.account_uuid,
+          privateKeyReference(account.account_uuid, item)
+        ], { maxOutputBytes: OP_PRIVATE_KEY_MAX_BYTES });
+      } catch (error51) {
+        throw new OnePasswordProviderError(`Unable to retrieve ${name} from ${label}.`, "command-failed", { cause: error51 });
+      }
+      const privateKey = parsePrivateKey(output);
+      if (!privateKey) {
+        throw new OnePasswordProviderError(`1Password returned an invalid private key for ${name}.`, "invalid-private-key");
+      }
+      const entry = privateKeyEntry(`${label} / ${name}`, privateKey);
+      if (!entry) {
+        throw new OnePasswordProviderError(`1Password returned an unsupported private key for ${name}.`, "invalid-private-key");
+      }
+      if (entry.fingerprint !== fingerprint) {
+        entry.rawPublicKey?.fill(0);
+        throw new OnePasswordProviderError(`The private key returned by 1Password no longer matches ${name}.`, "fingerprint-mismatch");
+      }
+      return entry;
+    }
+  };
+}
+function emptyResult(status) {
+  return { status, keys: [], unsupportedKeys: [], unavailableAccounts: [] };
+}
+var defaultDeps = { runOpCommand };
+async function discoverOnePasswordKeyCandidates(deps = defaultDeps) {
+  const now = deps.now ?? Date.now;
+  const deadline = now() + Math.max(1, deps.discoveryTimeoutMs ?? OP_DISCOVERY_TIMEOUT_MS);
+  const itemConcurrency = Math.max(1, Math.floor(deps.itemConcurrency ?? OP_ITEM_GET_CONCURRENCY));
+  const deadlineExpired = () => now() >= deadline;
+  const runDiscoveryCommand = (args, options = {}) => {
+    const remainingMs = deadline - now();
+    if (remainingMs <= 0) {
+      throw new OnePasswordProviderError("1Password key discovery exceeded its overall time limit.", "timeout");
+    }
+    return deps.runOpCommand(args, {
+      ...options,
+      timeoutMs: Math.max(1, Math.min(options.timeoutMs ?? OP_TIMEOUT_MS, remainingMs))
+    });
+  };
+  let versionOutput;
+  try {
+    versionOutput = await runDiscoveryCommand(["--version"], {
+      maxOutputBytes: 1024
+    });
+  } catch (error51) {
+    if (error51 instanceof OnePasswordProviderError && error51.code === "not-installed") {
+      return emptyResult("not-installed");
+    }
+    return emptyResult("unavailable");
+  }
+  const version2 = versionOutput.toString("utf8").trim();
+  versionOutput.fill(0);
+  if (!/^2(?:\.|$)/.test(version2))
+    return emptyResult("unsupported-version");
+  let accounts;
+  try {
+    const output = await runDiscoveryCommand([
+      "account",
+      "list",
+      "--format",
+      "json",
+      "--no-color"
+    ]);
+    accounts = accountsSchema.parse(parseJsonAndClear(output));
+  } catch {
+    return emptyResult("unavailable");
+  }
+  if (accounts.length === 0)
+    return emptyResult("no-accounts");
+  accounts.sort((left, right) => {
+    const labelComparison = accountLabel(left).localeCompare(accountLabel(right));
+    return labelComparison || left.account_uuid.localeCompare(right.account_uuid);
+  });
+  const result = emptyResult("available");
+  const unavailableAccountReasons = new Set;
+  const markUnavailable = (account, reason) => {
+    const reasonKey = `${account.account_uuid}:${reason}`;
+    if (unavailableAccountReasons.has(reasonKey))
+      return;
+    unavailableAccountReasons.add(reasonKey);
+    const label = accountLabel(account);
+    result.unavailableAccounts.push({ label, reason });
+  };
+  for (const [accountIndex, account] of accounts.entries()) {
+    if (deadlineExpired()) {
+      for (const remainingAccount of accounts.slice(accountIndex)) {
+        markUnavailable(remainingAccount, "discovery-timeout");
+      }
+      break;
+    }
+    let items;
+    try {
+      const output = await runDiscoveryCommand([
+        "item",
+        "list",
+        "--categories",
+        "SSH Key",
+        "--format",
+        "json",
+        "--no-color",
+        "--account",
+        account.account_uuid
+      ]);
+      items = itemOverviewsSchema.parse(parseJsonAndClear(output));
+    } catch (error51) {
+      markUnavailable(account, deadlineExpired() || error51 instanceof OnePasswordProviderError && error51.code === "timeout" ? "discovery-timeout" : error51 instanceof OnePasswordProviderError && error51.code === "invalid-response" ? "invalid-response" : "authorization-or-access-failed");
+      continue;
+    }
+    items.sort((left, right) => {
+      const titleComparison = itemName(left).localeCompare(itemName(right));
+      return titleComparison || left.id.localeCompare(right.id);
+    });
+    const itemResults = Array(items.length);
+    let nextItemIndex = 0;
+    let discoveryTimedOut = false;
+    const worker = async () => {
+      while (!discoveryTimedOut) {
+        if (deadlineExpired()) {
+          discoveryTimedOut = true;
+          return;
+        }
+        const itemIndex = nextItemIndex;
+        if (itemIndex >= items.length)
+          return;
+        nextItemIndex += 1;
+        const item = items[itemIndex];
+        try {
+          const output = await runDiscoveryCommand([
+            "item",
+            "get",
+            item.id,
+            "--vault",
+            item.vault.id,
+            "--format",
+            "json",
+            "--no-color",
+            "--account",
+            account.account_uuid
+          ]);
+          if (deadlineExpired()) {
+            output.fill(0);
+            discoveryTimedOut = true;
+            return;
+          }
+          const publicKey = parseItemPublicKey(parseJsonAndClear(output));
+          itemResults[itemIndex] = {
+            candidate: createCandidate(account, item, publicKey, deps.runOpCommand)
+          };
+        } catch (error51) {
+          if (deadlineExpired() || error51 instanceof OnePasswordProviderError && error51.code === "timeout") {
+            discoveryTimedOut = true;
+            return;
+          }
+          itemResults[itemIndex] = {
+            unsupported: {
+              name: `${accountLabel(account)} / ${itemName(item)}`,
+              reason: error51 instanceof OnePasswordProviderError ? error51.message : "invalid 1Password SSH Key item"
+            }
+          };
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(itemConcurrency, items.length) }, worker));
+    for (const itemResult of itemResults) {
+      if (!itemResult)
+        continue;
+      if ("candidate" in itemResult)
+        result.keys.push(itemResult.candidate);
+      else
+        result.unsupportedKeys.push(itemResult.unsupported);
+    }
+    if (discoveryTimedOut || nextItemIndex < items.length) {
+      markUnavailable(account, "discovery-timeout");
+    }
+  }
+  return result;
+}
+
 // cli/src/helpers/decryptEnvironment.ts
 var defaultDecryptEnvironmentDataDeps = {
   getPrivateKeys,
+  discoverOnePasswordKeyCandidates,
   decryptDataKey,
   decryptData
 };
 var unwrapEnvironmentDataKey = async (environment, deps) => {
   const { keys: availablePrivateKeys, passphraseProtectedKeys } = await deps.getPrivateKeys();
-  if (!availablePrivateKeys.length) {
-    if (passphraseProtectedKeys.length > 0) {
-      throw new Error(passphraseProtectedKeyError(passphraseProtectedKeys));
-    }
-    throw new Error("No private keys found. Please ensure you have SSH keys in ~/.ssh/ or set DOTENC_PRIVATE_KEY_BASE64.");
-  }
   let grantedKey;
   let selectedPrivateKey;
-  for (const privateKeyEntry of availablePrivateKeys) {
+  let providerStatus;
+  for (const privateKeyEntry2 of availablePrivateKeys) {
     grantedKey = environment.keys.find((key) => {
-      return key.fingerprint === privateKeyEntry.fingerprint;
+      return key.fingerprint === privateKeyEntry2.fingerprint;
     });
     if (grantedKey) {
-      selectedPrivateKey = privateKeyEntry;
+      selectedPrivateKey = privateKeyEntry2;
       break;
     }
   }
+  if (!grantedKey && deps.discoverOnePasswordKeyCandidates) {
+    const discovery = await deps.discoverOnePasswordKeyCandidates();
+    providerStatus = discovery.status;
+    const matchingCandidates = discovery.keys.filter((candidate) => environment.keys.some((key) => key.fingerprint === candidate.fingerprint)).sort((left, right) => left.selector.localeCompare(right.selector));
+    if (matchingCandidates.length > 0) {
+      const candidate = matchingCandidates[0];
+      selectedPrivateKey = await candidate.loadPrivateKey();
+      grantedKey = environment.keys.find((key) => key.fingerprint === selectedPrivateKey?.fingerprint);
+    }
+  }
   if (!grantedKey || !selectedPrivateKey) {
+    if (availablePrivateKeys.length === 0 && passphraseProtectedKeys.length > 0) {
+      throw new Error(passphraseProtectedKeyError(passphraseProtectedKeys));
+    }
+    if (providerStatus === "unsupported-version") {
+      throw new Error("The installed 1Password CLI version is unsupported. dotenc requires op 2.x.");
+    }
+    if (availablePrivateKeys.length === 0 && (!deps.discoverOnePasswordKeyCandidates || providerStatus === "not-installed" || providerStatus === "no-accounts" || providerStatus === "unavailable")) {
+      throw new Error("No private keys found. Please ensure you have SSH keys in ~/.ssh/ or set DOTENC_PRIVATE_KEY_BASE64.");
+    }
     throw new Error("Access denied to the environment.");
   }
   let dataKey;
@@ -21321,7 +21916,7 @@ var environmentDataKeysEqual = async (base, head, deps = defaultDecryptEnvironme
   try {
     baseDataKey = await unwrapEnvironmentDataKey(base, deps);
     headDataKey = await unwrapEnvironmentDataKey(head, deps);
-    return import_node_crypto7.timingSafeEqual(baseDataKey, headDataKey);
+    return import_node_crypto9.timingSafeEqual(baseDataKey, headDataKey);
   } finally {
     baseDataKey?.fill(0);
     headDataKey?.fill(0);
@@ -21736,11 +22331,13 @@ var createDefaultCrypto = (privateKeySource) => {
   return {
     decryptEnvironment: (environmentName, environment) => decryptEnvironmentData(environmentName, environment, {
       getPrivateKeys: loadPrivateKeys,
+      discoverOnePasswordKeyCandidates: privateKeySource === "all" ? discoverOnePasswordKeyCandidates : undefined,
       decryptDataKey,
       decryptData
     }),
     dataKeysEqual: (base, head) => environmentDataKeysEqual(base, head, {
       getPrivateKeys: loadPrivateKeys,
+      discoverOnePasswordKeyCandidates: privateKeySource === "all" ? discoverOnePasswordKeyCandidates : undefined,
       decryptDataKey
     })
   };
@@ -22102,7 +22699,7 @@ var readPullRequestEvent = async (eventPath, limits = ACTION_LIMITS) => {
 
 // actions/diff/src/github.ts
 var import_node_buffer3 = require("node:buffer");
-var import_node_crypto8 = require("node:crypto");
+var import_node_crypto10 = require("node:crypto");
 var API_VERSION = "2022-11-28";
 var environmentPathPattern = /^\.env\..+\.enc$/;
 var isEnvironmentPath = (filePath) => {
@@ -22137,7 +22734,7 @@ var decodeBase64 = (value) => {
   return decoded;
 };
 var verifyGitBlob = (expectedSha, content) => {
-  const actualSha = import_node_crypto8.createHash("sha1").update(`blob ${content.byteLength}\x00`, "utf8").update(content).digest("hex");
+  const actualSha = import_node_crypto10.createHash("sha1").update(`blob ${content.byteLength}\x00`, "utf8").update(content).digest("hex");
   if (actualSha !== expectedSha.toLowerCase()) {
     throw new SafeActionError("blob_identity_mismatch");
   }

@@ -136,9 +136,10 @@ compatibility. Passphrase-protected bootstrap keys use
 **Child process isolation:** When running commands with `dotenc run` or
 `dotenc dev`, the `DOTENC_PRIVATE_KEY_BASE64` and `DOTENC_PRIVATE_KEY`
 environment variables are explicitly stripped from the child process
-environment before launch. A 1Password private key is held only in the dotenc
-process and is never represented in that environment. Injected secrets are
-limited to the decrypted variables only:
+environment before launch. After `op read` returns, dotenc keeps the retrieved
+1Password private key in its process. It is never passed to the wrapped command
+or included in its environment. Injected secrets are limited to the decrypted
+variables only:
 
 ```typescript
 // cli/src/commands/run.ts

@@ -29,6 +29,7 @@ describe("1Password connector", () => {
 	let providerStore: string
 	let fakeBin: string
 	let logPath: string
+	let setupLog: string
 	let env: Record<string, string>
 
 	beforeAll(() => {
@@ -135,13 +136,7 @@ exit 1
 			DOTENC_OP_KEY_A: keyAPath,
 			DOTENC_OP_KEY_B: keyBPath,
 		}
-	})
 
-	afterAll(() => {
-		rmSync(root, { recursive: true, force: true })
-	})
-
-	test("init and key add use ID-qualified public candidates without exporting private keys", () => {
 		writeFileSync(
 			path.join(workspace, ".env"),
 			"ONEPASSWORD_E2E=provider-value\n",
@@ -153,12 +148,7 @@ exit 1
 			env,
 		)
 		expect(initialized.exitCode).toBe(0)
-		expect(existsSync(path.join(workspace, ".dotenc", "alice.pub"))).toBe(
-			true,
-		)
-		expect(readFileSync(logPath, "utf8")).not.toContain("read --account")
 
-		writeFileSync(logPath, "")
 		const added = runCli(
 			home,
 			workspace,
@@ -166,8 +156,19 @@ exit 1
 			env,
 		)
 		expect(added.exitCode).toBe(0)
+		setupLog = readFileSync(logPath, "utf8")
+	})
+
+	afterAll(() => {
+		rmSync(root, { recursive: true, force: true })
+	})
+
+	test("init and key add use ID-qualified public candidates without exporting private keys", () => {
+		expect(existsSync(path.join(workspace, ".dotenc", "alice.pub"))).toBe(
+			true,
+		)
 		expect(existsSync(path.join(workspace, ".dotenc", "bob.pub"))).toBe(true)
-		expect(readFileSync(logPath, "utf8")).not.toContain("read --account")
+		expect(setupLog).not.toContain("read --account")
 	}, TIMEOUT)
 
 	test("run lazily retrieves one matching private key and does not forward it", () => {

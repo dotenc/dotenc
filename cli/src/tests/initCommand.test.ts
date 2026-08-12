@@ -4,6 +4,7 @@ import * as realFs from "node:fs"
 import * as realFsPromises from "node:fs/promises"
 import realOs from "node:os"
 import path from "node:path"
+import type { KeyCandidate } from "../helpers/keyCandidate"
 
 const CWD = "/workspace"
 
@@ -14,17 +15,28 @@ const userInfoMock = mock(
 	() =>
 		({ username: "tester" }) as ReturnType<typeof import("node:os").userInfo>,
 )
-const choosePrivateKeyPromptMock = mock(async (_message: string) => {
-	const { privateKey } = crypto.generateKeyPairSync("ed25519")
+function makeKeyCandidate(name = "id_ed25519"): KeyCandidate {
+	const { privateKey, publicKey } = crypto.generateKeyPairSync("ed25519")
 	return {
-		name: "id_ed25519",
-		privateKey,
-		publicKey: crypto.createPublicKey(privateKey),
+		source: "filesystem",
+		selector: name,
+		name,
+		hint: "ed25519",
+		group: { id: "filesystem", label: "Local - ~/.ssh" },
+		publicKey,
 		fingerprint: "test-fingerprint",
-		algorithm: "ed25519" as const,
-		rawPublicKey: Buffer.alloc(32),
+		algorithm: "ed25519",
+		loadPrivateKey: async () => ({
+			name,
+			privateKey,
+			fingerprint: "test-fingerprint",
+			algorithm: "ed25519",
+		}),
 	}
-})
+}
+const chooseKeyCandidatePromptMock = mock(
+	async (_message: string): Promise<KeyCandidate> => makeKeyCandidate(),
+)
 const keyAddCommandMock = mock(async (_name: string, _options: unknown) => {})
 const setupGitDiffMock = mock((_projectRoot?: string) => {})
 const resolveProjectRootMock = mock(
@@ -46,7 +58,7 @@ mock.module("node:os", () => ({
 	default: { ...realOs, userInfo: userInfoMock },
 }))
 mock.module("../prompts/chooseKeyCandidate", () => ({
-	chooseKeyCandidatePrompt: choosePrivateKeyPromptMock,
+	chooseKeyCandidatePrompt: chooseKeyCandidatePromptMock,
 }))
 mock.module("../commands/key/add", () => ({
 	keyAddCommand: keyAddCommandMock,
@@ -71,7 +83,7 @@ const { initCommand, _resolveDocsUrl } = await import("../commands/init")
 beforeEach(() => {
 	inputNamePromptMock.mockClear()
 	userInfoMock.mockClear()
-	choosePrivateKeyPromptMock.mockClear()
+	chooseKeyCandidatePromptMock.mockClear()
 	keyAddCommandMock.mockClear()
 	setupGitDiffMock.mockClear()
 	resolveProjectRootMock.mockClear()
@@ -85,17 +97,9 @@ beforeEach(() => {
 		() =>
 			({ username: "tester" }) as ReturnType<typeof import("node:os").userInfo>,
 	)
-	choosePrivateKeyPromptMock.mockImplementation(async () => {
-		const { privateKey } = crypto.generateKeyPairSync("ed25519")
-		return {
-			name: "id_ed25519",
-			privateKey,
-			publicKey: crypto.createPublicKey(privateKey),
-			fingerprint: "test-fingerprint",
-			algorithm: "ed25519" as const,
-			rawPublicKey: Buffer.alloc(32),
-		}
-	})
+	chooseKeyCandidatePromptMock.mockImplementation(async () =>
+		makeKeyCandidate(),
+	)
 	keyAddCommandMock.mockImplementation(async () => {})
 	setupGitDiffMock.mockImplementation(() => {})
 	resolveProjectRootMock.mockImplementation(() => {
@@ -126,7 +130,7 @@ describe("initCommand", () => {
 	})
 
 	test("exits when private key selection fails", async () => {
-		choosePrivateKeyPromptMock.mockImplementation(async () => {
+		chooseKeyCandidatePromptMock.mockImplementation(async () => {
 			throw new Error("No private keys available")
 		})
 
@@ -154,7 +158,7 @@ describe("initCommand", () => {
 		expect(setupGitDiffMock).toHaveBeenCalledTimes(1)
 		expect(setupGitDiffMock).toHaveBeenCalledWith(CWD)
 		expect(inputNamePromptMock).not.toHaveBeenCalled()
-		expect(choosePrivateKeyPromptMock).not.toHaveBeenCalled()
+		expect(chooseKeyCandidatePromptMock).not.toHaveBeenCalled()
 		expect(keyAddCommandMock).not.toHaveBeenCalled()
 		expect(createCommandMock).not.toHaveBeenCalled()
 		expect(readFileMock).not.toHaveBeenCalled()
@@ -184,7 +188,7 @@ describe("initCommand", () => {
 		expect(warnSpy).toHaveBeenCalledTimes(1)
 		expect(String(warnSpy.mock.calls[0]?.[0])).toContain("were ignored")
 		expect(String(warnSpy.mock.calls[0]?.[0])).toContain("dotenc key add")
-		expect(choosePrivateKeyPromptMock).not.toHaveBeenCalled()
+		expect(chooseKeyCandidatePromptMock).not.toHaveBeenCalled()
 		expect(keyAddCommandMock).not.toHaveBeenCalled()
 		expect(createCommandMock).not.toHaveBeenCalled()
 
@@ -200,7 +204,7 @@ describe("initCommand", () => {
 
 		await expect(initCommand({})).rejects.toThrow("git config failed")
 		expect(inputNamePromptMock).not.toHaveBeenCalled()
-		expect(choosePrivateKeyPromptMock).not.toHaveBeenCalled()
+		expect(chooseKeyCandidatePromptMock).not.toHaveBeenCalled()
 		expect(keyAddCommandMock).not.toHaveBeenCalled()
 		expect(createCommandMock).not.toHaveBeenCalled()
 		expect(readFileMock).not.toHaveBeenCalled()

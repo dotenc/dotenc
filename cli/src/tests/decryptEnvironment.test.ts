@@ -172,6 +172,24 @@ describe("decryptEnvironmentData", () => {
 		).rejects.toThrow("No private keys found")
 	})
 
+	test("reports an unsupported installed 1Password CLI version", async () => {
+		const deps: DecryptEnvironmentDataDeps = {
+			getPrivateKeys: async () => ({ keys: [], passphraseProtectedKeys: [] }),
+			discoverOnePasswordKeyCandidates: async () => ({
+				status: "unsupported-version",
+				keys: [],
+				unsupportedKeys: [],
+				unavailableAccounts: [],
+			}),
+			decryptDataKey: (() => Buffer.alloc(32)) as never,
+			decryptData: (async () => "") as never,
+		}
+
+		await expect(
+			decryptEnvironmentData("test-env", makeEnvironment("fp-1"), deps),
+		).rejects.toThrow("requires op 2.x")
+	})
+
 	test("throws access denied when no key fingerprint matches", async () => {
 		const deps: DecryptEnvironmentDataDeps = {
 			getPrivateKeys: async () => ({

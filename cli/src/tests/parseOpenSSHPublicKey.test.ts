@@ -53,6 +53,17 @@ describe("parseOpenSSHPublicKey", () => {
 				parseOpenSSHPublicKey(`${fixture.publicKey.trim()}\nssh-ed25519 AAAA`),
 			).toBeNull()
 			expect(parseOpenSSHPublicKey(`ecdsa-sha2-nistp256 ${base64}`)).toBeNull()
+			expect(
+				parseOpenSSHPublicKey(`no-pty ${fixture.publicKey.trim()}`),
+			).toBeNull()
+
+			const blob = Buffer.from(base64 as string, "base64")
+			const padded = Buffer.concat([blob, Buffer.alloc(4)]).toString("base64")
+			expect(parseOpenSSHPublicKey(`ssh-ed25519 ${padded}`)).toBeNull()
+
+			const truncated = blob.subarray(0, -1).toString("base64")
+			expect(parseOpenSSHPublicKey(`ssh-ed25519 ${truncated}`)).toBeNull()
+			expect(parseOpenSSHPublicKey("ssh-ed25519 AAAA")).toBeNull()
 		} finally {
 			fs.rmSync(fixture.directory, { recursive: true, force: true })
 		}

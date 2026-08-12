@@ -20,6 +20,10 @@ import { CREATE_NEW_PRIVATE_KEY_CHOICE } from "./choosePrivateKey"
 
 const PASSPHRASE_CHOICE_PREFIX = "__dotenc_passphrase_protected_key__:"
 
+function isEnvironmentKeyName(name: string): boolean {
+	return name.startsWith("env.")
+}
+
 type ChooseKeyCandidateOptions = {
 	nonInteractiveHint?: string
 	preferredKeyName?: string
@@ -114,6 +118,9 @@ function promptOptions(
 	const onePasswordKeys = result.keys.filter(
 		(key) => key.source === "1password",
 	)
+	const filesystemPassphraseKeys = result.passphraseProtectedKeys.filter(
+		(name) => !isEnvironmentKeyName(name),
+	)
 	const toOption = (key: KeyCandidate) => ({
 		group: key.group.label,
 		label: key.name,
@@ -123,7 +130,7 @@ function promptOptions(
 	return [
 		...environmentKeys.map(toOption),
 		...filesystemKeys.map(toOption),
-		...result.passphraseProtectedKeys.map((name) => ({
+		...filesystemPassphraseKeys.map((name) => ({
 			group: "Local - ~/.ssh",
 			label: name,
 			hint: "passphrase-protected",
@@ -143,6 +150,11 @@ function logDiscoveryWarnings(
 	result: GetKeyCandidatesResult,
 	logWarn: (message: string) => void,
 ) {
+	const environmentPassphraseKeys =
+		result.passphraseProtectedKeys.filter(isEnvironmentKeyName)
+	if (environmentPassphraseKeys.length > 0) {
+		logWarn(passphraseProtectedKeyError(environmentPassphraseKeys))
+	}
 	if ((result.unsupportedKeys ?? []).length > 0) {
 		logWarn(
 			`${chalk.yellow("Warning:")} unsupported SSH keys will be ignored:\n${unsupportedSummary(result)}`,
@@ -156,6 +168,11 @@ function logDiscoveryWarnings(
 	if (result.onePassword.status === "unavailable") {
 		logWarn(
 			`${chalk.yellow("Warning:")} the installed 1Password CLI was unavailable.`,
+		)
+	}
+	if (result.onePassword.status === "unsupported-version") {
+		logWarn(
+			`${chalk.yellow("Warning:")} the installed 1Password CLI version is unsupported; dotenc requires op 2.x.`,
 		)
 	}
 }
@@ -192,6 +209,11 @@ export async function _runChooseKeyCandidatePrompt(
 					passphraseProtectedKeyError(result.passphraseProtectedKeys),
 				)
 			}
+			if (result.onePassword.status === "unsupported-version") {
+				throw new Error(
+					"The installed 1Password CLI version is unsupported. dotenc requires op 2.x.",
+				)
+			}
 			if ((result.unsupportedKeys ?? []).length > 0) {
 				throw new Error(
 					`No supported SSH keys found.\n\nUnsupported keys:\n${unsupportedSummary(result)}\n\nGenerate a new key with:\n  ssh-keygen -t ed25519 -N ""`,
@@ -226,6 +248,13 @@ export async function _runChooseKeyCandidatePrompt(
 
 		if (selected.startsWith(PASSPHRASE_CHOICE_PREFIX)) {
 			const name = selected.slice(PASSPHRASE_CHOICE_PREFIX.length)
+			if (
+				isEnvironmentKeyName(name) ||
+				!result.passphraseProtectedKeys.includes(name)
+			) {
+				deps.logWarn(passphraseProtectedKeyError([name]))
+				continue
+			}
 			const confirmed = await deps.promptConfirm(
 				"Create a passwordless copy of this key now? (optional if DOTENC_PRIVATE_KEY_PASSPHRASE is set)",
 				{ initial: true },

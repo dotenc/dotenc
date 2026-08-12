@@ -113,8 +113,7 @@ For a detailed breakdown of the cryptographic design, key material handling, thr
 
 ## How It Works
 
-1. dotenc detects your existing SSH keys in `~/.ssh/` and, when available,
-   supported SSH Key items from the installed 1Password CLI;
+1. dotenc detects your existing SSH keys in `~/.ssh/` (Ed25519 or RSA);
 2. Your public key is derived and stored in the project (`.dotenc/john.pub`);
 3. A unique data key is generated for each environment;
 4. The data key is encrypted with each authorized public key;
@@ -122,10 +121,7 @@ For a detailed breakdown of the cryptographic design, key material handling, thr
 6. Encrypted files (`.env.*.enc`) are committed to your repository;
 7. When running commands, variables are decrypted on-the-fly using your SSH private key.
 
-Filesystem SSH private keys never leave `~/.ssh/`. For an authorized
-1Password item, dotenc retrieves one matching private key into process memory
-only when decryption needs it; it is never written to disk or forwarded to the
-wrapped command.
+Your SSH private keys never leave `~/.ssh/`. dotenc reads them in place - nothing is copied, nothing is stored elsewhere.
 
 ### Project Structure
 
@@ -168,8 +164,7 @@ dotenc init
 
 In a new project, this interactively guides you through the setup process:
 
-1. Scanning `~/.ssh/` and supported SSH Key items from configured 1Password
-   accounts;
+1. Scanning your `~/.ssh/` directory for SSH keys (Ed25519, RSA, etc.);
 2. Prompting for your username (defaults to your system username);
 3. Letting you choose which SSH key to use;
 4. Deriving the public key and storing it in `.dotenc/` (e.g., `.dotenc/alice.pub`);
@@ -177,10 +172,7 @@ In a new project, this interactively guides you through the setup process:
 
 In an existing clone, `dotenc init` only enables the local Git diff integration. It does not prompt for an identity or recreate keys and environments, so it is safe to run after every clone.
 
-No keys to generate. If you already have an SSH key locally or in 1Password,
-you're ready to go. The 1Password integration is zero-config when `op` 2.x is
-installed and authenticated; native authorization dialogs remain controlled
-by 1Password.
+No keys to generate. If you already have an SSH key (and you probably do), you're ready to go.
 
 If you don't have an SSH key yet, just run `ssh-keygen` first - you'll want one anyway.
 
@@ -604,10 +596,27 @@ resolution, or secret storage work differently from a generic shell pipeline.
 
 dotenc keeps key management minimal by design. Your SSH keys are your identity - dotenc just uses them.
 
-> **Filesystem private keys** stay in `~/.ssh/`. A selected 1Password key is
-> retrieved into dotenc memory only when required for decryption and is never
-> stored or forwarded to a wrapped command.
+> **Private keys** stay in `~/.ssh/` where they belong. They are never copied or moved.
 > **Public keys** are stored in your project's `.dotenc/` folder, derived from the corresponding private keys.
+
+### 1Password SSH keys
+
+When the 1Password CLI 2.x (`op`) is installed and authenticated, dotenc can use
+SSH Key items without additional configuration. `dotenc init` and interactive
+`dotenc key add` discover public key metadata only and group candidates by a
+stable account ID, so accounts and duplicate item titles remain unambiguous.
+For scripts, `--private-key` and `--from-private-key` accept a qualified
+`1password:<account-id>:<vault-id>:<item-id>` selector.
+
+Local keys keep priority during decryption. If none matches an environment,
+local commands such as `run`, `dev`, environment edit/decrypt, and access
+rotation can ask `op` for one fingerprint-matched private key. 1Password may
+show its native authorization dialog at that point. After `op read` returns,
+the key remains only in the dotenc process: it is not written to disk, persisted
+in project files, or forwarded to a wrapped command or its environment.
+
+See [1Password SSH key connector](../docs/ONEPASSWORD_CONNECTOR.md) for the full
+behavior and security boundaries.
 
 ## Supported Key Types
 
@@ -633,12 +642,12 @@ dotenc key add [name] [--from-private-key <name-or-selector>] [--from-ssh <path>
 Adds a public key into the project (`.dotenc/<name>.pub`).
 
 - `--from-ssh <path>` — Derive the public key from an SSH key file (private or public). Supports both Ed25519 and RSA keys.
-- `--from-private-key <name-or-selector>` — Choose a local key name or a
-  fully qualified `1password:<account-id>:<vault-id>:<item-id>` selector.
+- `--from-private-key <name-or-selector>` — Choose a discovered private-key
+  candidate by name or qualified selector.
 - `-f, --from-file <file>` — Read a public (or private) key from a PEM file.
 - `-s, --from-string <pem_string>` — Use a PEM string directly.
-- No arguments — Interactive mode: choose from grouped local and 1Password SSH
-  keys, create a local key, or paste a PEM public key.
+- No arguments — Interactive mode: choose a discovered SSH key, create a local
+  key, or paste a PEM public key.
 - Key names may contain letters, numbers, dots (`.`), hyphens (`-`), and underscores (`_`).
 
 ### Listing public keys

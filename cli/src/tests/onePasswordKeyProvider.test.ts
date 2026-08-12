@@ -171,6 +171,98 @@ describe("discoverOnePasswordKeyCandidates", () => {
 		})
 	})
 
+	test("reports unsupported op major versions distinctly", async () => {
+		const calls: string[][] = []
+		const result = await discoverOnePasswordKeyCandidates({
+			runOpCommand: async (args) => {
+				calls.push(args)
+				return Buffer.from("3.0.0")
+			},
+		})
+
+		expect(result).toEqual({
+			status: "unsupported-version",
+			keys: [],
+			unsupportedKeys: [],
+			unavailableAccounts: [],
+		})
+		expect(calls).toEqual([["--version"]])
+	})
+
+	test("bounds concurrent item discovery while preserving item order", async () => {
+		const key = generateKey()
+		const items = ["C", "D", "E", "F", "G", "H"].map((letter) =>
+			item(letter.repeat(26), VAULT_A),
+		)
+		let activeItemGets = 0
+		let maxActiveItemGets = 0
+		const runOpCommand: RunOpCommand = async (args) => {
+			if (args[0] === "--version") return Buffer.from("2.35.0")
+			if (args[0] === "account") {
+				return json([{ account_uuid: ACCOUNT_A, extra: "accepted" }])
+			}
+			if (args[0] === "item" && args[1] === "list") return json(items)
+
+			activeItemGets += 1
+			maxActiveItemGets = Math.max(maxActiveItemGets, activeItemGets)
+			await new Promise((resolve) => setTimeout(resolve, 5))
+			activeItemGets -= 1
+			return json({ publicKey: key.publicKey, extra: "accepted" })
+		}
+
+		try {
+			const result = await discoverOnePasswordKeyCandidates({
+				runOpCommand,
+				itemConcurrency: 2,
+			})
+			expect(maxActiveItemGets).toBe(2)
+			expect(result.keys.map((candidate) => candidate.selector)).toEqual(
+				items.map((entry) => `1password:${ACCOUNT_A}:${VAULT_A}:${entry.id}`),
+			)
+		} finally {
+			fs.rmSync(key.directory, { recursive: true, force: true })
+		}
+	})
+
+	test("stops scheduling items at the discovery deadline and reports the account", async () => {
+		const key = generateKey()
+		const items = [ITEM_A, ITEM_B, "K".repeat(26)].map((id) =>
+			item(id, VAULT_A),
+		)
+		let clock = 0
+		const itemGetCalls: string[] = []
+		const runOpCommand: RunOpCommand = async (args) => {
+			if (args[0] === "--version") return Buffer.from("2.35.0")
+			if (args[0] === "account") {
+				return json([{ account_uuid: ACCOUNT_A, url: "a.example" }])
+			}
+			if (args[0] === "item" && args[1] === "list") return json(items)
+
+			itemGetCalls.push(args[2])
+			clock = itemGetCalls.length === 1 ? 5 : 11
+			return json({ publicKey: key.publicKey })
+		}
+
+		try {
+			const result = await discoverOnePasswordKeyCandidates({
+				runOpCommand,
+				discoveryTimeoutMs: 10,
+				itemConcurrency: 1,
+				now: () => clock,
+			})
+			expect(result.keys).toHaveLength(1)
+			expect(itemGetCalls).toEqual([ITEM_A, ITEM_B])
+			expect(result.unavailableAccounts).toEqual([
+				{
+					label: `1Password - a.example [AAAA...AAAA]`,
+					reason: "discovery-timeout",
+				},
+			])
+		} finally {
+			fs.rmSync(key.directory, { recursive: true, force: true })
+		}
+	})
+
 	test("rejects a private key whose fingerprint changed after discovery", async () => {
 		const publicFixture = generateKey()
 		const privateFixture = generateKey()

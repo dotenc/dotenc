@@ -85,7 +85,7 @@ Shipped local key-source integration:
 - [1Password SSH key connector](./ONEPASSWORD_CONNECTOR.md) — discover existing
   SSH Key items through the installed `op` CLI, keep multiple accounts
   unambiguous through stable account IDs, and retrieve only a matching private
-  key when a local interactive command needs to decrypt an environment.
+  key when a local dotenc command needs to decrypt an environment.
 
 ### Artifact doctor
 

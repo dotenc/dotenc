@@ -61,7 +61,7 @@ dotenc to discover and fingerprint-match all available SSH Key items.
 
 The connector is available when all required local pieces are usable:
 
-1. `op` resolves from `PATH` and `op --version` succeeds.
+1. `op` resolves from `PATH` and `op --version` reports a supported 2.x release.
 2. `op account list --format json` returns at least one configured account.
 3. The selected account can be authorized through the user's existing
    1Password CLI authentication flow.
@@ -302,7 +302,10 @@ connector must not be implemented only as a special case inside `run`.
 
 - Invoke `op` directly with an argv array; never construct a shell command.
 - Use JSON and no-color output for structured discovery.
-- Set output limits and a bounded timeout.
+- Set output limits and bounded timeouts. Discovery has a 60-second overall
+  deadline, and public metadata reads use at most four concurrent `op item get`
+  calls per account. An account whose discovery exceeds the deadline is
+  reported as unavailable instead of being treated as empty.
 - Treat unexpected stdout, malformed JSON, and nonzero exits as provider
   errors.
 - Do not echo arbitrary `op` stdout or stderr in dotenc diagnostics.
@@ -403,13 +406,14 @@ provider structure and should be handled as private local metadata:
 - `dotenc init` and interactive `dotenc key add` never retrieve a private
   1Password field.
 - Selecting a 1Password key stores only its public key in the dotenc project.
-- `dotenc run` prompts through 1Password when no local key matches, retrieves
-  one matching private key, and decrypts the environment successfully.
+- A local decryption flow prompts through 1Password when no local key matches,
+  retrieves one matching private key, and decrypts the environment
+  successfully.
 - A retrieved key with a different fingerprint is rejected before use.
 - RSA 2048+ and Ed25519 items work; weaker RSA and unsupported algorithms are
   rejected consistently with filesystem keys.
-- Denied authorization, unavailable accounts, malformed output, and missing
-  items have distinct safe diagnostics.
+- Denied authorization, unsupported CLI versions, unavailable accounts,
+  malformed output, and missing items have distinct safe diagnostics.
 - Private key material never reaches files, logs, error messages, caches,
   telemetry, or wrapped child processes.
 - Unit tests use a fake `op` executable or injected process adapter and never
