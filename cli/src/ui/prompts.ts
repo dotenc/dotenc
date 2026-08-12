@@ -1,3 +1,5 @@
+import { isCancel, SelectPrompt } from "@clack/core"
+import chalk from "chalk"
 import type {
 	ConfirmPromptOptions,
 	MultiSelectOptions,
@@ -25,6 +27,70 @@ export class NonInteractivePromptError extends Error {
 		super(message)
 		this.name = "NonInteractivePromptError"
 	}
+}
+
+export type GroupedSelectOption<T extends string> = {
+	group: string
+	hint?: string
+	label: string
+	value: T
+}
+
+export function _renderGroupedSelect<T extends string>(
+	message: string,
+	options: GroupedSelectOption<T>[],
+	cursor: number,
+	state: "active" | "submit" | "cancel" | "initial" | "error",
+): string {
+	if (state === "submit") {
+		return `${chalk.green("◇")} ${message}\n${chalk.gray(options[cursor]?.label ?? "")}`
+	}
+	if (state === "cancel") return `${chalk.red("■")} ${message}`
+
+	const lines = [`${chalk.cyan("◆")} ${message}`]
+	let previousGroup: string | undefined
+	for (const [index, option] of options.entries()) {
+		if (option.group !== previousGroup) {
+			if (previousGroup !== undefined) lines.push("")
+			lines.push(chalk.bold(option.group))
+			previousGroup = option.group
+		}
+		const marker = index === cursor ? chalk.cyan("❯") : " "
+		const label = index === cursor ? chalk.cyan(option.label) : option.label
+		const hint = option.hint ? chalk.gray(`  ${option.hint}`) : ""
+		lines.push(`${marker} ${label}${hint}`)
+	}
+	return lines.join("\n")
+}
+
+export const promptGroupedSelect = async <T extends string>(
+	message: string,
+	options: {
+		options: GroupedSelectOption<T>[]
+		nonInteractiveError?: string
+	},
+): Promise<T> => {
+	if (!isInteractive()) {
+		throw new NonInteractivePromptError(options.nonInteractiveError)
+	}
+	if (options.options.length === 0) {
+		throw new Error("A grouped select requires at least one option.")
+	}
+
+	const prompt = new SelectPrompt({
+		options: options.options,
+		render() {
+			return _renderGroupedSelect(
+				message,
+				options.options,
+				this.cursor,
+				this.state,
+			)
+		},
+	})
+	const selected = await prompt.prompt()
+	if (isCancel(selected)) process.exit(0)
+	return selected as T
 }
 
 const isCancelledPromptError = (error: unknown) =>

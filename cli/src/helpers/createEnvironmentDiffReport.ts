@@ -22,6 +22,7 @@ import {
 	environmentDataKeysEqual,
 } from "./decryptEnvironment"
 import { getPrivateKeys } from "./getPrivateKeys"
+import { discoverOnePasswordKeyCandidates } from "./onePasswordKeyProvider"
 import { parseEnv } from "./parseEnv"
 
 export type {
@@ -664,12 +665,20 @@ const createDefaultCrypto = (
 		decryptEnvironment: (environmentName, environment) =>
 			decryptEnvironmentData(environmentName, environment, {
 				getPrivateKeys: loadPrivateKeys,
+				discoverOnePasswordKeyCandidates:
+					privateKeySource === "all"
+						? discoverOnePasswordKeyCandidates
+						: undefined,
 				decryptDataKey,
 				decryptData,
 			}),
 		dataKeysEqual: (base, head) =>
 			environmentDataKeysEqual(base, head, {
 				getPrivateKeys: loadPrivateKeys,
+				discoverOnePasswordKeyCandidates:
+					privateKeySource === "all"
+						? discoverOnePasswordKeyCandidates
+						: undefined,
 				decryptDataKey,
 			}),
 	}

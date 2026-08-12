@@ -10,7 +10,7 @@ import { parsePassphraseProtectedPrivateKey } from "../../helpers/parsePassphras
 import { resolveProjectRoot } from "../../helpers/resolveProjectRoot"
 import { validateKeyName } from "../../helpers/validateKeyName"
 import { validatePublicKey } from "../../helpers/validatePublicKey"
-import { choosePrivateKeyPrompt } from "../../prompts/choosePrivateKey"
+import { chooseKeyCandidatePrompt } from "../../prompts/chooseKeyCandidate"
 import { inputKeyPrompt } from "../../prompts/inputKey"
 import { inputNamePrompt } from "../../prompts/inputName"
 import { promptSelect } from "../../ui/prompts"
@@ -225,9 +225,9 @@ export const keyAddCommand = async (nameArg?: string, options?: Options) => {
 	}
 
 	if (options?.fromPrivateKey) {
-		let selectedKey: Awaited<ReturnType<typeof choosePrivateKeyPrompt>>
+		let selectedKey: Awaited<ReturnType<typeof chooseKeyCandidatePrompt>>
 		try {
-			selectedKey = await choosePrivateKeyPrompt(
+			selectedKey = await chooseKeyCandidatePrompt(
 				"Which SSH key do you want to add?",
 				{
 					nonInteractiveHint: "--from-private-key <name>",
@@ -239,7 +239,7 @@ export const keyAddCommand = async (nameArg?: string, options?: Options) => {
 			process.exit(1)
 		}
 
-		publicKey = crypto.createPublicKey(selectedKey.privateKey)
+		publicKey = selectedKey.publicKey
 		if (!nameArg) {
 			nameArg = selectedKey.name
 		}
@@ -280,9 +280,9 @@ export const keyAddCommand = async (nameArg?: string, options?: Options) => {
 				process.exit(1)
 			}
 		} else {
-			let selectedKey: Awaited<ReturnType<typeof choosePrivateKeyPrompt>>
+			let selectedKey: Awaited<ReturnType<typeof chooseKeyCandidatePrompt>>
 			try {
-				selectedKey = await choosePrivateKeyPrompt(
+				selectedKey = await chooseKeyCandidatePrompt(
 					"Which SSH key do you want to add?",
 					{
 						nonInteractiveHint: "--from-private-key <name>",
@@ -293,7 +293,7 @@ export const keyAddCommand = async (nameArg?: string, options?: Options) => {
 				process.exit(1)
 			}
 
-			publicKey = crypto.createPublicKey(selectedKey.privateKey)
+			publicKey = selectedKey.publicKey
 			if (!nameArg) {
 				nameArg = selectedKey.name
 			}

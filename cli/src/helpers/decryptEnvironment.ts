@@ -6,22 +6,25 @@ import { decryptDataKey } from "./decryptDataKey"
 import { passphraseProtectedKeyError } from "./errors"
 import { getEnvironmentByName } from "./getEnvironmentByName"
 import { getPrivateKeys, type PrivateKeyEntry } from "./getPrivateKeys"
+import { discoverOnePasswordKeyCandidates } from "./onePasswordKeyProvider"
 
 type DecryptEnvironmentDataDeps = {
 	getPrivateKeys: typeof getPrivateKeys
+	discoverOnePasswordKeyCandidates?: typeof discoverOnePasswordKeyCandidates
 	decryptDataKey: typeof decryptDataKey
 	decryptData: typeof decryptData
 }
 
 const defaultDecryptEnvironmentDataDeps: DecryptEnvironmentDataDeps = {
 	getPrivateKeys,
+	discoverOnePasswordKeyCandidates,
 	decryptDataKey,
 	decryptData,
 }
 
 type EnvironmentDataKeyComparisonDeps = Pick<
 	DecryptEnvironmentDataDeps,
-	"getPrivateKeys" | "decryptDataKey"
+	"getPrivateKeys" | "discoverOnePasswordKeyCandidates" | "decryptDataKey"
 >
 
 const unwrapEnvironmentDataKey = async (
@@ -31,17 +34,11 @@ const unwrapEnvironmentDataKey = async (
 	const { keys: availablePrivateKeys, passphraseProtectedKeys } =
 		await deps.getPrivateKeys()
 
-	if (!availablePrivateKeys.length) {
-		if (passphraseProtectedKeys.length > 0) {
-			throw new Error(passphraseProtectedKeyError(passphraseProtectedKeys))
-		}
-		throw new Error(
-			"No private keys found. Please ensure you have SSH keys in ~/.ssh/ or set DOTENC_PRIVATE_KEY_BASE64.",
-		)
-	}
-
 	let grantedKey: Environment["keys"][number] | undefined
 	let selectedPrivateKey: PrivateKeyEntry | undefined
+	let providerStatus:
+		| Awaited<ReturnType<typeof discoverOnePasswordKeyCandidates>>["status"]
+		| undefined
 
 	for (const privateKeyEntry of availablePrivateKeys) {
 		grantedKey = environment.keys.find((key) => {
@@ -54,7 +51,43 @@ const unwrapEnvironmentDataKey = async (
 		}
 	}
 
+	if (!grantedKey && deps.discoverOnePasswordKeyCandidates) {
+		const discovery = await deps.discoverOnePasswordKeyCandidates()
+		providerStatus = discovery.status
+		const matchingCandidates = discovery.keys
+			.filter((candidate) =>
+				environment.keys.some(
+					(key) => key.fingerprint === candidate.fingerprint,
+				),
+			)
+			.sort((left, right) => left.selector.localeCompare(right.selector))
+
+		if (matchingCandidates.length > 0) {
+			const candidate = matchingCandidates[0]
+			selectedPrivateKey = await candidate.loadPrivateKey()
+			grantedKey = environment.keys.find(
+				(key) => key.fingerprint === selectedPrivateKey?.fingerprint,
+			)
+		}
+	}
+
 	if (!grantedKey || !selectedPrivateKey) {
+		if (
+			availablePrivateKeys.length === 0 &&
+			passphraseProtectedKeys.length > 0
+		) {
+			throw new Error(passphraseProtectedKeyError(passphraseProtectedKeys))
+		}
+		if (
+			availablePrivateKeys.length === 0 &&
+			(!deps.discoverOnePasswordKeyCandidates ||
+				providerStatus === "not-installed" ||
+				providerStatus === "no-accounts")
+		) {
+			throw new Error(
+				"No private keys found. Please ensure you have SSH keys in ~/.ssh/ or set DOTENC_PRIVATE_KEY_BASE64.",
+			)
+		}
 		throw new Error("Access denied to the environment.")
 	}
 

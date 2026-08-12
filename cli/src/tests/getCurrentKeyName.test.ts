@@ -109,4 +109,37 @@ describe("getCurrentKeyName", () => {
 		})
 		expect(result).toEqual(["alice", "alice-deploy"])
 	})
+
+	test("falls back to 1Password public candidates without loading private material", async () => {
+		let loadCount = 0
+		const loadPrivateKey = async () => {
+			loadCount += 1
+			return makePrivateEntry("unused", ed25519KeyPair)
+		}
+		const result = await getCurrentKeyName({
+			getPrivateKeys: async () => ({ keys: [], passphraseProtectedKeys: [] }),
+			getPublicKeys: async () => [makePublicEntry("alice", ed25519KeyPair)],
+			discoverOnePasswordKeyCandidates: async () => ({
+				status: "available",
+				keys: [
+					{
+						source: "1password",
+						selector: "1password:a:v:i",
+						name: "GitHub",
+						hint: "ed25519",
+						group: { id: "a", label: "a" },
+						publicKey: ed25519KeyPair.publicKey,
+						fingerprint: fingerprint(ed25519KeyPair.publicKey),
+						algorithm: "ed25519",
+						loadPrivateKey,
+					},
+				],
+				unsupportedKeys: [],
+				unavailableAccounts: [],
+			}),
+		})
+
+		expect(result).toEqual(["alice"])
+		expect(loadCount).toBe(0)
+	})
 })

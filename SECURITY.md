@@ -95,7 +95,25 @@ This means:
 
 ### Private Key Isolation
 
-**SSH private keys stay in `~/.ssh/`** — dotenc reads them in place and never copies, moves, or stores them elsewhere. When `dotenc key add --from-private-key <name>` or an interactive key-selection flow is used, dotenc loads the selected private key only long enough to derive and store its public key in `.dotenc/<name>.pub`; the private key itself is not written to the repository.
+**Filesystem SSH private keys stay in `~/.ssh/`** — dotenc reads them in place
+and never copies, moves, or stores them elsewhere. Public-only selection flows
+derive and store only `.dotenc/<name>.pub`.
+
+**1Password SSH keys are optional and memory-only** — when the installed `op`
+CLI exposes configured accounts, dotenc discovers SSH Key items through their
+public metadata. Accounts are addressed by complete `account_uuid`; vaults and
+items are addressed by stable IDs. `dotenc init` and `dotenc key add` never
+request a private field. If decryption has no matching environment or
+filesystem key, dotenc retrieves exactly one fingerprint-matched private key
+with `op read --account ...` through a pipe. It validates the retrieved key's
+fingerprint before use and never writes it to disk, caches it, logs it, or adds
+it to a child process environment or argument. Authorization and session scope
+remain controlled by the 1Password CLI and desktop app.
+
+`op` is invoked directly with an argument array, never through a shell.
+Structured output is schema-checked, bounded, and subject to a timeout;
+arbitrary stdout and stderr are not included in diagnostics. Account, vault,
+and item IDs are local metadata and are not persisted in project files.
 
 **In-memory zeroing:** After the private key is used to decrypt the data key, the raw key bytes are explicitly overwritten with zeros before being released:
 
@@ -118,8 +136,9 @@ compatibility. Passphrase-protected bootstrap keys use
 **Child process isolation:** When running commands with `dotenc run` or
 `dotenc dev`, the `DOTENC_PRIVATE_KEY_BASE64` and `DOTENC_PRIVATE_KEY`
 environment variables are explicitly stripped from the child process
-environment before launch. Injected secrets are limited to the decrypted
-variables only:
+environment before launch. A 1Password private key is held only in the dotenc
+process and is never represented in that environment. Injected secrets are
+limited to the decrypted variables only:
 
 ```typescript
 // cli/src/commands/run.ts

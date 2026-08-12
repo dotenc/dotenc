@@ -19,6 +19,7 @@ const choosePrivateKeyPromptMock = mock(async (_message: string) => {
 	return {
 		name: "id_ed25519",
 		privateKey,
+		publicKey: crypto.createPublicKey(privateKey),
 		fingerprint: "test-fingerprint",
 		algorithm: "ed25519" as const,
 		rawPublicKey: Buffer.alloc(32),
@@ -44,8 +45,8 @@ mock.module("../prompts/inputName", () => ({
 mock.module("node:os", () => ({
 	default: { ...realOs, userInfo: userInfoMock },
 }))
-mock.module("../prompts/choosePrivateKey", () => ({
-	choosePrivateKeyPrompt: choosePrivateKeyPromptMock,
+mock.module("../prompts/chooseKeyCandidate", () => ({
+	chooseKeyCandidatePrompt: choosePrivateKeyPromptMock,
 }))
 mock.module("../commands/key/add", () => ({
 	keyAddCommand: keyAddCommandMock,
@@ -89,6 +90,7 @@ beforeEach(() => {
 		return {
 			name: "id_ed25519",
 			privateKey,
+			publicKey: crypto.createPublicKey(privateKey),
 			fingerprint: "test-fingerprint",
 			algorithm: "ed25519" as const,
 			rawPublicKey: Buffer.alloc(32),
