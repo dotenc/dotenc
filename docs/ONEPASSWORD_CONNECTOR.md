@@ -302,8 +302,12 @@ OpenSSH output format supported by the CLI, equivalent to:
 
 ```text
 op read --account <account_uuid> \
-  "op://<vault_id>/<item_id>/private key?ssh-format=openssh"
+  "op://<vault_id>/<item_id>/private_key?ssh-format=openssh"
 ```
+
+`private_key` is the stable ID of the built-in SSH private-key field. Using the
+field ID instead of its display label keeps retrieval independent of the
+1Password account's language.
 
 See the [1Password `op read` reference](https://www.1password.dev/cli/reference/commands/read).
 

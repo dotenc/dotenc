@@ -44,7 +44,7 @@ function accountId(args: string[]): string | undefined {
 }
 
 describe("discoverOnePasswordKeyCandidates", () => {
-	test("groups duplicate titles by stable account IDs and retrieves only the selected private key", async () => {
+	test("groups duplicate titles and retrieves a selected private key by stable IDs", async () => {
 		const keyA = generateKey()
 		const keyB = generateKey("rsa")
 		const calls: string[][] = []
@@ -115,7 +115,7 @@ describe("discoverOnePasswordKeyCandidates", () => {
 					"read",
 					"--account",
 					ACCOUNT_B,
-					`op://${VAULT_B}/${ITEM_B}/private key?ssh-format=openssh`,
+					`op://${VAULT_B}/${ITEM_B}/private_key?ssh-format=openssh`,
 				],
 			])
 		} finally {

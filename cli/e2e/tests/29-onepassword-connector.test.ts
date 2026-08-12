@@ -218,7 +218,7 @@ exit 1
 			.split("\n")
 			.filter((line) => line.startsWith("read --account"))
 		expect(reads).toEqual([
-			`read --account ${ACCOUNT_A} op://${VAULT_A}/${ITEM_A}/private key?ssh-format=openssh`,
+			`read --account ${ACCOUNT_A} op://${VAULT_A}/${ITEM_A}/private_key?ssh-format=openssh`,
 		])
 	}, TIMEOUT)
 

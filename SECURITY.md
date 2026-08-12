@@ -113,6 +113,9 @@ disk, caches it, logs it, or adds it to a child process environment or
 argument. Authorization and session scope remain controlled by the 1Password
 CLI and desktop app.
 
+The built-in SSH private-key field is addressed by its stable `private_key` ID,
+not by a language-dependent display label.
+
 `op` is invoked directly with an argument array, never through a shell.
 Structured output is schema-checked, bounded, and subject to a timeout;
 arbitrary stdout and stderr are not included in diagnostics. Account, vault,

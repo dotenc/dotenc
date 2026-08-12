@@ -361,7 +361,7 @@ function privateKeyReference(
 			"invalid-response",
 		)
 	}
-	return `op://${item.vault.id}/${item.id}/private key?ssh-format=openssh`
+	return `op://${item.vault.id}/${item.id}/private_key?ssh-format=openssh`
 }
 
 function createCandidate(
