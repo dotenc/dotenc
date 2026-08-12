@@ -1,7 +1,10 @@
 import fs from "node:fs/promises"
 import path from "node:path"
+import { decryptData } from "../helpers/crypto"
+import { decryptDataKey } from "../helpers/decryptDataKey"
 import { decryptEnvironmentData } from "../helpers/decryptEnvironment"
 import { getEnvironmentByPath } from "../helpers/getEnvironmentByPath"
+import { getPrivateKeys } from "../helpers/getPrivateKeys"
 
 export const textconvCommand = async (filePath: string) => {
 	const absolutePath = path.isAbsolute(filePath)
@@ -14,7 +17,15 @@ export const textconvCommand = async (filePath: string) => {
 		const environmentName = nameMatch
 			? nameMatch[1]
 			: path.basename(absolutePath)
-		const plaintext = await decryptEnvironmentData(environmentName, environment)
+		const plaintext = await decryptEnvironmentData(
+			environmentName,
+			environment,
+			{
+				getPrivateKeys,
+				decryptDataKey,
+				decryptData,
+			},
+		)
 		process.stdout.write(plaintext)
 	} catch {
 		const raw = await fs.readFile(absolutePath, "utf-8")

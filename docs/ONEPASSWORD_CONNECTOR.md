@@ -319,6 +319,14 @@ All commands that share the private-key resolver should receive the same
 capability, including `run`, `dev`, environment edit/decrypt flows, and
 operations that must decrypt an environment before rotating access. The
 connector must not be implemented only as a special case inside `run`.
+`textconv` is intentionally excluded: Git may launch it once per file, so it
+must remain local-only and return encrypted content without invoking `op` when
+local decryption is unavailable.
+
+Identity-only flows may discover public metadata for project identities that
+do not match a local private key. Plain `dev` keeps a local match provider-free;
+an explicit `dev --identity` may broaden discovery so a 1Password-only project
+identity remains selectable without retrieving private material early.
 
 ## Security boundaries
 
@@ -382,11 +390,11 @@ provider structure and should be handled as private local metadata:
 | Account authorization is required | Allow the native 1Password dialog to appear. |
 | Authorization is declined | Report the affected account as unavailable; do not call it empty. |
 | One of several accounts fails | Keep successful categories available and explicitly report the unavailable account. |
-| No supported SSH Key items | Omit that account's empty key category or show an informational empty state. |
+| No supported SSH Key items | Omit that account's empty key category; when no local key exists, preserve the no-private-keys guidance. |
 | Duplicate account or item labels | Keep entries distinct through complete ID-backed values and disambiguating hints. |
 | Item moved or removed | Rediscover; do not depend on a stale locator. |
 | Public/private fingerprint mismatch | Reject the key and fail closed before data-key decryption. |
-| No candidate matches an environment | Preserve the existing access-denied result with safe provider-aware guidance. |
+| No candidate matches an environment | Return access denied only when at least one supported local or provider key was found; otherwise preserve the no-private-keys guidance. |
 | `op` returns malformed or excessive output | Treat the provider as failed and do not parse partial key material. |
 | Wrapped command starts | Ensure no 1Password private key is present in its argv or environment. |
 

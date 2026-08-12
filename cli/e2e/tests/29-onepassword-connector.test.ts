@@ -113,8 +113,9 @@ printf '%s\\n' "$*" >> "$DOTENC_OP_LOG"
 if [ "$1" = "--version" ]; then printf '2.35.0\\n'; exit 0; fi
 if [ "$1" = "account" ]; then cat "$DOTENC_OP_FIXTURES/accounts.json"; exit 0; fi
 if [ "$1" = "item" ] && [ "$2" = "list" ]; then
-  case "$*" in *"${ACCOUNT_A}"*) cat "$DOTENC_OP_FIXTURES/list-a.json";; *) cat "$DOTENC_OP_FIXTURES/list-b.json";; esac
-  exit 0
+	if [ "\${DOTENC_OP_EMPTY_ITEMS:-}" = "1" ]; then printf '[]'; exit 0; fi
+	case "$*" in *"${ACCOUNT_A}"*) cat "$DOTENC_OP_FIXTURES/list-a.json";; *) cat "$DOTENC_OP_FIXTURES/list-b.json";; esac
+	exit 0
 fi
 if [ "$1" = "item" ] && [ "$2" = "get" ]; then
   case "$3" in "${ITEM_A}") cat "$DOTENC_OP_FIXTURES/item-a.json";; *) cat "$DOTENC_OP_FIXTURES/item-b.json";; esac
@@ -179,20 +180,59 @@ exit 1
 
 		try {
 			generateEd25519Key(localHome)
+			writeFileSync(path.join(localWorkspace, ".env"), "LOCAL_MATCH=local\n")
 			writeFileSync(logPath, "")
-			const result = runCli(
+			const initialized = runCli(
 				localHome,
 				localWorkspace,
 				["init", "--name", "local"],
 				env,
 			)
+			const result = runCli(
+				localHome,
+				localWorkspace,
+				["run", "-e", "development", "--", "sh", "-c", "printf '%s' \"$LOCAL_MATCH\""],
+				env,
+			)
 
+			expect(initialized.exitCode).toBe(0)
 			expect(result.exitCode).toBe(0)
+			expect(result.stdout).toContain("local")
 			expect(readFileSync(logPath, "utf8")).toBe("")
 		} finally {
 			rmSync(localHome, { recursive: true, force: true })
 			rmSync(localWorkspace, { recursive: true, force: true })
 		}
+	}, TIMEOUT)
+
+	test("textconv never invokes 1Password for an inaccessible environment", () => {
+		writeFileSync(logPath, "")
+		const encryptedPath = path.join(workspace, ".env.development.enc")
+		const result = runCli(
+			home,
+			workspace,
+			["textconv", encryptedPath],
+			env,
+		)
+
+		expect(result.exitCode).toBe(0)
+		expect(result.stdout).toBe(readFileSync(encryptedPath, "utf8"))
+		expect(readFileSync(logPath, "utf8")).toBe("")
+	}, TIMEOUT)
+
+	test("available accounts without supported keys preserve no-key guidance", () => {
+		writeFileSync(logPath, "")
+		const result = runCli(
+			home,
+			workspace,
+			["run", "-e", "development", "--", "true"],
+			{ ...env, DOTENC_OP_EMPTY_ITEMS: "1" },
+		)
+
+		expect(result.exitCode).toBe(1)
+		expect(result.stderr).toContain("No private keys found")
+		expect(result.stderr).not.toContain("Access denied to the environment")
+		expect(readFileSync(logPath, "utf8")).not.toContain("read --account")
 	}, TIMEOUT)
 
 	test("run lazily retrieves one matching private key and does not forward it", () => {

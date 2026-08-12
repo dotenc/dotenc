@@ -8,12 +8,17 @@ type GetCurrentKeyNameDeps = {
 	discoverOnePasswordKeyCandidates?: typeof discoverOnePasswordKeyCandidates
 }
 
+type GetCurrentKeyNameOptions = {
+	requestedIdentity?: string
+}
+
 export const getCurrentKeyName = async (
 	deps: GetCurrentKeyNameDeps = {
 		getPrivateKeys,
 		getPublicKeys,
 		discoverOnePasswordKeyCandidates,
 	},
+	options: GetCurrentKeyNameOptions = {},
 ): Promise<string[]> => {
 	const { keys: privateKeys } = await deps.getPrivateKeys()
 	const publicKeys = await deps.getPublicKeys()
@@ -23,7 +28,18 @@ export const getCurrentKeyName = async (
 	const localMatches = publicKeys.filter((pub) =>
 		privateFingerprints.has(pub.fingerprint),
 	)
-	if (localMatches.length > 0 || !deps.discoverOnePasswordKeyCandidates) {
+	const unmatchedPublicKeys = publicKeys.filter(
+		(publicKey) => !privateFingerprints.has(publicKey.fingerprint),
+	)
+	const requestedIdentityIsLocal = localMatches.some(
+		(match) => match.name === options.requestedIdentity,
+	)
+	if (
+		!deps.discoverOnePasswordKeyCandidates ||
+		unmatchedPublicKeys.length === 0 ||
+		requestedIdentityIsLocal ||
+		(localMatches.length > 0 && options.requestedIdentity === undefined)
+	) {
 		return localMatches.map((match) => match.name)
 	}
 
@@ -32,6 +48,10 @@ export const getCurrentKeyName = async (
 		onePassword.keys.map((key) => key.fingerprint),
 	)
 	return publicKeys
-		.filter((publicKey) => providerFingerprints.has(publicKey.fingerprint))
+		.filter(
+			(publicKey) =>
+				privateFingerprints.has(publicKey.fingerprint) ||
+				providerFingerprints.has(publicKey.fingerprint),
+		)
 		.map((match) => match.name)
 }

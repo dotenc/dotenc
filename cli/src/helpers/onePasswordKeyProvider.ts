@@ -133,6 +133,10 @@ export const runOpCommand: RunOpCommand = (
 
 		child.stdout.on("data", (chunk: Buffer | string) => {
 			const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+			if (settled) {
+				bytes.fill(0)
+				return
+			}
 			stdoutBytes += bytes.length
 			if (stdoutBytes > maxOutputBytes) {
 				bytes.fill(0)
@@ -288,12 +292,11 @@ function detectAlgorithm(key: crypto.KeyObject): "rsa" | "ed25519" | null {
 }
 
 function parsePrivateKey(buffer: Buffer): crypto.KeyObject | null {
-	const content = buffer.toString("utf8")
 	try {
 		try {
-			return crypto.createPrivateKey(content)
+			return crypto.createPrivateKey(buffer)
 		} catch {
-			return parseOpenSSHPrivateKey(content)
+			return parseOpenSSHPrivateKey(buffer)
 		}
 	} finally {
 		buffer.fill(0)

@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
 
-const getCurrentKeyName = mock(async () => ["alice"])
+const getCurrentKeyName = mock(async (_deps?: unknown, _options?: unknown) => [
+	"alice",
+])
 const runCommandMock = mock(async () => {})
 const promptSelectMock = mock(async () => "alice")
 const isInteractiveMock = mock(() => true)
@@ -57,11 +59,14 @@ describe("devCommand", () => {
 			localOnly: undefined,
 			decryptionContext,
 		})
-		expect(getCurrentKeyName).toHaveBeenCalledWith({
-			getPrivateKeys,
-			getPublicKeys,
-			discoverOnePasswordKeyCandidates,
-		})
+		expect(getCurrentKeyName).toHaveBeenCalledWith(
+			{
+				getPrivateKeys,
+				getPublicKeys,
+				discoverOnePasswordKeyCandidates,
+			},
+			{ requestedIdentity: undefined },
+		)
 		expect(promptSelectMock).not.toHaveBeenCalled()
 		expect(dispose).toHaveBeenCalledTimes(1)
 	})
@@ -138,6 +143,9 @@ describe("devCommand", () => {
 		await devCommand("node", ["app.js"], { identity: "alice-deploy" })
 
 		expect(promptSelectMock).not.toHaveBeenCalled()
+		expect(getCurrentKeyName.mock.calls[0][1]).toEqual({
+			requestedIdentity: "alice-deploy",
+		})
 		expect(runCommandMock).toHaveBeenCalledWith("node", ["app.js"], {
 			env: "development,alice-deploy",
 			localOnly: undefined,

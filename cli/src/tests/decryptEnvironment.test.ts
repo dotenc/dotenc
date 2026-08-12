@@ -228,6 +228,31 @@ describe("decryptEnvironmentData", () => {
 		).rejects.toThrow("No private keys found")
 	})
 
+	test("preserves no-key guidance when 1Password discovery finds no supported keys", async () => {
+		const deps: DecryptEnvironmentDataDeps = {
+			getPrivateKeys: async () => ({ keys: [], passphraseProtectedKeys: [] }),
+			discoverOnePasswordKeyCandidates: async () => ({
+				status: "available",
+				keys: [],
+				unsupportedKeys: [],
+				unavailableAccounts: [
+					{
+						label: "1Password - personal.example [AAAA...AAAA]",
+						reason: "authorization-or-access-failed",
+					},
+				],
+			}),
+			decryptDataKey: (() => Buffer.alloc(32)) as never,
+			decryptData: (async () => "") as never,
+		}
+
+		await expect(
+			decryptEnvironmentData("test-env", makeEnvironment("fp-1"), deps),
+		).rejects.toThrow(
+			"No private keys found. Please ensure you have SSH keys in ~/.ssh/ or set DOTENC_PRIVATE_KEY_BASE64. 1Password access was unavailable for: 1Password - personal.example [AAAA...AAAA].",
+		)
+	})
+
 	test("reports an unsupported installed 1Password CLI version", async () => {
 		const deps: DecryptEnvironmentDataDeps = {
 			getPrivateKeys: async () => ({ keys: [], passphraseProtectedKeys: [] }),

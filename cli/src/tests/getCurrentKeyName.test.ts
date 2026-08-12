@@ -142,4 +142,74 @@ describe("getCurrentKeyName", () => {
 		expect(result).toEqual(["alice"])
 		expect(loadCount).toBe(0)
 	})
+
+	test("unions local and 1Password identities when provider lookup is requested", async () => {
+		let loadCount = 0
+		const result = await getCurrentKeyName(
+			{
+				getPrivateKeys: async () => ({
+					keys: [makePrivateEntry("id_ed25519", ed25519KeyPair)],
+					passphraseProtectedKeys: [],
+				}),
+				getPublicKeys: async () => [
+					makePublicEntry("alice", ed25519KeyPair),
+					makePublicEntry("deploy", ed25519KeyPair2),
+				],
+				discoverOnePasswordKeyCandidates: async () => ({
+					status: "available",
+					keys: [
+						{
+							source: "1password",
+							selector: "1password:a:v:i",
+							name: "Deploy",
+							hint: "ed25519",
+							group: { id: "a", label: "Account A" },
+							publicKey: ed25519KeyPair2.publicKey,
+							fingerprint: fingerprint(ed25519KeyPair2.publicKey),
+							algorithm: "ed25519",
+							loadPrivateKey: async () => {
+								loadCount += 1
+								return makePrivateEntry("unused", ed25519KeyPair2)
+							},
+						},
+					],
+					unsupportedKeys: [],
+					unavailableAccounts: [],
+				}),
+			},
+			{ requestedIdentity: "deploy" },
+		)
+
+		expect(result).toEqual(["alice", "deploy"])
+		expect(loadCount).toBe(0)
+	})
+
+	test("keeps a requested local identity provider-free", async () => {
+		let discoveryCount = 0
+		const result = await getCurrentKeyName(
+			{
+				getPrivateKeys: async () => ({
+					keys: [makePrivateEntry("id_ed25519", ed25519KeyPair)],
+					passphraseProtectedKeys: [],
+				}),
+				getPublicKeys: async () => [
+					makePublicEntry("alice", ed25519KeyPair),
+					makePublicEntry("deploy", ed25519KeyPair2),
+				],
+				discoverOnePasswordKeyCandidates: async () => {
+					discoveryCount += 1
+					return {
+						status: "available",
+						keys: [],
+						unsupportedKeys: [],
+						unavailableAccounts: [],
+					}
+				},
+			},
+			{ requestedIdentity: "alice" },
+		)
+
+		expect(result).toEqual(["alice"])
+		expect(discoveryCount).toBe(0)
+	})
 })

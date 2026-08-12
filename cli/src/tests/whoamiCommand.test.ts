@@ -196,6 +196,58 @@ describe("whoamiCommand", () => {
 		cwdSpy.mockRestore()
 	})
 
+	test("prints both local and 1Password-only project identities", async () => {
+		const cwdSpy = spyOn(process, "cwd").mockReturnValue(ROOT)
+		const logSpy = spyOn(console, "log").mockImplementation(() => {})
+		const logErrorSpy = spyOn(console, "error").mockImplementation(() => {})
+		const loadPrivateKey = mock(async () => {
+			throw new Error("private key should not be loaded")
+		})
+		getPrivateKeys.mockImplementation(async () => ({
+			keys: [makePrivateKey("id_ed25519", "SHA256:alice")],
+			passphraseProtectedKeys: [],
+		}))
+		getPublicKeys.mockImplementation(async () => [
+			makePublicKey("alice", "SHA256:alice"),
+			makePublicKey("deploy", "SHA256:deploy"),
+		])
+		discoverOnePasswordKeyCandidates.mockImplementation(async () => ({
+			status: "available",
+			keys: [
+				{
+					source: "1password",
+					selector: "1password:account:vault:item",
+					name: "Deploy",
+					hint: "ed25519 - Private",
+					group: {
+						id: "1password:account",
+						label: "1Password - example.1password.com [ABCD...WXYZ]",
+					},
+					publicKey: {} as never,
+					fingerprint: "SHA256:deploy",
+					algorithm: "ed25519",
+					loadPrivateKey,
+				},
+			],
+			unsupportedKeys: [],
+			unavailableAccounts: [],
+		}))
+		findEnvironmentsRecursive.mockImplementation(async () => [])
+
+		await whoamiCommand()
+
+		const logged = logSpy.mock.calls.map((call) => String(call[0])).join("\n")
+		expect(logged).toContain("Name: alice")
+		expect(logged).toContain("Active SSH key: id_ed25519")
+		expect(logged).toContain("Name: deploy")
+		expect(logged).toContain("1Password - example.1password.com")
+		expect(discoverOnePasswordKeyCandidates).toHaveBeenCalledTimes(1)
+		expect(loadPrivateKey).not.toHaveBeenCalled()
+		logSpy.mockRestore()
+		logErrorSpy.mockRestore()
+		cwdSpy.mockRestore()
+	})
+
 	test("reads .dotenc from projectRoot when cwd is a subdir", async () => {
 		const cwdSpy = spyOn(process, "cwd").mockReturnValue(SUBDIR)
 		const logErrorSpy = spyOn(console, "error").mockImplementation(() => {})

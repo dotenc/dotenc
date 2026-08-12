@@ -8,91 +8,111 @@ import crypto from "node:crypto"
  * Returns null for passphrase-protected or unsupported key types.
  */
 export function parseOpenSSHPrivateKey(
-	content: string,
+	content: string | Buffer,
 ): crypto.KeyObject | null {
-	// Strip the PEM header/footer and decode base64
-	const lines = content.split("\n")
-	const startIdx = lines.findIndex((l) =>
-		l.trim().startsWith("-----BEGIN OPENSSH PRIVATE KEY-----"),
-	)
-	const endIdx = lines.findIndex((l) =>
-		l.trim().startsWith("-----END OPENSSH PRIVATE KEY-----"),
-	)
-
-	if (startIdx === -1 || endIdx === -1) return null
-
-	const base64 = lines
-		.slice(startIdx + 1, endIdx)
-		.map((l) => l.trim())
-		.join("")
+	const base64 = extractOpenSshBase64(content)
+	if (!base64) return null
 	const buf = Buffer.from(base64, "base64")
+	try {
+		let offset = 0
 
-	let offset = 0
+		// Check magic: "openssh-key-v1\0"
+		const MAGIC = "openssh-key-v1\0"
+		const magic = buf.subarray(0, MAGIC.length).toString("ascii")
+		if (magic !== MAGIC) return null
+		offset += MAGIC.length
 
-	// Check magic: "openssh-key-v1\0"
-	const MAGIC = "openssh-key-v1\0"
-	const magic = buf.subarray(0, MAGIC.length).toString("ascii")
-	if (magic !== MAGIC) return null
-	offset += MAGIC.length
+		// Read ciphername
+		const ciphername = readString(buf, offset)
+		if (!ciphername) return null
+		offset = ciphername.nextOffset
 
-	// Read ciphername
-	const ciphername = readString(buf, offset)
-	if (!ciphername) return null
-	offset = ciphername.nextOffset
+		// If encrypted, we can't parse it
+		if (ciphername.value !== "none") return null
 
-	// If encrypted, we can't parse it
-	if (ciphername.value !== "none") return null
+		// Read kdfname
+		const kdfname = readString(buf, offset)
+		if (!kdfname) return null
+		offset = kdfname.nextOffset
 
-	// Read kdfname
-	const kdfname = readString(buf, offset)
-	if (!kdfname) return null
-	offset = kdfname.nextOffset
+		// Read kdfoptions
+		const kdfoptions = readString(buf, offset)
+		if (!kdfoptions) return null
+		offset = kdfoptions.nextOffset
 
-	// Read kdfoptions
-	const kdfoptions = readString(buf, offset)
-	if (!kdfoptions) return null
-	offset = kdfoptions.nextOffset
+		// Read number of keys
+		if (offset + 4 > buf.length) return null
+		const numKeys = buf.readUInt32BE(offset)
+		offset += 4
+		if (numKeys !== 1) return null
 
-	// Read number of keys
-	if (offset + 4 > buf.length) return null
-	const numKeys = buf.readUInt32BE(offset)
-	offset += 4
-	if (numKeys !== 1) return null
+		// Skip public key(s) section
+		const pubKeyBlob = readString(buf, offset)
+		if (!pubKeyBlob) return null
+		offset = pubKeyBlob.nextOffset
 
-	// Skip public key(s) section
-	const pubKeyBlob = readString(buf, offset)
-	if (!pubKeyBlob) return null
-	offset = pubKeyBlob.nextOffset
+		// Read private key blob
+		const privBlob = readBytes(buf, offset)
+		if (!privBlob) return null
 
-	// Read private key blob
-	const privBlob = readBytes(buf, offset)
-	if (!privBlob) return null
+		const priv = privBlob.value
+		let pOffset = 0
 
-	const priv = privBlob.value
-	let pOffset = 0
+		// Read check integers (must match)
+		if (pOffset + 8 > priv.length) return null
+		const check1 = priv.readUInt32BE(pOffset)
+		pOffset += 4
+		const check2 = priv.readUInt32BE(pOffset)
+		pOffset += 4
+		if (check1 !== check2) return null
 
-	// Read check integers (must match)
-	if (pOffset + 8 > priv.length) return null
-	const check1 = priv.readUInt32BE(pOffset)
-	pOffset += 4
-	const check2 = priv.readUInt32BE(pOffset)
-	pOffset += 4
-	if (check1 !== check2) return null
+		// Read key type
+		const keyType = readString(priv, pOffset)
+		if (!keyType) return null
+		pOffset = keyType.nextOffset
 
-	// Read key type
-	const keyType = readString(priv, pOffset)
-	if (!keyType) return null
-	pOffset = keyType.nextOffset
+		if (keyType.value === "ssh-ed25519") {
+			return parseEd25519(priv, pOffset)
+		}
 
-	if (keyType.value === "ssh-ed25519") {
-		return parseEd25519(priv, pOffset)
+		if (keyType.value === "ssh-rsa") {
+			return parseRSA(priv, pOffset)
+		}
+
+		return null
+	} finally {
+		buf.fill(0)
+	}
+}
+
+const OPENSSH_BEGIN = "-----BEGIN OPENSSH PRIVATE KEY-----"
+const OPENSSH_END = "-----END OPENSSH PRIVATE KEY-----"
+
+function extractOpenSshBase64(content: string | Buffer): string | null {
+	if (typeof content === "string") {
+		const lines = content.split("\n")
+		const startIdx = lines.findIndex((line) =>
+			line.trim().startsWith(OPENSSH_BEGIN),
+		)
+		const endIdx = lines.findIndex((line) =>
+			line.trim().startsWith(OPENSSH_END),
+		)
+		if (startIdx === -1 || endIdx <= startIdx) return null
+		return lines
+			.slice(startIdx + 1, endIdx)
+			.map((line) => line.trim())
+			.join("")
 	}
 
-	if (keyType.value === "ssh-rsa") {
-		return parseRSA(priv, pOffset)
-	}
-
-	return null
+	const startIdx = content.indexOf(OPENSSH_BEGIN)
+	if (startIdx === -1) return null
+	const bodyStart = startIdx + OPENSSH_BEGIN.length
+	const endIdx = content.indexOf(OPENSSH_END, bodyStart)
+	if (endIdx === -1) return null
+	return content
+		.subarray(bodyStart, endIdx)
+		.toString("ascii")
+		.replace(/\s+/g, "")
 }
 
 function parseEd25519(priv: Buffer, offset: number): crypto.KeyObject | null {
@@ -134,6 +154,8 @@ function parseEd25519(priv: Buffer, offset: number): crypto.KeyObject | null {
 		return crypto.createPrivateKey({ key: der, format: "der", type: "pkcs8" })
 	} catch {
 		return null
+	} finally {
+		der.fill(0)
 	}
 }
 
@@ -231,7 +253,12 @@ function readMpint(buf: Buffer, offset: number): ReadResult<Buffer> {
 }
 
 function bufToBase64Url(buf: Buffer): string {
-	return Buffer.from(buf).toString("base64url")
+	const copy = Buffer.from(buf)
+	try {
+		return copy.toString("base64url")
+	} finally {
+		copy.fill(0)
+	}
 }
 
 function bufToBigInt(buf: Buffer): bigint {
@@ -246,5 +273,10 @@ function bigIntToBase64Url(n: bigint): string {
 	if (n === 0n) return "AA"
 	const hex = n.toString(16)
 	const padded = hex.length % 2 ? `0${hex}` : hex
-	return Buffer.from(padded, "hex").toString("base64url")
+	const bytes = Buffer.from(padded, "hex")
+	try {
+		return bytes.toString("base64url")
+	} finally {
+		bytes.fill(0)
+	}
 }

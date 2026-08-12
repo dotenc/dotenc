@@ -122,8 +122,11 @@ not by a language-dependent display label.
 
 `op` is invoked directly with an argument array, never through a shell.
 Structured output is schema-checked, bounded, and subject to a timeout;
-arbitrary stdout and stderr are not included in diagnostics. Account, vault,
-and item IDs are local metadata and are not persisted in project files.
+arbitrary stdout and stderr are not included in diagnostics. Buffered private
+key output, including chunks delivered after a timeout or output-limit failure,
+is overwritten before release. OpenSSH parsing also clears decoded key buffers
+and temporary DER copies. Account, vault, and item IDs are local metadata and
+are not persisted in project files.
 
 **In-memory zeroing:** After the private key is used to decrypt the data key, the raw key bytes are explicitly overwritten with zeros before being released:
 
@@ -245,6 +248,11 @@ When any dotenc command runs, it resolves the **project root** by walking ancest
 On first initialization, dotenc registers the selected public key and creates the encrypted development and personal environments. If a plaintext `.env` is migrated, it is removed only after the encrypted development environment has been created successfully. New environment files use exclusive, no-clobber writes, so a file that appears concurrently cannot be overwritten.
 
 When `dotenc init` detects an existing project, it performs Git setup only: it configures `diff.dotenc.textconv` in that clone's local Git configuration and ensures the repository's `*.enc` diff attribute. It does not prompt for or modify identities, keys, encrypted environments, access rules, or a local plaintext `.env`. The Git subprocess result is checked before `.gitattributes` is changed, so a configuration failure aborts without reporting success or leaving a tracked attribute change.
+
+The `textconv` Git diff driver is deliberately local-only: it checks
+environment-provided and filesystem keys but never invokes `op` or triggers a
+1Password authorization prompt. When those local sources cannot decrypt a
+file, `textconv` emits the raw encrypted content for Git instead.
 
 ### Hierarchical Environment Loading
 

@@ -13,12 +13,15 @@ export const devCommand = async (
 ) => {
 	const decryptionContext = createDecryptEnvironmentDataContext()
 	try {
-		const keyNames = await getCurrentKeyName({
-			getPrivateKeys: decryptionContext.getPrivateKeys,
-			getPublicKeys,
-			discoverOnePasswordKeyCandidates:
-				decryptionContext.discoverOnePasswordKeyCandidates,
-		})
+		const keyNames = await getCurrentKeyName(
+			{
+				getPrivateKeys: decryptionContext.getPrivateKeys,
+				getPublicKeys,
+				discoverOnePasswordKeyCandidates:
+					decryptionContext.discoverOnePasswordKeyCandidates,
+			},
+			{ requestedIdentity: options.identity },
+		)
 
 		if (keyNames.length === 0) {
 			console.error(

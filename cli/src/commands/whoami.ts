@@ -22,11 +22,11 @@ export const whoamiCommand = async () => {
 
 	const privateFingerprints = new Set(privateKeys.map((k) => k.fingerprint))
 
-	const localMatchingPublicKeys = publicKeys.filter((pub) =>
-		privateFingerprints.has(pub.fingerprint),
+	const unmatchedPublicKeys = publicKeys.filter(
+		(publicKey) => !privateFingerprints.has(publicKey.fingerprint),
 	)
 	const onePasswordCandidates =
-		localMatchingPublicKeys.length === 0
+		unmatchedPublicKeys.length > 0
 			? (await discoverOnePasswordKeyCandidates()).keys
 			: []
 	const onePasswordByFingerprint = new Map(
@@ -35,12 +35,11 @@ export const whoamiCommand = async () => {
 			candidate,
 		]),
 	)
-	const matchingPublicKeys =
-		localMatchingPublicKeys.length > 0
-			? localMatchingPublicKeys
-			: publicKeys.filter((pub) =>
-					onePasswordByFingerprint.has(pub.fingerprint),
-				)
+	const matchingPublicKeys = publicKeys.filter(
+		(publicKey) =>
+			privateFingerprints.has(publicKey.fingerprint) ||
+			onePasswordByFingerprint.has(publicKey.fingerprint),
+	)
 
 	if (matchingPublicKeys.length === 0) {
 		if (privateKeys.length === 0 && passphraseProtectedKeys.length > 0) {

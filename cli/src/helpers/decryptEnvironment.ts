@@ -120,6 +120,7 @@ const unwrapEnvironmentDataKey = async (
 		| Awaited<ReturnType<typeof discoverOnePasswordKeyCandidates>>["status"]
 		| undefined
 	let providerKeyNames: string[] = []
+	let unavailableProviderAccountLabels: string[] = []
 
 	for (const privateKeyEntry of availablePrivateKeys) {
 		grantedKey = environment.keys.find((key) => {
@@ -137,6 +138,9 @@ const unwrapEnvironmentDataKey = async (
 		providerStatus = discovery.status
 		providerKeyNames = discovery.keys.map(
 			(candidate) => `${candidate.group.label} / ${candidate.name}`,
+		)
+		unavailableProviderAccountLabels = discovery.unavailableAccounts.map(
+			(account) => account.label,
 		)
 		const matchingCandidates = discovery.keys
 			.filter((candidate) =>
@@ -168,15 +172,14 @@ const unwrapEnvironmentDataKey = async (
 				"The installed 1Password CLI version is unsupported. dotenc requires op 2.x.",
 			)
 		}
-		if (
-			availablePrivateKeys.length === 0 &&
-			(!deps.discoverOnePasswordKeyCandidates ||
-				providerStatus === "not-installed" ||
-				providerStatus === "no-accounts" ||
-				providerStatus === "unavailable")
-		) {
+		if (availablePrivateKeys.length === 0 && providerKeyNames.length === 0) {
+			const unavailableAccounts = [...new Set(unavailableProviderAccountLabels)]
+			const providerGuidance =
+				unavailableAccounts.length > 0
+					? ` 1Password access was unavailable for: ${unavailableAccounts.join(", ")}.`
+					: ""
 			throw new Error(
-				"No private keys found. Please ensure you have SSH keys in ~/.ssh/ or set DOTENC_PRIVATE_KEY_BASE64.",
+				`No private keys found. Please ensure you have SSH keys in ~/.ssh/ or set DOTENC_PRIVATE_KEY_BASE64.${providerGuidance}`,
 			)
 		}
 		throw new EnvironmentAccessDeniedError([
