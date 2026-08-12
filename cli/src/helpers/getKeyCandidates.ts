@@ -11,12 +11,23 @@ import {
 } from "./onePasswordKeyProvider"
 import { validatePublicKey } from "./validatePublicKey"
 
+type DeferredOnePasswordDiscoveryResult = Omit<
+	OnePasswordDiscoveryResult,
+	"status"
+> & {
+	status: "not-requested"
+}
+
 export type GetKeyCandidatesResult = Pick<
 	GetPrivateKeysResult,
 	"passphraseProtectedKeys" | "unsupportedKeys"
 > & {
 	keys: KeyCandidate[]
-	onePassword: OnePasswordDiscoveryResult
+	onePassword: OnePasswordDiscoveryResult | DeferredOnePasswordDiscoveryResult
+}
+
+export type GetKeyCandidatesOptions = {
+	includeOnePassword?: boolean
 }
 
 type GetKeyCandidatesDeps = {
@@ -49,10 +60,19 @@ function localCandidate(entry: PrivateKeyEntry): KeyCandidate {
 }
 
 export async function getKeyCandidates(
+	options: GetKeyCandidatesOptions = {},
 	deps: GetKeyCandidatesDeps = defaultDeps,
 ): Promise<GetKeyCandidatesResult> {
 	const local = await deps.getPrivateKeys()
-	const onePassword = await deps.discoverOnePasswordKeyCandidates()
+	const onePassword =
+		options.includeOnePassword === false
+			? {
+					status: "not-requested" as const,
+					keys: [],
+					unsupportedKeys: [],
+					unavailableAccounts: [],
+				}
+			: await deps.discoverOnePasswordKeyCandidates()
 
 	const localCandidates: KeyCandidate[] = []
 	const policyUnsupported = []

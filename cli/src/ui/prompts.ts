@@ -1,4 +1,4 @@
-import { isCancel, SelectPrompt } from "@clack/core"
+import { isCancel, Prompt, SelectPrompt } from "@clack/core"
 import chalk from "chalk"
 import type {
 	ConfirmPromptOptions,
@@ -34,6 +34,58 @@ export type GroupedSelectOption<T extends string> = {
 	hint?: string
 	label: string
 	value: T
+}
+
+const SPINNER_FRAMES = ["◒", "◐", "◓", "◑"] as const
+
+export function _renderGroupedSpinner(
+	group: string,
+	message: string,
+	frame: number,
+): string {
+	return `${chalk.bold(group)}\n${chalk.cyan(SPINNER_FRAMES[frame % SPINNER_FRAMES.length])} ${message}`
+}
+
+class GroupedSpinnerPrompt extends Prompt {
+	refresh() {
+		this.output.emit("resize")
+	}
+
+	complete() {
+		this.state = "submit"
+		this.refresh()
+		this.close()
+	}
+}
+
+export async function runWithGroupedSpinner<T>(
+	group: string,
+	message: string,
+	task: () => Promise<T>,
+): Promise<T> {
+	if (!isInteractive()) return task()
+
+	let frame = 0
+	const prompt = new GroupedSpinnerPrompt({
+		render() {
+			return this.state === "submit"
+				? ""
+				: _renderGroupedSpinner(group, message, frame)
+		},
+	})
+	const promptDone = prompt.prompt()
+	const interval = setInterval(() => {
+		frame += 1
+		prompt.refresh()
+	}, 80)
+
+	try {
+		return await task()
+	} finally {
+		clearInterval(interval)
+		prompt.complete()
+		await promptDone
+	}
 }
 
 export function _renderGroupedSelect<T extends string>(

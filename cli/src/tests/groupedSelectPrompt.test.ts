@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { stripVTControlCharacters } from "node:util"
-import { _renderGroupedSelect } from "../ui/prompts"
+import { _renderGroupedSelect, _renderGroupedSpinner } from "../ui/prompts"
 
 describe("grouped select prompt", () => {
 	const options = [
@@ -48,5 +48,17 @@ describe("grouped select prompt", () => {
 			)
 			expect(rendered).toContain("❯ id_ed25519")
 		}
+	})
+
+	test("renders a loading spinner beneath a temporary group", () => {
+		const first = stripVTControlCharacters(
+			_renderGroupedSpinner("1Password", "Loading SSH keys...", 0),
+		)
+		const second = stripVTControlCharacters(
+			_renderGroupedSpinner("1Password", "Loading SSH keys...", 1),
+		)
+
+		expect(first).toBe("1Password\n◒ Loading SSH keys...")
+		expect(second).toBe("1Password\n◐ Loading SSH keys...")
 	})
 })

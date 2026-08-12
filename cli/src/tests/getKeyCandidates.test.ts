@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, mock, test } from "bun:test"
 import crypto from "node:crypto"
 import {
 	type GetKeyCandidatesResult,
@@ -54,18 +54,23 @@ describe("getKeyCandidates", () => {
 			],
 			unavailableAccounts: [],
 		}
-		const result = await getKeyCandidates({
-			getPrivateKeys: async () => ({
-				keys: [
-					privateKeyEntry("env.DOTENC_PRIVATE_KEY_BASE64"),
-					privateKeyEntry("id_ed25519"),
-					privateKeyEntry("id_ecdsa", "ec"),
-				],
-				passphraseProtectedKeys: ["id_rsa"],
-				unsupportedKeys: [{ name: "id_dsa", reason: "unsupported algorithm" }],
-			}),
-			discoverOnePasswordKeyCandidates: async () => providerResult,
-		})
+		const result = await getKeyCandidates(
+			{},
+			{
+				getPrivateKeys: async () => ({
+					keys: [
+						privateKeyEntry("env.DOTENC_PRIVATE_KEY_BASE64"),
+						privateKeyEntry("id_ed25519"),
+						privateKeyEntry("id_ecdsa", "ec"),
+					],
+					passphraseProtectedKeys: ["id_rsa"],
+					unsupportedKeys: [
+						{ name: "id_dsa", reason: "unsupported algorithm" },
+					],
+				}),
+				discoverOnePasswordKeyCandidates: async () => providerResult,
+			},
+		)
 
 		expect(result.keys.map((key) => key.source)).toEqual([
 			"environment",
@@ -88,5 +93,26 @@ describe("getKeyCandidates", () => {
 		expect(await result.keys[0].loadPrivateKey()).toMatchObject({
 			name: "env.DOTENC_PRIVATE_KEY_BASE64",
 		})
+	})
+
+	test("skips 1Password discovery when the caller requests local keys only", async () => {
+		const discoverOnePasswordKeyCandidates = mock(async () => {
+			throw new Error("1Password discovery should remain lazy")
+		})
+		const result = await getKeyCandidates(
+			{ includeOnePassword: false },
+			{
+				getPrivateKeys: async () => ({
+					keys: [privateKeyEntry("id_ed25519")],
+					passphraseProtectedKeys: [],
+					unsupportedKeys: [],
+				}),
+				discoverOnePasswordKeyCandidates,
+			},
+		)
+
+		expect(result.keys.map((key) => key.selector)).toEqual(["id_ed25519"])
+		expect(result.onePassword.status).toBe("not-requested")
+		expect(discoverOnePasswordKeyCandidates).not.toHaveBeenCalled()
 	})
 })

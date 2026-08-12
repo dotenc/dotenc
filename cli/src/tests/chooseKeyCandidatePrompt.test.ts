@@ -82,6 +82,10 @@ function deps(
 		getKeyCandidates: mock(async () => value) as never,
 		promptConfirm: mock(async () => false) as never,
 		promptGroupedSelect: mock(async () => selected) as never,
+		runWithGroupedSpinner: mock(
+			async (_group: string, _message: string, task: () => Promise<unknown>) =>
+				task(),
+		) as never,
 		createEd25519SshKey: mock(async () => "/tmp/key") as never,
 		createPasswordlessSshKeyCopy: mock(async () => ({
 			name: "copy",
@@ -95,6 +99,101 @@ function deps(
 }
 
 describe("chooseKeyCandidatePrompt", () => {
+	test("loads 1Password candidates only after the user chooses the action", async () => {
+		const local = localCandidate("id_ed25519")
+		const provider = candidate(ACCOUNT_A, ITEM_A, "Account A")
+		const localResult = result([local], "not-requested")
+		const providerResult = result([local, provider])
+		const getKeyCandidates = mock()
+			.mockResolvedValueOnce(localResult)
+			.mockResolvedValueOnce(providerResult)
+		const promptGroupedSelect = mock(
+			async (
+				_message,
+				options: { options: Array<{ label: string; value: string }> },
+			) => {
+				const providerOption = options.options.find(
+					(option) => option.value === provider.selector,
+				)
+				if (providerOption) return providerOption.value
+				return options.options.find(
+					(option) => option.label === "Use a key from 1Password",
+				)?.value
+			},
+		)
+		const testDeps = {
+			...deps(localResult),
+			getKeyCandidates: getKeyCandidates as never,
+			promptGroupedSelect: promptGroupedSelect as never,
+		}
+
+		await expect(
+			_runChooseKeyCandidatePrompt("Choose", testDeps),
+		).resolves.toBe(provider)
+		expect(getKeyCandidates.mock.calls).toEqual([
+			[{ includeOnePassword: false }],
+			[{ includeOnePassword: true }],
+		])
+		expect(testDeps.runWithGroupedSpinner).toHaveBeenCalledWith(
+			"1Password",
+			"Loading SSH keys...",
+			expect.any(Function),
+		)
+		const initialOptions = promptGroupedSelect.mock.calls[0][1].options
+		expect(initialOptions).toContainEqual(
+			expect.objectContaining({
+				group: "Actions",
+				label: "Use a key from 1Password",
+			}),
+		)
+		expect(
+			initialOptions.some((option) => option.value === provider.selector),
+		).toBe(false)
+		const loadedOptions = promptGroupedSelect.mock.calls[1][1].options
+		expect(loadedOptions).toContainEqual(
+			expect.objectContaining({
+				group: provider.group.label,
+				value: provider.selector,
+			}),
+		)
+		expect(
+			loadedOptions.some(
+				(option) => option.label === "Use a key from 1Password",
+			),
+		).toBe(false)
+	})
+
+	test("reports opt-in provider failures and keeps local keys usable", async () => {
+		for (const [status, warning] of [
+			["not-installed", "1Password CLI is not installed"],
+			["no-accounts", "no configured 1Password accounts"],
+			["unavailable", "installed 1Password CLI was unavailable"],
+			["unsupported-version", "requires op 2.x"],
+		] as const) {
+			const local = localCandidate(`id_${status}`)
+			const localResult = result([local], "not-requested")
+			const unavailableResult = result([local], status)
+			const getKeyCandidates = mock()
+				.mockResolvedValueOnce(localResult)
+				.mockResolvedValueOnce(unavailableResult)
+			const promptGroupedSelect = mock()
+				.mockResolvedValueOnce("__dotenc_one_password__")
+				.mockResolvedValueOnce(local.selector)
+			const testDeps = {
+				...deps(localResult),
+				getKeyCandidates: getKeyCandidates as never,
+				promptGroupedSelect: promptGroupedSelect as never,
+			}
+
+			await expect(
+				_runChooseKeyCandidatePrompt("Choose", testDeps),
+			).resolves.toBe(local)
+			expect(testDeps.logWarn).toHaveBeenCalledWith(
+				expect.stringContaining(warning),
+			)
+		}
+	})
+
 	test("renders stable account categories and returns the selected public candidate", async () => {
 		const first = candidate(
 			ACCOUNT_A,
@@ -143,6 +242,23 @@ describe("chooseKeyCandidatePrompt", () => {
 			preferredKeyName: second.selector,
 		})
 		expect(selected).toBe(second)
+		expect(testDeps.promptGroupedSelect).not.toHaveBeenCalled()
+	})
+
+	test("accepts a preferred local key without discovering 1Password", async () => {
+		const local = localCandidate("id_ed25519")
+		const localResult = result([local], "not-requested")
+		const testDeps = deps(localResult)
+
+		await expect(
+			_runChooseKeyCandidatePrompt("Choose", testDeps, {
+				preferredKeyName: local.selector,
+			}),
+		).resolves.toBe(local)
+		expect(testDeps.getKeyCandidates).toHaveBeenCalledWith({
+			includeOnePassword: false,
+		})
+		expect(testDeps.runWithGroupedSpinner).not.toHaveBeenCalled()
 		expect(testDeps.promptGroupedSelect).not.toHaveBeenCalled()
 	})
 

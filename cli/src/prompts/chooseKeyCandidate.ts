@@ -14,11 +14,13 @@ import {
 	type GroupedSelectOption,
 	promptConfirm,
 	promptGroupedSelect,
+	runWithGroupedSpinner,
 } from "../ui/prompts"
 import { isInteractive } from "../ui/tty"
 import { CREATE_NEW_PRIVATE_KEY_CHOICE } from "./choosePrivateKey"
 
 const PASSPHRASE_CHOICE_PREFIX = "__dotenc_passphrase_protected_key__:"
+const ONE_PASSWORD_CHOICE = "__dotenc_one_password__"
 
 function isEnvironmentKeyName(name: string): boolean {
 	return name.startsWith("env.")
@@ -33,6 +35,7 @@ type ChooseKeyCandidateDeps = {
 	getKeyCandidates: typeof getKeyCandidates
 	promptConfirm: typeof promptConfirm
 	promptGroupedSelect: typeof promptGroupedSelect
+	runWithGroupedSpinner: typeof runWithGroupedSpinner
 	createEd25519SshKey: typeof createEd25519SshKey
 	createPasswordlessSshKeyCopy: typeof createPasswordlessSshKeyCopy
 	homedir: typeof os.homedir
@@ -45,6 +48,7 @@ const defaultDeps: ChooseKeyCandidateDeps = {
 	getKeyCandidates,
 	promptConfirm,
 	promptGroupedSelect,
+	runWithGroupedSpinner,
 	createEd25519SshKey,
 	createPasswordlessSshKeyCopy,
 	homedir: os.homedir,
@@ -62,7 +66,7 @@ function unsupportedSummary(
 function selectPreferred(
 	preferred: string,
 	result: GetKeyCandidatesResult,
-): KeyCandidate {
+): KeyCandidate | undefined {
 	const exact = result.keys.find((key) => key.selector === preferred)
 	if (exact) return exact
 
@@ -88,6 +92,7 @@ function selectPreferred(
 			`SSH key ${chalk.cyan(preferred)} is not supported: ${unsupported.reason}.`,
 		)
 	}
+	if (result.onePassword.status === "not-requested") return undefined
 
 	const availableLocalKeys = result.keys
 		.filter((key) => key.source !== "1password")
@@ -137,6 +142,16 @@ function promptOptions(
 			value: `${PASSPHRASE_CHOICE_PREFIX}${name}`,
 		})),
 		...onePasswordKeys.map(toOption),
+		...(result.onePassword.status === "not-requested"
+			? [
+					{
+						group: "Actions",
+						label: "Use a key from 1Password",
+						hint: "load available SSH keys",
+						value: ONE_PASSWORD_CHOICE,
+					},
+				]
+			: []),
 		{
 			group: "Actions",
 			label: "Create a new SSH key",
@@ -174,6 +189,14 @@ function logDiscoveryWarnings(
 			`${chalk.yellow("Warning:")} the installed 1Password CLI was unavailable.`,
 		)
 	}
+	if (result.onePassword.status === "not-installed") {
+		logWarn(`${chalk.yellow("Warning:")} the 1Password CLI is not installed.`)
+	}
+	if (result.onePassword.status === "no-accounts") {
+		logWarn(
+			`${chalk.yellow("Warning:")} no configured 1Password accounts were found.`,
+		)
+	}
 	if (result.onePassword.status === "unsupported-version") {
 		logWarn(
 			`${chalk.yellow("Warning:")} the installed 1Password CLI version is unsupported; dotenc requires op 2.x.`,
@@ -187,11 +210,29 @@ export async function _runChooseKeyCandidatePrompt(
 	options: ChooseKeyCandidateOptions = {},
 ): Promise<KeyCandidate> {
 	let autoSelectName: string | undefined
+	const interactive = deps.isInteractive()
+	let result = await deps.getKeyCandidates({
+		includeOnePassword:
+			options.preferredKeyName?.startsWith("1password:") === true ||
+			(!interactive && options.preferredKeyName === undefined),
+	})
+	const loggedWarnings = new Set<string>()
+	const logWarnOnce = (warning: string) => {
+		if (loggedWarnings.has(warning)) return
+		loggedWarnings.add(warning)
+		deps.logWarn(warning)
+	}
 
 	for (;;) {
-		const result = await deps.getKeyCandidates()
 		if (options.preferredKeyName) {
-			return selectPreferred(options.preferredKeyName, result)
+			const selected = selectPreferred(options.preferredKeyName, result)
+			if (selected) return selected
+			result = await deps.runWithGroupedSpinner(
+				"1Password",
+				"Loading SSH keys...",
+				() => deps.getKeyCandidates({ includeOnePassword: true }),
+			)
+			continue
 		}
 		if (autoSelectName) {
 			const created = result.keys.find(
@@ -201,7 +242,7 @@ export async function _runChooseKeyCandidatePrompt(
 			autoSelectName = undefined
 		}
 
-		if (!deps.isInteractive()) {
+		if (!interactive) {
 			if (result.keys.length === 1) return result.keys[0]
 			if (result.keys.length > 1) {
 				throw new Error(
@@ -230,10 +271,19 @@ export async function _runChooseKeyCandidatePrompt(
 			)
 		}
 
-		logDiscoveryWarnings(result, deps.logWarn)
+		logDiscoveryWarnings(result, logWarnOnce)
 		const selected = await deps.promptGroupedSelect<string>(message, {
 			options: promptOptions(result),
 		})
+
+		if (selected === ONE_PASSWORD_CHOICE) {
+			result = await deps.runWithGroupedSpinner(
+				"1Password",
+				"Loading SSH keys...",
+				() => deps.getKeyCandidates({ includeOnePassword: true }),
+			)
+			continue
+		}
 
 		if (selected === CREATE_NEW_PRIVATE_KEY_CHOICE) {
 			try {
@@ -247,6 +297,9 @@ export async function _runChooseKeyCandidatePrompt(
 					`${chalk.yellow("Warning:")} failed to create a new SSH key. ${error instanceof Error ? error.message : String(error)}`,
 				)
 			}
+			result = await deps.getKeyCandidates({
+				includeOnePassword: result.onePassword.status !== "not-requested",
+			})
 			continue
 		}
 
@@ -269,6 +322,9 @@ export async function _runChooseKeyCandidatePrompt(
 					path.join(deps.homedir(), ".ssh", name),
 				)
 				autoSelectName = created.name
+				result = await deps.getKeyCandidates({
+					includeOnePassword: result.onePassword.status !== "not-requested",
+				})
 			} catch (error) {
 				deps.logWarn(
 					`${chalk.yellow("Warning:")} failed to create a passwordless SSH key copy. ${error instanceof Error ? error.message : String(error)}`,

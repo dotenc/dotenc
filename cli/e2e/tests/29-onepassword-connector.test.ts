@@ -171,6 +171,30 @@ exit 1
 		expect(setupLog).not.toContain("read --account")
 	}, TIMEOUT)
 
+	test("init with an explicit local key does not invoke 1Password", () => {
+		const localHome = mkdtempSync(path.join(os.tmpdir(), "e2e-29-local-home-"))
+		const localWorkspace = mkdtempSync(
+			path.join(os.tmpdir(), "e2e-29-local-workspace-"),
+		)
+
+		try {
+			generateEd25519Key(localHome)
+			writeFileSync(logPath, "")
+			const result = runCli(
+				localHome,
+				localWorkspace,
+				["init", "--name", "local", "--private-key", "id_ed25519"],
+				env,
+			)
+
+			expect(result.exitCode).toBe(0)
+			expect(readFileSync(logPath, "utf8")).toBe("")
+		} finally {
+			rmSync(localHome, { recursive: true, force: true })
+			rmSync(localWorkspace, { recursive: true, force: true })
+		}
+	}, TIMEOUT)
+
 	test("run lazily retrieves one matching private key and does not forward it", () => {
 		writeFileSync(logPath, "")
 		const result = runCli(

@@ -11,8 +11,9 @@ still required on each supported desktop operating system.
 dotenc should optionally use SSH Key items already stored in 1Password without
 requiring project configuration or a 1Password shell plugin.
 
-- `dotenc init` and interactive `dotenc key add` should show supported
-  1Password SSH keys alongside keys discovered in `~/.ssh`.
+- `dotenc init` and interactive `dotenc key add` should show local keys
+  immediately and discover supported 1Password SSH keys only after the user
+  chooses a dedicated action.
 - 1Password accounts must appear as separate categories. Account, vault, and
   item titles are presentation only; stable IDs identify every selection.
 - Commands that decrypt environments, including `dotenc run`, should retrieve
@@ -198,13 +199,31 @@ their field values.
 
 ## Interactive selection UX
 
-`dotenc init` and interactive `dotenc key add` should render one grouped list:
+`dotenc init` and interactive `dotenc key add` should initially render local
+keys and actions without invoking `op`:
 
 ```text
 Local - ~/.ssh
   id_ed25519                                      ed25519
   id_rsa                                          rsa
 
+Actions
+  Use a key from 1Password                        load available SSH keys
+  Create a new SSH key                            ed25519, recommended
+```
+
+Choosing the 1Password action should temporarily render a loading group while
+public metadata discovery runs:
+
+```text
+1Password
+  ◒ Loading SSH keys...
+```
+
+When discovery finishes, that temporary group is replaced by one category per
+account:
+
+```text
 1Password - personal.1password.com [ABCD...1234]
   GitHub                                          ed25519
   Production                                      rsa
@@ -212,10 +231,9 @@ Local - ~/.ssh
 1Password - company.1password.com [WXYZ...9876]
   GitHub                                          ed25519
   Production                                      ed25519
-
-Actions
-  Create a new SSH key                            ed25519, recommended
 ```
+
+Local keys and the remaining actions stay available in the refreshed picker.
 
 Category headings are non-selectable. A complete account ID is never required
 for visual scanning, but the selected value always contains the complete
@@ -245,12 +263,14 @@ printing unrelated account or item identifiers.
 
 The initialization and interactive key-add flows need only public key material:
 
-1. Discover environment-provided, filesystem, and 1Password candidates.
-2. Show them in the grouped selector.
-3. When a 1Password candidate is selected, use the already retrieved and
+1. Discover environment-provided and filesystem candidates.
+2. Show them immediately with a **Use a key from 1Password** action.
+3. Only after that action is selected, discover 1Password public metadata and
+   replace the temporary loading group with stable account categories.
+4. When a 1Password candidate is selected, use the already retrieved and
    validated public key.
-4. Export the public key in dotenc's existing SPKI PEM format.
-5. Continue through the existing `key add` and environment creation paths.
+5. Export the public key in dotenc's existing SPKI PEM format.
+6. Continue through the existing `key add` and environment creation paths.
 
 These flows must not call `op read` for the private key. Selecting a 1Password
 key during initialization should not export private material merely to derive
@@ -370,6 +390,8 @@ provider structure and should be handled as private local metadata:
 - `DOTENC_PRIVATE_KEY` remains the legacy raw-input path.
 - Existing `~/.ssh` discovery, passphrase behavior, selectors, and key creation
   remain supported.
+- Interactive local-key selection does not invoke `op`; 1Password discovery is
+  an explicit action in the picker.
 - Local matching keys take priority so existing users do not receive a new
   authorization prompt.
 - The connector is optional at runtime and must not add a package-time or
@@ -383,8 +405,8 @@ provider structure and should be handled as private local metadata:
 2. Introduce the lazy key-candidate contract and adapt environment-variable
    and filesystem discovery to it.
 3. Add grouped select support to the prompt layer.
-4. Integrate public-only candidates into `dotenc init` and interactive
-   `dotenc key add`.
+4. Integrate opt-in public-only candidate discovery into `dotenc init` and
+   interactive `dotenc key add` without delaying the initial local picker.
 5. Integrate lazy fingerprint-matched retrieval into the shared environment
    decryption path.
 6. Update safe user-facing diagnostics for local and 1Password sources.
@@ -395,8 +417,11 @@ provider structure and should be handled as private local metadata:
 
 ## Acceptance criteria
 
-- With no `op` executable, existing key-related tests and user flows are
-  unchanged.
+- With no `op` executable, local key flows stay unchanged; choosing the
+  1Password action reports that the CLI is not installed and keeps local keys
+  available.
+- Opening the interactive key picker and selecting a local key never invokes
+  `op`; selecting the 1Password action invokes discovery once.
 - With one 1Password account, supported SSH keys appear under one account
   category alongside the local-key category.
 - With multiple accounts, every account has a distinct category backed by its

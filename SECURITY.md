@@ -100,15 +100,18 @@ and never copies, moves, or stores them elsewhere. Public-only selection flows
 derive and store only `.dotenc/<name>.pub`.
 
 **1Password SSH keys are optional and memory-only** — when the installed `op`
-CLI exposes configured accounts, dotenc discovers SSH Key items through their
-public metadata. Accounts are addressed by complete `account_uuid`; vaults and
-items are addressed by stable IDs. `dotenc init` and `dotenc key add` never
-request a private field. If decryption has no matching environment or
-filesystem key, dotenc retrieves exactly one fingerprint-matched private key
-with `op read --account ...` through a pipe. It validates the retrieved key's
-fingerprint before use and never writes it to disk, caches it, logs it, or adds
-it to a child process environment or argument. Authorization and session scope
-remain controlled by the 1Password CLI and desktop app.
+CLI exposes configured accounts, dotenc can discover SSH Key items through
+their public metadata. Interactive `dotenc init` and `dotenc key add` defer that
+discovery until the user explicitly chooses the 1Password action; local key
+selection in those pickers does not invoke `op`. Accounts are addressed by
+complete `account_uuid`; vaults and items are addressed by stable IDs. Those
+commands never request a private field. If decryption has no matching
+environment or filesystem key, dotenc retrieves exactly one
+fingerprint-matched private key with `op read --account ...` through a pipe. It
+validates the retrieved key's fingerprint before use and never writes it to
+disk, caches it, logs it, or adds it to a child process environment or
+argument. Authorization and session scope remain controlled by the 1Password
+CLI and desktop app.
 
 `op` is invoked directly with an argument array, never through a shell.
 Structured output is schema-checked, bounded, and subject to a timeout;

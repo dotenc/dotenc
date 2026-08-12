@@ -603,10 +603,13 @@ dotenc keeps key management minimal by design. Your SSH keys are your identity -
 
 When the 1Password CLI 2.x (`op`) is installed and authenticated, dotenc can use
 SSH Key items without additional configuration. `dotenc init` and interactive
-`dotenc key add` discover public key metadata only and group candidates by a
-stable account ID, so accounts and duplicate item titles remain unambiguous.
-For scripts, `--private-key` and `--from-private-key` accept a qualified
-`1password:<account-id>:<vault-id>:<item-id>` selector.
+`dotenc key add` show local keys immediately. Choose **Use a key from
+1Password** under **Actions** to load public key metadata; a temporary loading
+group is then replaced by account groups backed by stable account IDs, so
+accounts and duplicate item titles remain unambiguous. For scripts,
+`--private-key` and `--from-private-key` accept a qualified
+`1password:<account-id>:<vault-id>:<item-id>` selector and load its provider
+metadata directly.
 
 Local keys keep priority during decryption. If none matches an environment,
 local commands such as `run`, `dev`, environment edit/decrypt, and access
