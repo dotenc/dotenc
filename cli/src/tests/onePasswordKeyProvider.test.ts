@@ -68,22 +68,12 @@ describe("discoverOnePasswordKeyCandidates", () => {
 						: item(ITEM_B, VAULT_B),
 				])
 			}
-			if (args[0] === "item" && args[1] === "get") {
-				return json({
-					fields: [
-						{
-							type: "SSHKEY",
-							details: {
-								publicKey:
-									accountId(args) === ACCOUNT_A
-										? keyA.publicKey
-										: keyB.publicKey,
-							},
-						},
-					],
-				})
-			}
 			if (args[0] === "read") {
+				if (args.at(-1)?.endsWith("/public_key")) {
+					return Buffer.from(
+						accountId(args) === ACCOUNT_A ? keyA.publicKey : keyB.publicKey,
+					)
+				}
 				return Buffer.from(
 					accountId(args) === ACCOUNT_A ? keyA.privateKey : keyB.privateKey,
 				)
@@ -111,12 +101,39 @@ describe("discoverOnePasswordKeyCandidates", () => {
 				`1password:${ACCOUNT_B}:${VAULT_B}:${ITEM_B}`,
 				`1password:${ACCOUNT_A}:${VAULT_A}:${ITEM_A}`,
 			])
-			expect(calls.some((args) => args[0] === "read")).toBe(false)
+			expect(
+				calls.filter(
+					(args) => args[0] === "read" && args.at(-1)?.endsWith("/public_key"),
+				),
+			).toEqual([
+				[
+					"read",
+					"--account",
+					ACCOUNT_B,
+					`op://${VAULT_B}/${ITEM_B}/public_key`,
+				],
+				[
+					"read",
+					"--account",
+					ACCOUNT_A,
+					`op://${VAULT_A}/${ITEM_A}/public_key`,
+				],
+			])
+			expect(
+				calls.some((args) => args[0] === "item" && args[1] === "get"),
+			).toBe(false)
+			expect(
+				calls.some(
+					(args) => args[0] === "read" && args.at(-1)?.includes("/private_key"),
+				),
+			).toBe(false)
 
 			const selected = result.keys[0]
 			const privateKey = await selected.loadPrivateKey()
 			expect(privateKey.fingerprint).toBe(selected.fingerprint)
-			const readCalls = calls.filter((args) => args[0] === "read")
+			const readCalls = calls.filter(
+				(args) => args[0] === "read" && args.at(-1)?.includes("/private_key"),
+			)
 			expect(readCalls).toEqual([
 				[
 					"read",
@@ -132,7 +149,11 @@ describe("discoverOnePasswordKeyCandidates", () => {
 			})
 			const exported = await selected.exportPrivateKey?.()
 			expect(exported?.toString("utf8")).toContain("BEGIN OPENSSH PRIVATE KEY")
-			expect(calls.filter((args) => args[0] === "read")).toHaveLength(2)
+			expect(
+				calls.filter(
+					(args) => args[0] === "read" && args.at(-1)?.includes("/private_key"),
+				),
+			).toHaveLength(2)
 			exported?.fill(0)
 		} finally {
 			fs.rmSync(keyA.directory, { recursive: true, force: true })
@@ -156,7 +177,8 @@ describe("discoverOnePasswordKeyCandidates", () => {
 				}
 				return json([item(ITEM_B, VAULT_B)])
 			}
-			return json({ publicKey: key.publicKey })
+			if (args[0] === "read") return Buffer.from(key.publicKey)
+			throw new Error(`unexpected command: ${args.join(" ")}`)
 		}
 
 		try {
@@ -210,8 +232,8 @@ describe("discoverOnePasswordKeyCandidates", () => {
 		const items = ["C", "D", "E", "F", "G", "H"].map((letter) =>
 			item(letter.repeat(26), VAULT_A),
 		)
-		let activeItemGets = 0
-		let maxActiveItemGets = 0
+		let activePublicKeyReads = 0
+		let maxActivePublicKeyReads = 0
 		const runOpCommand: RunOpCommand = async (args) => {
 			if (args[0] === "--version") return Buffer.from("2.35.0")
 			if (args[0] === "account") {
@@ -219,11 +241,14 @@ describe("discoverOnePasswordKeyCandidates", () => {
 			}
 			if (args[0] === "item" && args[1] === "list") return json(items)
 
-			activeItemGets += 1
-			maxActiveItemGets = Math.max(maxActiveItemGets, activeItemGets)
+			activePublicKeyReads += 1
+			maxActivePublicKeyReads = Math.max(
+				maxActivePublicKeyReads,
+				activePublicKeyReads,
+			)
 			await new Promise((resolve) => setTimeout(resolve, 5))
-			activeItemGets -= 1
-			return json({ publicKey: key.publicKey, extra: "accepted" })
+			activePublicKeyReads -= 1
+			return Buffer.from(key.publicKey)
 		}
 
 		try {
@@ -231,7 +256,7 @@ describe("discoverOnePasswordKeyCandidates", () => {
 				runOpCommand,
 				itemConcurrency: 2,
 			})
-			expect(maxActiveItemGets).toBe(2)
+			expect(maxActivePublicKeyReads).toBe(2)
 			expect(result.keys.map((candidate) => candidate.selector)).toEqual(
 				items.map((entry) => `1password:${ACCOUNT_A}:${VAULT_A}:${entry.id}`),
 			)
@@ -246,7 +271,7 @@ describe("discoverOnePasswordKeyCandidates", () => {
 			item(id, VAULT_A),
 		)
 		let clock = 0
-		const itemGetCalls: string[] = []
+		const publicKeyReads: string[] = []
 		const runOpCommand: RunOpCommand = async (args) => {
 			if (args[0] === "--version") return Buffer.from("2.35.0")
 			if (args[0] === "account") {
@@ -254,9 +279,9 @@ describe("discoverOnePasswordKeyCandidates", () => {
 			}
 			if (args[0] === "item" && args[1] === "list") return json(items)
 
-			itemGetCalls.push(args[2])
-			clock = itemGetCalls.length === 1 ? 5 : 11
-			return json({ publicKey: key.publicKey })
+			publicKeyReads.push(args.at(-1) ?? "")
+			clock = publicKeyReads.length === 1 ? 5 : 11
+			return Buffer.from(key.publicKey)
 		}
 
 		try {
@@ -267,7 +292,10 @@ describe("discoverOnePasswordKeyCandidates", () => {
 				now: () => clock,
 			})
 			expect(result.keys).toHaveLength(1)
-			expect(itemGetCalls).toEqual([ITEM_A, ITEM_B])
+			expect(publicKeyReads).toEqual([
+				`op://${VAULT_A}/${ITEM_A}/public_key`,
+				`op://${VAULT_A}/${ITEM_B}/public_key`,
+			])
 			expect(result.unavailableAccounts).toEqual([
 				{
 					label: `1Password - a.example [AAAA...AAAA]`,
@@ -290,8 +318,9 @@ describe("discoverOnePasswordKeyCandidates", () => {
 			if (args[0] === "item" && args[1] === "list") {
 				return json([item(ITEM_A, VAULT_A)])
 			}
-			if (args[0] === "item")
-				return json({ publicKey: publicFixture.publicKey })
+			if (args[0] === "read" && args.at(-1)?.endsWith("/public_key")) {
+				return Buffer.from(publicFixture.publicKey)
+			}
 			return Buffer.from(privateFixture.privateKey)
 		}
 

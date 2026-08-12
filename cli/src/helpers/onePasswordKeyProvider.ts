@@ -19,8 +19,9 @@ import { validatePublicKey } from "./validatePublicKey"
 
 const OP_TIMEOUT_MS = 60_000
 const OP_DISCOVERY_TIMEOUT_MS = 60_000
-const OP_ITEM_GET_CONCURRENCY = 4
+const OP_PUBLIC_KEY_CONCURRENCY = 4
 const OP_METADATA_MAX_BYTES = 4 * 1024 * 1024
+const OP_PUBLIC_KEY_MAX_BYTES = 64 * 1024
 const OP_PRIVATE_KEY_MAX_BYTES = 256 * 1024
 const OP_ERROR_MAX_BYTES = 256 * 1024
 const ONE_PASSWORD_ID_PATTERN = /^[A-Za-z0-9]{26}$/
@@ -246,51 +247,6 @@ function parseJsonAndClear(buffer: Buffer): unknown {
 	}
 }
 
-function collectOpenSshPublicKeys(value: unknown, found = new Set<string>()) {
-	if (typeof value === "string") {
-		const trimmed = value.trim()
-		if (
-			/^(ssh-ed25519|ssh-rsa)\s+[A-Za-z0-9+/]+={0,2}(?:\s+.*)?$/.test(trimmed)
-		) {
-			found.add(trimmed)
-		}
-		return found
-	}
-
-	if (Array.isArray(value)) {
-		for (const entry of value) collectOpenSshPublicKeys(entry, found)
-		return found
-	}
-
-	if (value && typeof value === "object") {
-		for (const entry of Object.values(value)) {
-			collectOpenSshPublicKeys(entry, found)
-		}
-	}
-
-	return found
-}
-
-function parseItemPublicKey(item: unknown): crypto.KeyObject {
-	const parsedKeys = new Map<string, crypto.KeyObject>()
-	for (const content of collectOpenSshPublicKeys(item)) {
-		const publicKey = parseOpenSSHPublicKey(content)
-		if (!publicKey) continue
-		parsedKeys.set(getKeyFingerprint(publicKey), publicKey)
-	}
-
-	if (parsedKeys.size !== 1) {
-		throw new OnePasswordProviderError(
-			parsedKeys.size === 0
-				? "1Password SSH Key item did not expose a supported public key."
-				: "1Password SSH Key item exposed conflicting public keys.",
-			"invalid-response",
-		)
-	}
-
-	return parsedKeys.values().next().value as crypto.KeyObject
-}
-
 function detectAlgorithm(key: crypto.KeyObject): "rsa" | "ed25519" | null {
 	if (key.asymmetricKeyType === "rsa") return "rsa"
 	if (key.asymmetricKeyType === "ed25519") return "ed25519"
@@ -356,7 +312,10 @@ function itemSelector(
 	return `1password:${accountId}:${item.vault.id}:${item.id}`
 }
 
-function privateKeyReference(locator: OnePasswordLocator): string {
+function itemFieldReference(
+	locator: OnePasswordLocator,
+	fieldId: "public_key" | "private_key",
+): string {
 	if (
 		!ONE_PASSWORD_ID_PATTERN.test(locator.accountId) ||
 		!ONE_PASSWORD_ID_PATTERN.test(locator.vaultId) ||
@@ -367,7 +326,37 @@ function privateKeyReference(locator: OnePasswordLocator): string {
 			"invalid-response",
 		)
 	}
-	return `op://${locator.vaultId}/${locator.itemId}/private_key?ssh-format=openssh`
+	return `op://${locator.vaultId}/${locator.itemId}/${fieldId}`
+}
+
+function publicKeyReference(locator: OnePasswordLocator): string {
+	return itemFieldReference(locator, "public_key")
+}
+
+function privateKeyReference(locator: OnePasswordLocator): string {
+	return `${itemFieldReference(locator, "private_key")}?ssh-format=openssh`
+}
+
+async function loadPublicKeyFromLocator(
+	locator: OnePasswordLocator,
+	runCommand: RunOpCommand,
+): Promise<crypto.KeyObject> {
+	const output = await runCommand(
+		["read", "--account", locator.accountId, publicKeyReference(locator)],
+		{ maxOutputBytes: OP_PUBLIC_KEY_MAX_BYTES },
+	)
+	try {
+		const publicKey = parseOpenSSHPublicKey(output.toString("utf8"))
+		if (!publicKey) {
+			throw new OnePasswordProviderError(
+				"1Password SSH Key item did not expose a supported public key.",
+				"invalid-response",
+			)
+		}
+		return publicKey
+	} finally {
+		output.fill(0)
+	}
 }
 
 async function loadPrivateKeyFromLocator(
@@ -576,7 +565,7 @@ export async function discoverOnePasswordKeyCandidates(
 		now() + Math.max(1, deps.discoveryTimeoutMs ?? OP_DISCOVERY_TIMEOUT_MS)
 	const itemConcurrency = Math.max(
 		1,
-		Math.floor(deps.itemConcurrency ?? OP_ITEM_GET_CONCURRENCY),
+		Math.floor(deps.itemConcurrency ?? OP_PUBLIC_KEY_CONCURRENCY),
 	)
 	const deadlineExpired = () => now() >= deadline
 	const runDiscoveryCommand: RunOpCommand = (args, options = {}) => {
@@ -714,24 +703,19 @@ export async function discoverOnePasswordKeyCandidates(
 				const item = items[itemIndex]
 
 				try {
-					const output = await runDiscoveryCommand([
-						"item",
-						"get",
-						item.id,
-						"--vault",
-						item.vault.id,
-						"--format",
-						"json",
-						"--no-color",
-						"--account",
-						account.account_uuid,
-					])
+					const locator: OnePasswordLocator = {
+						accountId: account.account_uuid,
+						vaultId: item.vault.id,
+						itemId: item.id,
+					}
+					const publicKey = await loadPublicKeyFromLocator(
+						locator,
+						runDiscoveryCommand,
+					)
 					if (deadlineExpired()) {
-						output.fill(0)
 						discoveryTimedOut = true
 						return
 					}
-					const publicKey = parseItemPublicKey(parseJsonAndClear(output))
 					itemResults[itemIndex] = {
 						candidate: createCandidate(
 							account,

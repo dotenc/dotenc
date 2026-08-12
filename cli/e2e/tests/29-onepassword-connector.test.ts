@@ -77,30 +77,12 @@ describe("1Password connector", () => {
 			]),
 		)
 		writeFileSync(
-			path.join(fixtures, "item-a.json"),
-			JSON.stringify({
-				fields: [
-					{
-						type: "SSHKEY",
-						details: {
-							publicKey: readFileSync(`${keyAPath}.pub`, "utf8").trim(),
-						},
-					},
-				],
-			}),
+			path.join(fixtures, "public-a.txt"),
+			readFileSync(`${keyAPath}.pub`),
 		)
 		writeFileSync(
-			path.join(fixtures, "item-b.json"),
-			JSON.stringify({
-				fields: [
-					{
-						type: "SSHKEY",
-						details: {
-							publicKey: readFileSync(`${keyBPath}.pub`, "utf8").trim(),
-						},
-					},
-				],
-			}),
+			path.join(fixtures, "public-b.txt"),
+			readFileSync(`${keyBPath}.pub`),
 		)
 
 		logPath = path.join(root, "op.log")
@@ -117,12 +99,14 @@ if [ "$1" = "item" ] && [ "$2" = "list" ]; then
 	case "$*" in *"${ACCOUNT_A}"*) cat "$DOTENC_OP_FIXTURES/list-a.json";; *) cat "$DOTENC_OP_FIXTURES/list-b.json";; esac
 	exit 0
 fi
-if [ "$1" = "item" ] && [ "$2" = "get" ]; then
-  case "$3" in "${ITEM_A}") cat "$DOTENC_OP_FIXTURES/item-a.json";; *) cat "$DOTENC_OP_FIXTURES/item-b.json";; esac
-  exit 0
-fi
 if [ "$1" = "read" ]; then
-  case "$*" in *"${ITEM_A}"*) cat "$DOTENC_OP_KEY_A";; *) cat "$DOTENC_OP_KEY_B";; esac
+  case "$*" in
+    *"${ITEM_A}/public_key"*) cat "$DOTENC_OP_FIXTURES/public-a.txt";;
+    *"${ITEM_B}/public_key"*) cat "$DOTENC_OP_FIXTURES/public-b.txt";;
+    *"${ITEM_A}/private_key"*) cat "$DOTENC_OP_KEY_A";;
+    *"${ITEM_B}/private_key"*) cat "$DOTENC_OP_KEY_B";;
+    *) exit 1;;
+  esac
   exit 0
 fi
 exit 1
@@ -158,6 +142,14 @@ exit 1
 		)
 		expect(added.exitCode).toBe(0)
 		setupLog = readFileSync(logPath, "utf8")
+
+		const granted = runCli(
+			home,
+			workspace,
+			["auth", "grant", "development", "bob"],
+			env,
+		)
+		expect(granted.exitCode).toBe(0)
 	})
 
 	afterAll(() => {
@@ -169,7 +161,11 @@ exit 1
 			true,
 		)
 		expect(existsSync(path.join(workspace, ".dotenc", "bob.pub"))).toBe(true)
-		expect(setupLog).not.toContain("read --account")
+		expect(setupLog).toContain(
+			`read --account ${ACCOUNT_A} op://${VAULT_A}/${ITEM_A}/public_key`,
+		)
+		expect(setupLog).not.toContain("/private_key")
+		expect(setupLog).not.toContain("item get")
 	}, TIMEOUT)
 
 	test("non-interactive init with one local key does not invoke 1Password", () => {
@@ -300,10 +296,10 @@ exit 1
 		expect(result.stdout).toContain("Name: alice")
 		expect(result.stdout).toContain("1Password - personal.example")
 		expect(result.stdout).toContain("GitHub")
-		expect(readFileSync(logPath, "utf8")).not.toContain("read --account")
+		expect(readFileSync(logPath, "utf8")).not.toContain("/private_key")
 	}, TIMEOUT)
 
-	test("dev resolves the project identity from 1Password public metadata", () => {
+	test("dev reuses one cached private key across different recipient sets", () => {
 		writeFileSync(logPath, "")
 		const result = runCli(
 			home,
@@ -322,10 +318,8 @@ exit 1
 		expect(result.stdout).toContain("provider-value")
 		const commands = readFileSync(logPath, "utf8").split("\n")
 		expect(commands.filter((line) => line === "--version")).toHaveLength(1)
-		expect(commands.filter((line) => line.startsWith("read --account"))).toEqual(
-			[
-				`read --account ${ACCOUNT_A} op://${VAULT_A}/${ITEM_A}/private_key?ssh-format=openssh`,
-			],
-		)
+		expect(commands.filter((line) => line.includes("/private_key"))).toEqual([
+			`read --account ${ACCOUNT_A} op://${VAULT_A}/${ITEM_A}/private_key?ssh-format=openssh`,
+		])
 	}, TIMEOUT)
 })

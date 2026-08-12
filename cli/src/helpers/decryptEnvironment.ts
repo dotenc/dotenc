@@ -48,16 +48,30 @@ export const createDecryptionKeyContext = (
 	let discoveryPromise:
 		| ReturnType<typeof discoverOnePasswordKeyCandidates>
 		| undefined
-	const privateKeyPromises = new Map<string, Promise<PrivateKeyEntry>>()
-	const cachedPrivateKeyPromises = new Map<
-		string,
-		Promise<PrivateKeyEntry | undefined>
-	>()
+	const providerPrivateKeys = new Map<string, PrivateKeyEntry>()
+	let providerPrivateKeyLoadTail: Promise<void> = Promise.resolve()
 	let disposed = false
 	const discoverOnePassword = deps.discoverOnePasswordKeyCandidates
 	const loadPrivateKey =
 		deps.loadPrivateKey ??
 		((candidate: KeyCandidate) => candidate.loadPrivateKey())
+	const loadedProviderPrivateKey = (fingerprints: string[]) => {
+		for (const fingerprint of [...new Set(fingerprints)].sort()) {
+			const privateKey = providerPrivateKeys.get(fingerprint)
+			if (privateKey) return privateKey
+		}
+		return undefined
+	}
+	const serializeProviderPrivateKeyLoad = <T>(
+		load: () => Promise<T>,
+	): Promise<T> => {
+		const result = providerPrivateKeyLoadTail.then(load, load)
+		providerPrivateKeyLoadTail = result.then(
+			() => undefined,
+			() => undefined,
+		)
+		return result
+	}
 
 	return {
 		getPrivateKeys: () => {
@@ -65,17 +79,17 @@ export const createDecryptionKeyContext = (
 			return privateKeysPromise
 		},
 		loadCachedOnePasswordPrivateKey: deps.loadCachedOnePasswordPrivateKey
-			? (fingerprints) => {
-					const cacheKey = [...new Set(fingerprints)].sort().join("\0")
-					let privateKeyPromise = cachedPrivateKeyPromises.get(cacheKey)
-					if (!privateKeyPromise) {
-						privateKeyPromise = deps.loadCachedOnePasswordPrivateKey?.(
-							fingerprints,
-						) as Promise<PrivateKeyEntry | undefined>
-						cachedPrivateKeyPromises.set(cacheKey, privateKeyPromise)
-					}
-					return privateKeyPromise
-				}
+			? (fingerprints) =>
+					serializeProviderPrivateKeyLoad(async () => {
+						const loaded = loadedProviderPrivateKey(fingerprints)
+						if (loaded) return loaded
+						const privateKey =
+							await deps.loadCachedOnePasswordPrivateKey?.(fingerprints)
+						if (privateKey) {
+							providerPrivateKeys.set(privateKey.fingerprint, privateKey)
+						}
+						return privateKey
+					})
 			: undefined,
 		discoverOnePasswordKeyCandidates: discoverOnePassword
 			? () => {
@@ -83,21 +97,20 @@ export const createDecryptionKeyContext = (
 					return discoveryPromise
 				}
 			: undefined,
-		loadPrivateKey: (candidate) => {
-			let privateKeyPromise = privateKeyPromises.get(candidate.selector)
-			if (!privateKeyPromise) {
-				privateKeyPromise = loadPrivateKey(candidate)
-				privateKeyPromises.set(candidate.selector, privateKeyPromise)
-			}
-			return privateKeyPromise
-		},
+		loadPrivateKey: (candidate) =>
+			serializeProviderPrivateKeyLoad(async () => {
+				const loaded = providerPrivateKeys.get(candidate.fingerprint)
+				if (loaded) return loaded
+				const privateKey = await loadPrivateKey(candidate)
+				providerPrivateKeys.set(privateKey.fingerprint, privateKey)
+				return privateKey
+			}),
 		dispose: () => {
 			if (disposed) return
 			disposed = true
 			privateKeysPromise = undefined
 			discoveryPromise = undefined
-			privateKeyPromises.clear()
-			cachedPrivateKeyPromises.clear()
+			providerPrivateKeys.clear()
 		},
 	}
 }

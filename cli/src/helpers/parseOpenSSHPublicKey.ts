@@ -66,13 +66,7 @@ function parseRsa(buffer: Buffer, offset: number): crypto.KeyObject | null {
 	}
 }
 
-/**
- * Parses one OpenSSH authorized-key line into a Node public KeyObject.
- *
- * Only the algorithms accepted by dotenc are supported. Options placed before
- * the key type (as allowed in authorized_keys files) are intentionally rejected
- * because 1Password exposes plain public-key lines without those options.
- */
+/** Reject authorized_keys options before the key type. */
 export function parseOpenSSHPublicKey(
 	content: string,
 ): crypto.KeyObject | null {

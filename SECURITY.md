@@ -106,7 +106,8 @@ their public metadata. Interactive `dotenc init` and `dotenc key add` defer that
 discovery until the user explicitly chooses the 1Password action; local key
 selection in those pickers does not invoke `op`. Accounts are addressed by
 complete `account_uuid`; vaults and items are addressed by stable IDs. Those
-commands do not request a private field during discovery or ordinary selection.
+commands read only the ID-addressed `public_key` field during discovery; they do
+not request a full item or private field during discovery or ordinary selection.
 Selecting a 1Password key caches only
 its canonical fingerprint and opaque account, vault, and item IDs in the
 user's machine-local locator cache. If decryption has no matching
@@ -116,12 +117,12 @@ first checks the locator cache, avoiding account and item discovery after a
 successful selection or use. It validates the retrieved key's fingerprint
 before use. Private key material is never stored in the locator cache, logged,
 or added to a child process environment or argument.
-A decryption batch may reuse the in-memory key for
-environments that select the same qualified item. The command that creates the
-shared decryption context owns its cleanup and releases those batch references
-immediately after the decryption handoff; they are never forwarded to a wrapped
-command. Authorization and session scope remain controlled by the 1Password CLI
-and desktop app.
+A decryption batch reuses a fingerprint-verified in-memory provider key by its
+canonical fingerprint, including across environments with different recipient
+sets. The command that creates the shared decryption context owns its cleanup
+and releases those batch references immediately after the decryption handoff;
+they are never forwarded to a wrapped command. Authorization and session scope
+remain controlled by the 1Password CLI and desktop app.
 
 After an interactive 1Password selection, dotenc explains the trade-off and
 defaults to keeping the private key provider-managed. If the user explicitly
@@ -135,8 +136,8 @@ locator-only behavior. This opt-in removes future 1Password authorization and
 latency for that identity, but expands private-key exposure to persistent local
 storage.
 
-The built-in SSH private-key field is addressed by its stable `private_key` ID,
-not by a language-dependent display label.
+The built-in SSH public- and private-key fields are addressed by their stable
+`public_key` and `private_key` IDs, not by language-dependent display labels.
 
 `op` is invoked directly with an argument array, never through a shell.
 Structured output is schema-checked, bounded, and subject to a timeout;

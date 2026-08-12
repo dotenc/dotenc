@@ -191,8 +191,10 @@ For each authorized account:
 1. List active SSH Key items with `op item list --categories "SSH Key"
    --format json --account <account_uuid>`.
 2. Address items by item and vault ID, never by title.
-3. Retrieve only the public-key and fingerprint metadata needed for discovery.
-   Do not use `--reveal` and do not retrieve private fields.
+3. Retrieve only the built-in public-key field with
+   `op read --account <account_uuid>
+   "op://<vault_id>/<item_id>/public_key"`. Do not fetch the full item, use
+   `--reveal`, or retrieve private fields.
 4. Parse and normalize the public key through Node's cryptographic APIs.
 5. Calculate the canonical dotenc fingerprint with the existing
    [`getKeyFingerprint.ts`](../cli/src/helpers/getKeyFingerprint.ts) helper.
@@ -201,10 +203,10 @@ For each authorized account:
 6. Apply the existing public-key policy: Ed25519 or RSA with a modulus of at
    least 2048 bits.
 
-The exact JSON representation of SSH public-key details must be captured as
-versioned test fixtures during implementation. Malformed or unsupported items
-should appear in the existing unsupported-key diagnostics without exposing
-their field values.
+`public_key` is the stable ID of the built-in SSH public-key field, keeping
+discovery independent of localized display labels. Malformed or unsupported
+items should appear in the existing unsupported-key diagnostics without
+exposing their field values.
 
 ## Interactive selection UX
 
@@ -356,9 +358,11 @@ identity remains selectable without retrieving private material early.
 ### Child process execution
 
 - Invoke `op` directly with an argv array; never construct a shell command.
-- Use JSON and no-color output for structured discovery.
+- Use JSON and no-color output for structured account and item-list discovery.
+- Read each SSH item's ID-addressed `public_key` field directly; never parse a
+  full-item response during discovery.
 - Set output limits and bounded timeouts. Discovery has a 60-second overall
-  deadline, and public metadata reads use at most four concurrent `op item get`
+  deadline, and public-key reads use at most four concurrent `op read`
   calls per account. An account whose discovery exceeds the deadline is
   reported as unavailable instead of being treated as empty.
 - Treat unexpected stdout, malformed JSON, and nonzero exits as provider
@@ -376,7 +380,9 @@ identity remains selectable without retrieving private material early.
   exclusive creation, a `0700` SSH directory, and a `0600` private-key file.
 - Never forward it to the command launched by `dotenc run`.
 - Within one decryption batch, reuse discovery and a selected private key only
-  in memory. Release the batch references before launching a wrapped command.
+  in memory by its canonical fingerprint, including when environments have
+  different recipient sets. Release the batch references before launching a
+  wrapped command.
 - Minimize intermediate strings and buffers, and zero mutable buffers where
   practical.
 - Continue zeroing derived Ed25519 seed and PKCS#8 buffers in the existing
@@ -484,6 +490,8 @@ cannot overwrite unrelated mappings.
   wrong item.
 - `dotenc init` and interactive `dotenc key add` retrieve a private 1Password
   field only after explicit confirmation of the local-copy option.
+- Discovery reads only the ID-addressed `public_key` field and never requests a
+  full SSH Key item.
 - Selecting a 1Password key stores only its public key in the dotenc project.
 - Declining the local-copy prompt stores no private key outside 1Password;
   confirming it writes one fingerprint-verified unencrypted copy to `~/.ssh`.
@@ -492,6 +500,8 @@ cannot overwrite unrelated mappings.
 - A local decryption flow prompts through 1Password when no environment-provided
   or local filesystem key matches, retrieves one matching private key, and
   decrypts the environment successfully.
+- One decryption batch retrieves a provider key at most once per fingerprint,
+  even when its environments have different recipient sets.
 - A batch that decrypts multiple environments with the same 1Password item runs
   discovery and retrieves that private key only once.
 - A later process with a warm locator skips account and item discovery and goes

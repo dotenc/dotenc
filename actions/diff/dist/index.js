@@ -21559,8 +21559,9 @@ function validatePublicKey(key) {
 // cli/src/helpers/onePasswordKeyProvider.ts
 var OP_TIMEOUT_MS = 60000;
 var OP_DISCOVERY_TIMEOUT_MS = 60000;
-var OP_ITEM_GET_CONCURRENCY = 4;
+var OP_PUBLIC_KEY_CONCURRENCY = 4;
 var OP_METADATA_MAX_BYTES = 4 * 1024 * 1024;
+var OP_PUBLIC_KEY_MAX_BYTES = 64 * 1024;
 var OP_PRIVATE_KEY_MAX_BYTES = 256 * 1024;
 var OP_ERROR_MAX_BYTES = 256 * 1024;
 var ONE_PASSWORD_ID_PATTERN2 = /^[A-Za-z0-9]{26}$/;
@@ -21684,39 +21685,6 @@ function parseJsonAndClear(buffer) {
     buffer.fill(0);
   }
 }
-function collectOpenSshPublicKeys(value, found = new Set) {
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (/^(ssh-ed25519|ssh-rsa)\s+[A-Za-z0-9+/]+={0,2}(?:\s+.*)?$/.test(trimmed)) {
-      found.add(trimmed);
-    }
-    return found;
-  }
-  if (Array.isArray(value)) {
-    for (const entry of value)
-      collectOpenSshPublicKeys(entry, found);
-    return found;
-  }
-  if (value && typeof value === "object") {
-    for (const entry of Object.values(value)) {
-      collectOpenSshPublicKeys(entry, found);
-    }
-  }
-  return found;
-}
-function parseItemPublicKey(item) {
-  const parsedKeys = new Map;
-  for (const content of collectOpenSshPublicKeys(item)) {
-    const publicKey = parseOpenSSHPublicKey(content);
-    if (!publicKey)
-      continue;
-    parsedKeys.set(getKeyFingerprint(publicKey), publicKey);
-  }
-  if (parsedKeys.size !== 1) {
-    throw new OnePasswordProviderError(parsedKeys.size === 0 ? "1Password SSH Key item did not expose a supported public key." : "1Password SSH Key item exposed conflicting public keys.", "invalid-response");
-  }
-  return parsedKeys.values().next().value;
-}
 function detectAlgorithm2(key) {
   if (key.asymmetricKeyType === "rsa")
     return "rsa";
@@ -21762,11 +21730,29 @@ function itemHint(item, algorithm) {
 function itemSelector(accountId, item) {
   return `1password:${accountId}:${item.vault.id}:${item.id}`;
 }
-function privateKeyReference(locator) {
+function itemFieldReference(locator, fieldId) {
   if (!ONE_PASSWORD_ID_PATTERN2.test(locator.accountId) || !ONE_PASSWORD_ID_PATTERN2.test(locator.vaultId) || !ONE_PASSWORD_ID_PATTERN2.test(locator.itemId)) {
     throw new OnePasswordProviderError("1Password returned an invalid object identifier.", "invalid-response");
   }
-  return `op://${locator.vaultId}/${locator.itemId}/private_key?ssh-format=openssh`;
+  return `op://${locator.vaultId}/${locator.itemId}/${fieldId}`;
+}
+function publicKeyReference(locator) {
+  return itemFieldReference(locator, "public_key");
+}
+function privateKeyReference(locator) {
+  return `${itemFieldReference(locator, "private_key")}?ssh-format=openssh`;
+}
+async function loadPublicKeyFromLocator(locator, runCommand) {
+  const output = await runCommand(["read", "--account", locator.accountId, publicKeyReference(locator)], { maxOutputBytes: OP_PUBLIC_KEY_MAX_BYTES });
+  try {
+    const publicKey = parseOpenSSHPublicKey(output.toString("utf8"));
+    if (!publicKey) {
+      throw new OnePasswordProviderError("1Password SSH Key item did not expose a supported public key.", "invalid-response");
+    }
+    return publicKey;
+  } finally {
+    output.fill(0);
+  }
 }
 async function loadPrivateKeyFromLocator(fingerprint, locator, name, runCommand, preserveSerializedKey = false) {
   let output;
@@ -21877,7 +21863,7 @@ var defaultDeps = {
 async function discoverOnePasswordKeyCandidates(deps = defaultDeps) {
   const now = deps.now ?? Date.now;
   const deadline = now() + Math.max(1, deps.discoveryTimeoutMs ?? OP_DISCOVERY_TIMEOUT_MS);
-  const itemConcurrency = Math.max(1, Math.floor(deps.itemConcurrency ?? OP_ITEM_GET_CONCURRENCY));
+  const itemConcurrency = Math.max(1, Math.floor(deps.itemConcurrency ?? OP_PUBLIC_KEY_CONCURRENCY));
   const deadlineExpired = () => now() >= deadline;
   const runDiscoveryCommand = (args, options = {}) => {
     const remainingMs = deadline - now();
@@ -21977,24 +21963,16 @@ async function discoverOnePasswordKeyCandidates(deps = defaultDeps) {
         nextItemIndex += 1;
         const item = items[itemIndex];
         try {
-          const output = await runDiscoveryCommand([
-            "item",
-            "get",
-            item.id,
-            "--vault",
-            item.vault.id,
-            "--format",
-            "json",
-            "--no-color",
-            "--account",
-            account.account_uuid
-          ]);
+          const locator = {
+            accountId: account.account_uuid,
+            vaultId: item.vault.id,
+            itemId: item.id
+          };
+          const publicKey = await loadPublicKeyFromLocator(locator, runDiscoveryCommand);
           if (deadlineExpired()) {
-            output.fill(0);
             discoveryTimedOut = true;
             return;
           }
-          const publicKey = parseItemPublicKey(parseJsonAndClear(output));
           itemResults[itemIndex] = {
             candidate: createCandidate(account, item, publicKey, deps.runOpCommand, deps.rememberLocator)
           };
@@ -22043,45 +22021,62 @@ var createDecryptionKeyContext = (deps = {
 }) => {
   let privateKeysPromise;
   let discoveryPromise;
-  const privateKeyPromises = new Map;
-  const cachedPrivateKeyPromises = new Map;
+  const providerPrivateKeys = new Map;
+  let providerPrivateKeyLoadTail = Promise.resolve();
   let disposed = false;
   const discoverOnePassword = deps.discoverOnePasswordKeyCandidates;
   const loadPrivateKey = deps.loadPrivateKey ?? ((candidate) => candidate.loadPrivateKey());
+  const loadedProviderPrivateKey = (fingerprints) => {
+    for (const fingerprint of [...new Set(fingerprints)].sort()) {
+      const privateKey = providerPrivateKeys.get(fingerprint);
+      if (privateKey)
+        return privateKey;
+    }
+    return;
+  };
+  const serializeProviderPrivateKeyLoad = (load) => {
+    const result = providerPrivateKeyLoadTail.then(load, load);
+    providerPrivateKeyLoadTail = result.then(() => {
+      return;
+    }, () => {
+      return;
+    });
+    return result;
+  };
   return {
     getPrivateKeys: () => {
       privateKeysPromise ??= deps.getPrivateKeys();
       return privateKeysPromise;
     },
-    loadCachedOnePasswordPrivateKey: deps.loadCachedOnePasswordPrivateKey ? (fingerprints) => {
-      const cacheKey = [...new Set(fingerprints)].sort().join("\x00");
-      let privateKeyPromise = cachedPrivateKeyPromises.get(cacheKey);
-      if (!privateKeyPromise) {
-        privateKeyPromise = deps.loadCachedOnePasswordPrivateKey?.(fingerprints);
-        cachedPrivateKeyPromises.set(cacheKey, privateKeyPromise);
+    loadCachedOnePasswordPrivateKey: deps.loadCachedOnePasswordPrivateKey ? (fingerprints) => serializeProviderPrivateKeyLoad(async () => {
+      const loaded = loadedProviderPrivateKey(fingerprints);
+      if (loaded)
+        return loaded;
+      const privateKey = await deps.loadCachedOnePasswordPrivateKey?.(fingerprints);
+      if (privateKey) {
+        providerPrivateKeys.set(privateKey.fingerprint, privateKey);
       }
-      return privateKeyPromise;
-    } : undefined,
+      return privateKey;
+    }) : undefined,
     discoverOnePasswordKeyCandidates: discoverOnePassword ? () => {
       discoveryPromise ??= discoverOnePassword();
       return discoveryPromise;
     } : undefined,
-    loadPrivateKey: (candidate) => {
-      let privateKeyPromise = privateKeyPromises.get(candidate.selector);
-      if (!privateKeyPromise) {
-        privateKeyPromise = loadPrivateKey(candidate);
-        privateKeyPromises.set(candidate.selector, privateKeyPromise);
-      }
-      return privateKeyPromise;
-    },
+    loadPrivateKey: (candidate) => serializeProviderPrivateKeyLoad(async () => {
+      const loaded = providerPrivateKeys.get(candidate.fingerprint);
+      if (loaded)
+        return loaded;
+      const privateKey = await loadPrivateKey(candidate);
+      providerPrivateKeys.set(privateKey.fingerprint, privateKey);
+      return privateKey;
+    }),
     dispose: () => {
       if (disposed)
         return;
       disposed = true;
       privateKeysPromise = undefined;
       discoveryPromise = undefined;
-      privateKeyPromises.clear();
-      cachedPrivateKeyPromises.clear();
+      providerPrivateKeys.clear();
     }
   };
 };

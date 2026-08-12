@@ -32,16 +32,20 @@ function makePrivateKeyEntry(
 	}
 }
 
-function makeEnvironment(fingerprint: string, name = "alice"): Environment {
+function makeEnvironment(
+	fingerprints: string | string[],
+	name = "alice",
+): Environment {
+	const normalizedFingerprints = Array.isArray(fingerprints)
+		? fingerprints
+		: [fingerprints]
 	return {
-		keys: [
-			{
-				name,
-				fingerprint,
-				encryptedDataKey: Buffer.from("encrypted-data-key").toString("base64"),
-				algorithm: "ed25519",
-			},
-		],
+		keys: normalizedFingerprints.map((fingerprint, index) => ({
+			name: index === 0 ? name : `${name}-${index + 1}`,
+			fingerprint,
+			encryptedDataKey: Buffer.from("encrypted-data-key").toString("base64"),
+			algorithm: "ed25519",
+		})),
 		encryptedContent: Buffer.from("encrypted-content").toString("base64"),
 	}
 }
@@ -105,6 +109,40 @@ describe("decryptEnvironmentData", () => {
 			"fp-provider",
 		])
 		expect(discoverOnePasswordKeyCandidates).not.toHaveBeenCalled()
+	})
+
+	test("reuses one cached 1Password key across different recipient sets", async () => {
+		const privateKey = makePrivateKeyEntry(
+			"fp-provider",
+			"1Password / cached SSH key",
+		)
+		const loadCachedOnePasswordPrivateKey = mock(async () => privateKey)
+		const context = createDecryptEnvironmentDataContext({
+			getPrivateKeys: async () => ({ keys: [], passphraseProtectedKeys: [] }),
+			loadCachedOnePasswordPrivateKey,
+			decryptDataKey: (() => Buffer.alloc(32)) as never,
+			decryptData: (async () => "OK") as never,
+		})
+
+		try {
+			expect(
+				await Promise.all([
+					decryptEnvironmentData(
+						"development",
+						makeEnvironment(["fp-provider", "fp-teammate"]),
+						context,
+					),
+					decryptEnvironmentData(
+						"alice",
+						makeEnvironment("fp-provider"),
+						context,
+					),
+				]),
+			).toEqual(["OK", "OK"])
+			expect(loadCachedOnePasswordPrivateKey).toHaveBeenCalledTimes(1)
+		} finally {
+			context.dispose()
+		}
 	})
 
 	test("loads only one matching 1Password private key after local keys miss", async () => {
