@@ -65,14 +65,14 @@ export async function getKeyCandidates(
 ): Promise<GetKeyCandidatesResult> {
 	const local = await deps.getPrivateKeys()
 	const onePassword =
-		options.includeOnePassword === false
-			? {
+		options.includeOnePassword === true
+			? await deps.discoverOnePasswordKeyCandidates()
+			: {
 					status: "not-requested" as const,
 					keys: [],
 					unsupportedKeys: [],
 					unavailableAccounts: [],
 				}
-			: await deps.discoverOnePasswordKeyCandidates()
 
 	const localCandidates: KeyCandidate[] = []
 	const policyUnsupported = []

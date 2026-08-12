@@ -55,7 +55,7 @@ describe("getKeyCandidates", () => {
 			unavailableAccounts: [],
 		}
 		const result = await getKeyCandidates(
-			{},
+			{ includeOnePassword: true },
 			{
 				getPrivateKeys: async () => ({
 					keys: [
@@ -95,21 +95,18 @@ describe("getKeyCandidates", () => {
 		})
 	})
 
-	test("skips 1Password discovery when the caller requests local keys only", async () => {
+	test("skips 1Password discovery unless the caller explicitly opts in", async () => {
 		const discoverOnePasswordKeyCandidates = mock(async () => {
 			throw new Error("1Password discovery should remain lazy")
 		})
-		const result = await getKeyCandidates(
-			{ includeOnePassword: false },
-			{
-				getPrivateKeys: async () => ({
-					keys: [privateKeyEntry("id_ed25519")],
-					passphraseProtectedKeys: [],
-					unsupportedKeys: [],
-				}),
-				discoverOnePasswordKeyCandidates,
-			},
-		)
+		const result = await getKeyCandidates(undefined, {
+			getPrivateKeys: async () => ({
+				keys: [privateKeyEntry("id_ed25519")],
+				passphraseProtectedKeys: [],
+				unsupportedKeys: [],
+			}),
+			discoverOnePasswordKeyCandidates,
+		})
 
 		expect(result.keys.map((key) => key.selector)).toEqual(["id_ed25519"])
 		expect(result.onePassword.status).toBe("not-requested")
