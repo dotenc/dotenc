@@ -406,9 +406,9 @@ provider structure and should be handled as private local metadata:
 - `dotenc init` and interactive `dotenc key add` never retrieve a private
   1Password field.
 - Selecting a 1Password key stores only its public key in the dotenc project.
-- A local decryption flow prompts through 1Password when no local key matches,
-  retrieves one matching private key, and decrypts the environment
-  successfully.
+- A local decryption flow prompts through 1Password when no environment-provided
+  or local filesystem key matches, retrieves one matching private key, and
+  decrypts the environment successfully.
 - A retrieved key with a different fingerprint is rejected before use.
 - RSA 2048+ and Ed25519 items work; weaker RSA and unsupported algorithms are
   rejected consistently with filesystem keys.
