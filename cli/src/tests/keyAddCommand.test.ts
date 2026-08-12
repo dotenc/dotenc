@@ -49,14 +49,20 @@ const isPassphraseProtectedMock = mock((_content: string) => false)
 const parseOpenSSHPrivateKeyMock = mock(
 	(_content: string) => null as crypto.KeyObject | null,
 )
-function makeKeyCandidate(name = "id_ed25519"): KeyCandidate {
+function makeKeyCandidate(
+	name = "id_ed25519",
+	source: KeyCandidate["source"] = "filesystem",
+): KeyCandidate {
 	const { privateKey, publicKey } = crypto.generateKeyPairSync("ed25519")
 	return {
-		source: "filesystem",
-		selector: name,
+		source,
+		selector: source === "1password" ? "1password:account:vault:item" : name,
 		name,
 		hint: "ed25519",
-		group: { id: "filesystem", label: "Local - ~/.ssh" },
+		group:
+			source === "1password"
+				? { id: "1password:account", label: "1Password - example" }
+				: { id: "filesystem", label: "Local - ~/.ssh" },
 		publicKey,
 		fingerprint: "fingerprint",
 		algorithm: "ed25519",
@@ -620,6 +626,24 @@ describe("keyAddCommand", () => {
 		expect(writes.has(path.join(CWD, ".dotenc", "selected_name.pub"))).toBe(
 			true,
 		)
+		logSpy.mockRestore()
+	})
+
+	test("prompts for a project key name when a 1Password title is selected", async () => {
+		promptSelectMock.mockImplementation(async () => "choose")
+		chooseKeyCandidatePromptMock.mockImplementation(async () =>
+			makeKeyCandidate("MacBook Pro", "1password"),
+		)
+		inputNamePromptMock.mockImplementation(async () => "macbook-pro")
+
+		const logSpy = spyOn(console, "log").mockImplementation(() => {})
+		await keyAddCommand(undefined, undefined)
+
+		expect(inputNamePromptMock).toHaveBeenCalledWith(
+			"What name do you want to give to the new public key?",
+			"MacBook Pro",
+		)
+		expect(writes.has(path.join(CWD, ".dotenc", "macbook-pro.pub"))).toBe(true)
 		logSpy.mockRestore()
 	})
 

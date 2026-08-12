@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
 import * as realFs from "node:fs"
 import path from "node:path"
 import type { EnvFile } from "../helpers/findEnvironmentsRecursive"
+import type { KeyCandidate } from "../helpers/keyCandidate"
 
 const ROOT = "/workspace"
 const SUBDIR = path.join(ROOT, "packages", "web")
@@ -51,6 +52,12 @@ const findEnvironmentsRecursive = mock(async (_dir: string) => [] as EnvFile[])
 const getEnvironmentByPath = mock(async (_filePath: string) => makeEnvJson(""))
 const resolveProjectRoot = mock((_dir: string, _existsSync: unknown) => ROOT)
 const existsSync = mock((_p: string) => true)
+const discoverOnePasswordKeyCandidates = mock(async () => ({
+	status: "available" as const,
+	keys: [] as KeyCandidate[],
+	unsupportedKeys: [],
+	unavailableAccounts: [],
+}))
 
 mock.module("../helpers/getPrivateKeys", () => ({ getPrivateKeys }))
 mock.module("../helpers/getPublicKeys", () => ({ getPublicKeys }))
@@ -59,6 +66,9 @@ mock.module("../helpers/findEnvironmentsRecursive", () => ({
 }))
 mock.module("../helpers/getEnvironmentByPath", () => ({ getEnvironmentByPath }))
 mock.module("../helpers/resolveProjectRoot", () => ({ resolveProjectRoot }))
+mock.module("../helpers/onePasswordKeyProvider", () => ({
+	discoverOnePasswordKeyCandidates,
+}))
 mock.module("node:fs", () => ({ ...realFs, existsSync }))
 
 const { whoamiCommand } = await import("../commands/whoami")
@@ -71,6 +81,13 @@ describe("whoamiCommand", () => {
 		getEnvironmentByPath.mockClear()
 		resolveProjectRoot.mockClear()
 		existsSync.mockClear()
+		discoverOnePasswordKeyCandidates.mockClear()
+		discoverOnePasswordKeyCandidates.mockImplementation(async () => ({
+			status: "available",
+			keys: [],
+			unsupportedKeys: [],
+			unavailableAccounts: [],
+		}))
 	})
 
 	test("exits when no matching key found", async () => {
@@ -122,6 +139,58 @@ describe("whoamiCommand", () => {
 		const logged = logSpy.mock.calls.map((c) => String(c[0]))
 		expect(logged.some((m) => m.includes("alice"))).toBe(true)
 		expect(logged.some((m) => m.includes("staging"))).toBe(true)
+		expect(discoverOnePasswordKeyCandidates).not.toHaveBeenCalled()
+		logSpy.mockRestore()
+		logErrorSpy.mockRestore()
+		cwdSpy.mockRestore()
+	})
+
+	test("prints a matching 1Password-only identity without loading its private key", async () => {
+		const cwdSpy = spyOn(process, "cwd").mockReturnValue(ROOT)
+		const logSpy = spyOn(console, "log").mockImplementation(() => {})
+		const logErrorSpy = spyOn(console, "error").mockImplementation(() => {})
+		const loadPrivateKey = mock(async () => {
+			throw new Error("private key should not be loaded")
+		})
+		resolveProjectRoot.mockImplementation(() => ROOT)
+		getPrivateKeys.mockImplementation(async () => ({
+			keys: [],
+			passphraseProtectedKeys: [],
+		}))
+		getPublicKeys.mockImplementation(async () => [
+			makePublicKey("alice", "SHA256:alice"),
+		])
+		discoverOnePasswordKeyCandidates.mockImplementation(async () => ({
+			status: "available",
+			keys: [
+				{
+					source: "1password",
+					selector: "1password:account:vault:item",
+					name: "MacBook Pro",
+					hint: "ed25519 - Private",
+					group: {
+						id: "1password:account",
+						label: "1Password - example.1password.com [ABCD...WXYZ]",
+					},
+					publicKey: {} as never,
+					fingerprint: "SHA256:alice",
+					algorithm: "ed25519",
+					loadPrivateKey,
+				},
+			],
+			unsupportedKeys: [],
+			unavailableAccounts: [],
+		}))
+		findEnvironmentsRecursive.mockImplementation(async () => [])
+
+		await whoamiCommand()
+
+		const logged = logSpy.mock.calls.map((call) => String(call[0])).join("\n")
+		expect(logged).toContain("Name: alice")
+		expect(logged).toContain("1Password - example.1password.com")
+		expect(logged).toContain("MacBook Pro")
+		expect(logged).not.toContain("1password:account:vault:item")
+		expect(loadPrivateKey).not.toHaveBeenCalled()
 		logSpy.mockRestore()
 		logErrorSpy.mockRestore()
 		cwdSpy.mockRestore()

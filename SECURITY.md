@@ -109,9 +109,11 @@ commands never request a private field. If decryption has no matching
 environment or filesystem key, dotenc retrieves exactly one
 fingerprint-matched private key with `op read --account ...` through a pipe. It
 validates the retrieved key's fingerprint before use and never writes it to
-disk, caches it, logs it, or adds it to a child process environment or
-argument. Authorization and session scope remain controlled by the 1Password
-CLI and desktop app.
+disk, stores it in a persistent cache, logs it, or adds it to a child process
+environment or argument. A decryption batch may reuse the in-memory key for
+environments that select the same qualified item; dotenc releases the batch
+references before starting a wrapped command. Authorization and session scope
+remain controlled by the 1Password CLI and desktop app.
 
 The built-in SSH private-key field is addressed by its stable `private_key` ID,
 not by a language-dependent display label.
@@ -647,11 +649,15 @@ provider-specific runbook for that provider's own runner.
 ## Known Limitations
 
 - **dotenc does not prompt for passphrases.** To use passphrase-protected SSH keys, provide `DOTENC_PRIVATE_KEY_PASSPHRASE` in the environment. In interactive key selection flows (`dotenc init`, interactive `dotenc key add`), dotenc can also create an optional passwordless copy (for example `id_ed25519_passwordless`) after explicit user confirmation.
-- **No HSM or hardware key support.** Private keys must be accessible as files in
-  `~/.ssh/`, via the recommended `DOTENC_PRIVATE_KEY_BASE64` environment
-  variable, or via the legacy `DOTENC_PRIVATE_KEY` environment variable.
-  Explicit key selection flags such as `--private-key` and `--from-private-key`
-  select from those file-backed keys by name.
+- **No HSM, SSH-agent, or non-exportable hardware key support.** dotenc must be
+  able to access exportable private key material from files in `~/.ssh/`, the
+  recommended `DOTENC_PRIVATE_KEY_BASE64` environment variable, the legacy
+  `DOTENC_PRIVATE_KEY` environment variable, or an installed 1Password CLI.
+  The 1Password connector uses `op read`, so the selected private key enters the
+  dotenc process memory instead of remaining behind SSH-agent signing
+  operations. Explicit key selection flags such as `--private-key` and
+  `--from-private-key` accept local key names, unambiguous 1Password item titles,
+  or qualified `1password:<account>:<vault>:<item>` selectors.
 - **Revocation is not retroactive.** See [Access Control Model](#access-control-model).
 - **No centralized policy engine.** Access control is enforced per-environment and per-repository, not across an organization.
 

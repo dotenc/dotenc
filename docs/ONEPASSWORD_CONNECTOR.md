@@ -338,9 +338,11 @@ connector must not be implemented only as a special case inside `run`.
 
 - Never pass a private key in command arguments.
 - Capture the selected `op read` output through a pipe.
-- Never write it to a file, environment variable, cache, debug log, exception,
-  or telemetry event.
+- Never write it to a file, environment variable, persistent cache, debug log,
+  exception, or telemetry event.
 - Never forward it to the command launched by `dotenc run`.
+- Within one decryption batch, reuse discovery and a selected private key only
+  in memory. Release the batch references before launching a wrapped command.
 - Minimize intermediate strings and buffers, and zero mutable buffers where
   practical.
 - Continue zeroing derived Ed25519 seed and PKCS#8 buffers in the existing
@@ -438,13 +440,15 @@ provider structure and should be handled as private local metadata:
 - A local decryption flow prompts through 1Password when no environment-provided
   or local filesystem key matches, retrieves one matching private key, and
   decrypts the environment successfully.
+- A batch that decrypts multiple environments with the same 1Password item runs
+  discovery and retrieves that private key only once.
 - A retrieved key with a different fingerprint is rejected before use.
 - RSA 2048+ and Ed25519 items work; weaker RSA and unsupported algorithms are
   rejected consistently with filesystem keys.
 - Denied authorization, unsupported CLI versions, unavailable accounts,
   malformed output, and missing items have distinct safe diagnostics.
-- Private key material never reaches files, logs, error messages, caches,
-  telemetry, or wrapped child processes.
+- Private key material never reaches files, logs, error messages, persistent
+  caches, telemetry, or wrapped child processes.
 - Unit tests use a fake `op` executable or injected process adapter and never
   require real accounts or keys.
 - Manual integration smokes cover the supported desktop operating systems and

@@ -377,17 +377,50 @@ describe("chooseKeyCandidatePrompt", () => {
 		)
 	})
 
-	test("returns the sole candidate without prompting in non-interactive mode", async () => {
+	test("returns the sole local candidate without discovering 1Password in non-interactive mode", async () => {
 		const filesystem = localCandidate("id_ed25519")
+		const provider = candidate(ACCOUNT_A, ITEM_A, "Account A")
+		const getKeyCandidates = mock(
+			async (options: { includeOnePassword?: boolean }) =>
+				options.includeOnePassword
+					? result([filesystem, provider])
+					: result([filesystem], "not-requested"),
+		)
 		const testDeps = {
-			...deps(result([filesystem])),
+			...deps(result([filesystem], "not-requested")),
+			getKeyCandidates: getKeyCandidates as never,
 			isInteractive: () => false,
 		}
 
 		await expect(
 			_runChooseKeyCandidatePrompt("Choose", testDeps),
 		).resolves.toBe(filesystem)
+		expect(getKeyCandidates.mock.calls).toEqual([
+			[{ includeOnePassword: false }],
+		])
 		expect(testDeps.promptGroupedSelect).not.toHaveBeenCalled()
+	})
+
+	test("discovers 1Password after local candidates are exhausted in non-interactive mode", async () => {
+		const provider = candidate(ACCOUNT_A, ITEM_A, "Account A")
+		const localResult = result([], "not-requested")
+		const providerResult = result([provider])
+		const getKeyCandidates = mock()
+			.mockResolvedValueOnce(localResult)
+			.mockResolvedValueOnce(providerResult)
+		const testDeps = {
+			...deps(localResult),
+			getKeyCandidates: getKeyCandidates as never,
+			isInteractive: () => false,
+		}
+
+		await expect(
+			_runChooseKeyCandidatePrompt("Choose", testDeps),
+		).resolves.toBe(provider)
+		expect(getKeyCandidates.mock.calls).toEqual([
+			[{ includeOnePassword: false }],
+			[{ includeOnePassword: true }],
+		])
 	})
 
 	test("reports non-interactive ambiguity with qualified selectors", async () => {

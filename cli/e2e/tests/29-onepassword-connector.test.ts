@@ -171,7 +171,7 @@ exit 1
 		expect(setupLog).not.toContain("read --account")
 	}, TIMEOUT)
 
-	test("init with an explicit local key does not invoke 1Password", () => {
+	test("non-interactive init with one local key does not invoke 1Password", () => {
 		const localHome = mkdtempSync(path.join(os.tmpdir(), "e2e-29-local-home-"))
 		const localWorkspace = mkdtempSync(
 			path.join(os.tmpdir(), "e2e-29-local-workspace-"),
@@ -183,7 +183,7 @@ exit 1
 			const result = runCli(
 				localHome,
 				localWorkspace,
-				["init", "--name", "local", "--private-key", "id_ed25519"],
+				["init", "--name", "local"],
 				env,
 			)
 
@@ -222,6 +222,17 @@ exit 1
 		])
 	}, TIMEOUT)
 
+	test("whoami resolves a 1Password-only identity from public metadata", () => {
+		writeFileSync(logPath, "")
+		const result = runCli(home, workspace, ["whoami"], env)
+
+		expect(result.exitCode).toBe(0)
+		expect(result.stdout).toContain("Name: alice")
+		expect(result.stdout).toContain("1Password - personal.example")
+		expect(result.stdout).toContain("GitHub")
+		expect(readFileSync(logPath, "utf8")).not.toContain("read --account")
+	}, TIMEOUT)
+
 	test("dev resolves the project identity from 1Password public metadata", () => {
 		writeFileSync(logPath, "")
 		const result = runCli(
@@ -239,5 +250,12 @@ exit 1
 		)
 		expect(result.exitCode).toBe(0)
 		expect(result.stdout).toContain("provider-value")
+		const commands = readFileSync(logPath, "utf8").split("\n")
+		expect(commands.filter((line) => line === "--version")).toHaveLength(1)
+		expect(commands.filter((line) => line.startsWith("read --account"))).toEqual(
+			[
+				`read --account ${ACCOUNT_A} op://${VAULT_A}/${ITEM_A}/private_key?ssh-format=openssh`,
+			],
+		)
 	}, TIMEOUT)
 })

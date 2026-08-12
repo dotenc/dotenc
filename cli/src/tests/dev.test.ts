@@ -4,8 +4,30 @@ const getCurrentKeyName = mock(async () => ["alice"])
 const runCommandMock = mock(async () => {})
 const promptSelectMock = mock(async () => "alice")
 const isInteractiveMock = mock(() => true)
+const getPrivateKeys = mock(async () => ({
+	keys: [],
+	passphraseProtectedKeys: [],
+}))
+const getPublicKeys = mock(async () => [])
+const discoverOnePasswordKeyCandidates = mock(async () => ({
+	status: "available" as const,
+	keys: [],
+	unsupportedKeys: [],
+	unavailableAccounts: [],
+}))
+const dispose = mock(() => {})
+const decryptionContext = {
+	getPrivateKeys,
+	discoverOnePasswordKeyCandidates,
+	dispose,
+}
+const createDecryptEnvironmentDataContext = mock(() => decryptionContext)
 
 mock.module("../helpers/getCurrentKeyName", () => ({ getCurrentKeyName }))
+mock.module("../helpers/getPublicKeys", () => ({ getPublicKeys }))
+mock.module("../helpers/decryptEnvironment", () => ({
+	createDecryptEnvironmentDataContext,
+}))
 mock.module("../commands/run", () => ({ runCommand: runCommandMock }))
 mock.module("../ui/prompts", () => ({ promptSelect: promptSelectMock }))
 mock.module("../ui/tty", () => ({ isInteractive: isInteractiveMock }))
@@ -17,6 +39,8 @@ beforeEach(() => {
 	runCommandMock.mockClear()
 	promptSelectMock.mockClear()
 	isInteractiveMock.mockClear()
+	createDecryptEnvironmentDataContext.mockClear()
+	dispose.mockClear()
 	getCurrentKeyName.mockImplementation(async () => ["alice"])
 	runCommandMock.mockImplementation(async () => {})
 	promptSelectMock.mockImplementation(async () => "alice")
@@ -31,8 +55,15 @@ describe("devCommand", () => {
 		expect(runCommandMock).toHaveBeenCalledWith("node", ["app.js"], {
 			env: "development,alice",
 			localOnly: undefined,
+			decryptionContext,
+		})
+		expect(getCurrentKeyName).toHaveBeenCalledWith({
+			getPrivateKeys,
+			getPublicKeys,
+			discoverOnePasswordKeyCandidates,
 		})
 		expect(promptSelectMock).not.toHaveBeenCalled()
+		expect(dispose).toHaveBeenCalledTimes(1)
 	})
 
 	test("prints error when no identity is found", async () => {
@@ -48,6 +79,7 @@ describe("devCommand", () => {
 		)
 
 		expect(runCommandMock).not.toHaveBeenCalled()
+		expect(dispose).toHaveBeenCalledTimes(1)
 		expect(exitSpy).toHaveBeenCalledWith(1)
 		expect(errSpy).toHaveBeenCalledTimes(1)
 		const [errorMessage] = errSpy.mock.calls[0] as [string]
@@ -77,6 +109,7 @@ describe("devCommand", () => {
 		expect(runCommandMock).toHaveBeenCalledWith("node", ["app.js"], {
 			env: "development,alice-deploy",
 			localOnly: undefined,
+			decryptionContext,
 		})
 	})
 
@@ -108,6 +141,7 @@ describe("devCommand", () => {
 		expect(runCommandMock).toHaveBeenCalledWith("node", ["app.js"], {
 			env: "development,alice-deploy",
 			localOnly: undefined,
+			decryptionContext,
 		})
 	})
 
@@ -117,6 +151,7 @@ describe("devCommand", () => {
 		expect(runCommandMock).toHaveBeenCalledWith("node", ["app.js"], {
 			env: "development,alice",
 			localOnly: true,
+			decryptionContext,
 		})
 	})
 })

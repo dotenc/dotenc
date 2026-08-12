@@ -10,7 +10,11 @@ import { promptConfirm, promptMultiSelect } from "../ui/prompts"
 import { isInteractive } from "../ui/tty"
 import { createEnvironmentDiffReport } from "./createEnvironmentDiffReport"
 import { createDataKey, encryptData } from "./crypto"
-import { decryptEnvironmentData } from "./decryptEnvironment"
+import {
+	createDecryptEnvironmentDataContext,
+	type DecryptEnvironmentDataContext,
+	decryptEnvironmentData,
+} from "./decryptEnvironment"
 import { encryptDataKey } from "./encryptDataKey"
 import { getKeyFingerprint } from "./getKeyFingerprint"
 import { getPublicKeys, type PublicKeyEntry } from "./getPublicKeys"
@@ -961,6 +965,7 @@ const prepareSelectedEnvironments = async (
 	selected: TrackedEnvironment[],
 	gitRoot: string,
 	deps: InstallGithubDiffsDependencies,
+	decryptionContext: DecryptEnvironmentDataContext,
 ): Promise<SelectedEnvironment[]> => {
 	const status = await deps.runGit(
 		[
@@ -1008,7 +1013,11 @@ const prepareSelectedEnvironments = async (
 		}
 		let plaintext: string
 		try {
-			plaintext = await deps.decryptEnvironmentData(environment.name, parsed)
+			plaintext = await deps.decryptEnvironmentData(
+				environment.name,
+				parsed,
+				decryptionContext,
+			)
 		} catch {
 			throw new Error(
 				`Could not decrypt selected environment: ${environment.relativePath}.`,
@@ -1182,11 +1191,18 @@ export const installGithubDiffs = async (
 		interactive,
 		deps,
 	)
-	const selected = await prepareSelectedEnvironments(
-		selectedTracked,
-		gitRoot,
-		deps,
-	)
+	const decryptionContext = createDecryptEnvironmentDataContext()
+	let selected: SelectedEnvironment[]
+	try {
+		selected = await prepareSelectedEnvironments(
+			selectedTracked,
+			gitRoot,
+			deps,
+			decryptionContext,
+		)
+	} finally {
+		decryptionContext.dispose()
+	}
 
 	const projectRoots = [...new Set(selected.map((item) => item.projectRoot))]
 	const keyPaths = projectRoots.map((root) =>

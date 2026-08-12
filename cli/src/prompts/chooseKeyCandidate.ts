@@ -213,8 +213,7 @@ export async function _runChooseKeyCandidatePrompt(
 	const interactive = deps.isInteractive()
 	let result = await deps.getKeyCandidates({
 		includeOnePassword:
-			options.preferredKeyName?.startsWith("1password:") === true ||
-			(!interactive && options.preferredKeyName === undefined),
+			options.preferredKeyName?.startsWith("1password:") === true,
 	})
 	const loggedWarnings = new Set<string>()
 	const logWarnOnce = (warning: string) => {
@@ -248,6 +247,10 @@ export async function _runChooseKeyCandidatePrompt(
 				throw new Error(
 					`Multiple supported SSH keys found: ${result.keys.map((key) => key.selector).join(", ")}\n\nPass ${options.nonInteractiveHint ?? "--private-key <name>"} to choose which key to use.`,
 				)
+			}
+			if (result.onePassword.status === "not-requested") {
+				result = await deps.getKeyCandidates({ includeOnePassword: true })
+				continue
 			}
 			if (result.passphraseProtectedKeys.length > 0) {
 				throw new Error(

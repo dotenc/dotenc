@@ -53,6 +53,7 @@ const parsePrivateKeyInput = async (
 
 export const keyAddCommand = async (nameArg?: string, options?: Options) => {
 	let publicKey: KeyObject | undefined
+	let suggestedName: string | undefined
 
 	if (options?.fromSsh) {
 		const sshPath = options.fromSsh.startsWith("~")
@@ -241,7 +242,11 @@ export const keyAddCommand = async (nameArg?: string, options?: Options) => {
 
 		publicKey = selectedKey.publicKey
 		if (!nameArg) {
-			nameArg = selectedKey.name
+			if (selectedKey.source === "1password") {
+				suggestedName = selectedKey.name
+			} else {
+				nameArg = selectedKey.name
+			}
 		}
 	}
 
@@ -295,7 +300,11 @@ export const keyAddCommand = async (nameArg?: string, options?: Options) => {
 
 			publicKey = selectedKey.publicKey
 			if (!nameArg) {
-				nameArg = selectedKey.name
+				if (selectedKey.source === "1password") {
+					suggestedName = selectedKey.name
+				} else {
+					nameArg = selectedKey.name
+				}
 			}
 		}
 	}
@@ -334,6 +343,7 @@ export const keyAddCommand = async (nameArg?: string, options?: Options) => {
 	if (!name) {
 		name = await inputNamePrompt(
 			"What name do you want to give to the new public key?",
+			suggestedName,
 		)
 	}
 

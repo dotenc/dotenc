@@ -21862,11 +21862,65 @@ var defaultDecryptEnvironmentDataDeps = {
   decryptDataKey,
   decryptData
 };
+var createDecryptionKeyContext = (deps = {
+  getPrivateKeys,
+  discoverOnePasswordKeyCandidates
+}) => {
+  let privateKeysPromise;
+  let discoveryPromise;
+  const privateKeyPromises = new Map;
+  let disposed = false;
+  const discoverOnePassword = deps.discoverOnePasswordKeyCandidates;
+  const loadPrivateKey = deps.loadPrivateKey ?? ((candidate) => candidate.loadPrivateKey());
+  return {
+    getPrivateKeys: () => {
+      privateKeysPromise ??= deps.getPrivateKeys();
+      return privateKeysPromise;
+    },
+    discoverOnePasswordKeyCandidates: discoverOnePassword ? () => {
+      discoveryPromise ??= discoverOnePassword();
+      return discoveryPromise;
+    } : undefined,
+    loadPrivateKey: (candidate) => {
+      let privateKeyPromise = privateKeyPromises.get(candidate.selector);
+      if (!privateKeyPromise) {
+        privateKeyPromise = loadPrivateKey(candidate);
+        privateKeyPromises.set(candidate.selector, privateKeyPromise);
+      }
+      return privateKeyPromise;
+    },
+    dispose: () => {
+      if (disposed)
+        return;
+      disposed = true;
+      privateKeysPromise = undefined;
+      discoveryPromise = undefined;
+      privateKeyPromises.clear();
+    }
+  };
+};
+var createDecryptEnvironmentDataContext = (deps = defaultDecryptEnvironmentDataDeps) => {
+  const keyContext = createDecryptionKeyContext(deps);
+  return {
+    ...deps,
+    ...keyContext
+  };
+};
+
+class EnvironmentAccessDeniedError extends Error {
+  availablePrivateKeyNames;
+  constructor(availablePrivateKeyNames) {
+    super("Access denied to the environment.");
+    this.availablePrivateKeyNames = availablePrivateKeyNames;
+    this.name = "EnvironmentAccessDeniedError";
+  }
+}
 var unwrapEnvironmentDataKey = async (environment, deps) => {
   const { keys: availablePrivateKeys, passphraseProtectedKeys } = await deps.getPrivateKeys();
   let grantedKey;
   let selectedPrivateKey;
   let providerStatus;
+  let providerKeyNames = [];
   for (const privateKeyEntry2 of availablePrivateKeys) {
     grantedKey = environment.keys.find((key) => {
       return key.fingerprint === privateKeyEntry2.fingerprint;
@@ -21879,10 +21933,11 @@ var unwrapEnvironmentDataKey = async (environment, deps) => {
   if (!grantedKey && deps.discoverOnePasswordKeyCandidates) {
     const discovery = await deps.discoverOnePasswordKeyCandidates();
     providerStatus = discovery.status;
+    providerKeyNames = discovery.keys.map((candidate) => `${candidate.group.label} / ${candidate.name}`);
     const matchingCandidates = discovery.keys.filter((candidate) => environment.keys.some((key) => key.fingerprint === candidate.fingerprint)).sort((left, right) => left.selector.localeCompare(right.selector));
     if (matchingCandidates.length > 0) {
       const candidate = matchingCandidates[0];
-      selectedPrivateKey = await candidate.loadPrivateKey();
+      selectedPrivateKey = await (deps.loadPrivateKey?.(candidate) ?? candidate.loadPrivateKey());
       grantedKey = environment.keys.find((key) => key.fingerprint === selectedPrivateKey?.fingerprint);
     }
   }
@@ -21896,7 +21951,12 @@ var unwrapEnvironmentDataKey = async (environment, deps) => {
     if (availablePrivateKeys.length === 0 && (!deps.discoverOnePasswordKeyCandidates || providerStatus === "not-installed" || providerStatus === "no-accounts" || providerStatus === "unavailable")) {
       throw new Error("No private keys found. Please ensure you have SSH keys in ~/.ssh/ or set DOTENC_PRIVATE_KEY_BASE64.");
     }
-    throw new Error("Access denied to the environment.");
+    throw new EnvironmentAccessDeniedError([
+      ...new Set([
+        ...availablePrivateKeys.map((key) => key.name),
+        ...providerKeyNames
+      ])
+    ]);
   }
   let dataKey;
   try {
@@ -21911,15 +21971,23 @@ var unwrapEnvironmentDataKey = async (environment, deps) => {
   return dataKey;
 };
 var environmentDataKeysEqual = async (base, head, deps = defaultDecryptEnvironmentDataDeps) => {
+  const keyContext = createDecryptionKeyContext(deps);
   let baseDataKey;
   let headDataKey;
   try {
-    baseDataKey = await unwrapEnvironmentDataKey(base, deps);
-    headDataKey = await unwrapEnvironmentDataKey(head, deps);
+    baseDataKey = await unwrapEnvironmentDataKey(base, {
+      ...deps,
+      ...keyContext
+    });
+    headDataKey = await unwrapEnvironmentDataKey(head, {
+      ...deps,
+      ...keyContext
+    });
     return import_node_crypto9.timingSafeEqual(baseDataKey, headDataKey);
   } finally {
     baseDataKey?.fill(0);
     headDataKey?.fill(0);
+    keyContext.dispose();
   }
 };
 var decryptEnvironmentData = async (environmentName, environment, deps = defaultDecryptEnvironmentDataDeps) => {
@@ -22319,27 +22387,20 @@ var parsePlaintextVariables = (plaintext) => {
   return variables;
 };
 var createDefaultCrypto = (privateKeySource) => {
-  let privateKeysPromise;
-  const loadPrivateKeys = () => {
-    privateKeysPromise ??= getPrivateKeys({
+  const decryptionContext = createDecryptEnvironmentDataContext({
+    getPrivateKeys: () => getPrivateKeys({
       environmentOnly: privateKeySource === "environment",
       environmentKeyErrorMode: "collect",
       logError: () => {}
-    });
-    return privateKeysPromise;
-  };
-  return {
-    decryptEnvironment: (environmentName, environment) => decryptEnvironmentData(environmentName, environment, {
-      getPrivateKeys: loadPrivateKeys,
-      discoverOnePasswordKeyCandidates: privateKeySource === "all" ? discoverOnePasswordKeyCandidates : undefined,
-      decryptDataKey,
-      decryptData
     }),
-    dataKeysEqual: (base, head) => environmentDataKeysEqual(base, head, {
-      getPrivateKeys: loadPrivateKeys,
-      discoverOnePasswordKeyCandidates: privateKeySource === "all" ? discoverOnePasswordKeyCandidates : undefined,
-      decryptDataKey
-    })
+    discoverOnePasswordKeyCandidates: privateKeySource === "all" ? discoverOnePasswordKeyCandidates : undefined,
+    decryptDataKey,
+    decryptData
+  });
+  return {
+    decryptEnvironment: (environmentName, environment) => decryptEnvironmentData(environmentName, environment, decryptionContext),
+    dataKeysEqual: (base, head) => environmentDataKeysEqual(base, head, decryptionContext),
+    dispose: decryptionContext.dispose
   };
 };
 var readVariables = async (parsed, environmentName, decryptEnvironment) => {
@@ -22502,35 +22563,39 @@ var createEnvironmentDiffReport = async (input, options = {}) => {
   }
   const dataKeysEqual = options.dataKeysEqual ?? defaultCrypto?.dataKeysEqual;
   const environments = [];
-  for (const filePath of paths) {
-    const baseFile = baseByPath.get(filePath);
-    const headFile = headByPath.get(filePath);
-    if (baseFile && headFile && baseFile.content === headFile.content)
-      continue;
-    const environmentName = (headFile ?? baseFile)?.name;
-    if (!environmentName)
-      continue;
-    const status = !baseFile ? "added" : !headFile ? "deleted" : "modified";
-    const baseParsed = baseFile ? parseEnvironment(baseFile.content) : undefined;
-    const headParsed = headFile ? parseEnvironment(headFile.content) : undefined;
-    const [baseVariables, headVariables] = await Promise.all([
-      readVariables(baseParsed, environmentName, decryptEnvironment),
-      readVariables(headParsed, environmentName, decryptEnvironment)
-    ]);
-    const variables = createVariableDiff(baseVariables, headVariables);
-    const access = createAccessDiff(baseParsed, headParsed);
-    if (status === "modified" && variables.status === "available" && access.status === "available" && !hasVariableChanges(variables) && !hasAccessChanges(access)) {
-      const verifiedDataKeyOnlyChange = await isVerifiedDataKeyOnlyChange(baseParsed, headParsed, baseVariables, headVariables, dataKeysEqual);
-      if (!verifiedDataKeyOnlyChange)
+  try {
+    for (const filePath of paths) {
+      const baseFile = baseByPath.get(filePath);
+      const headFile = headByPath.get(filePath);
+      if (baseFile && headFile && baseFile.content === headFile.content)
         continue;
+      const environmentName = (headFile ?? baseFile)?.name;
+      if (!environmentName)
+        continue;
+      const status = !baseFile ? "added" : !headFile ? "deleted" : "modified";
+      const baseParsed = baseFile ? parseEnvironment(baseFile.content) : undefined;
+      const headParsed = headFile ? parseEnvironment(headFile.content) : undefined;
+      const [baseVariables, headVariables] = await Promise.all([
+        readVariables(baseParsed, environmentName, decryptEnvironment),
+        readVariables(headParsed, environmentName, decryptEnvironment)
+      ]);
+      const variables = createVariableDiff(baseVariables, headVariables);
+      const access = createAccessDiff(baseParsed, headParsed);
+      if (status === "modified" && variables.status === "available" && access.status === "available" && !hasVariableChanges(variables) && !hasAccessChanges(access)) {
+        const verifiedDataKeyOnlyChange = await isVerifiedDataKeyOnlyChange(baseParsed, headParsed, baseVariables, headVariables, dataKeysEqual);
+        if (!verifiedDataKeyOnlyChange)
+          continue;
+      }
+      environments.push({
+        path: filePath,
+        name: environmentName,
+        status,
+        variables,
+        access
+      });
     }
-    environments.push({
-      path: filePath,
-      name: environmentName,
-      status,
-      variables,
-      access
-    });
+  } finally {
+    defaultCrypto?.dispose();
   }
   return {
     schemaVersion: ENVIRONMENT_DIFF_REPORT_SCHEMA_VERSION,

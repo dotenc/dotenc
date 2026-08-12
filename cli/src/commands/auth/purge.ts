@@ -2,7 +2,10 @@ import { existsSync } from "node:fs"
 import fs from "node:fs/promises"
 import path from "node:path"
 import chalk from "chalk"
-import { decryptEnvironmentData } from "../../helpers/decryptEnvironment"
+import {
+	createDecryptEnvironmentDataContext,
+	decryptEnvironmentData,
+} from "../../helpers/decryptEnvironment"
 import { encryptEnvironment } from "../../helpers/encryptEnvironment"
 import { findEnvironmentsRecursive } from "../../helpers/findEnvironmentsRecursive"
 import { getEnvironmentByPath } from "../../helpers/getEnvironmentByPath"
@@ -80,22 +83,31 @@ export const authPurgeCommand = async (publicKeyName: string, yes: boolean) => {
 	// Process each revocable environment (best-effort)
 	const failures: { name: string; error: string }[] = []
 	let successCount = 0
+	const decryptionContext = createDecryptEnvironmentDataContext()
 
-	for (const envFile of revocableEnvs) {
-		try {
-			const envJson = await getEnvironmentByPath(envFile.filePath)
-			const content = await decryptEnvironmentData(envFile.name, envJson)
-			await encryptEnvironment(envFile.name, content, {
-				revokePublicKeys: [publicKeyName],
-				baseDir: envFile.dir,
-			})
-			successCount++
-		} catch (error) {
-			failures.push({
-				name: `${envFile.name} (${path.relative(projectRoot, envFile.dir) || "."})`,
-				error: error instanceof Error ? error.message : "unknown error",
-			})
+	try {
+		for (const envFile of revocableEnvs) {
+			try {
+				const envJson = await getEnvironmentByPath(envFile.filePath)
+				const content = await decryptEnvironmentData(
+					envFile.name,
+					envJson,
+					decryptionContext,
+				)
+				await encryptEnvironment(envFile.name, content, {
+					revokePublicKeys: [publicKeyName],
+					baseDir: envFile.dir,
+				})
+				successCount++
+			} catch (error) {
+				failures.push({
+					name: `${envFile.name} (${path.relative(projectRoot, envFile.dir) || "."})`,
+					error: error instanceof Error ? error.message : "unknown error",
+				})
+			}
 		}
+	} finally {
+		decryptionContext.dispose()
 	}
 
 	// Delete the .pub file

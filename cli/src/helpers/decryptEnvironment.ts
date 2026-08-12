@@ -6,11 +6,16 @@ import { decryptDataKey } from "./decryptDataKey"
 import { passphraseProtectedKeyError } from "./errors"
 import { getEnvironmentByName } from "./getEnvironmentByName"
 import { getPrivateKeys, type PrivateKeyEntry } from "./getPrivateKeys"
+import type { KeyCandidate } from "./keyCandidate"
 import { discoverOnePasswordKeyCandidates } from "./onePasswordKeyProvider"
 
-type DecryptEnvironmentDataDeps = {
+type DecryptionKeyDeps = {
 	getPrivateKeys: typeof getPrivateKeys
 	discoverOnePasswordKeyCandidates?: typeof discoverOnePasswordKeyCandidates
+	loadPrivateKey?: (candidate: KeyCandidate) => Promise<PrivateKeyEntry>
+}
+
+type DecryptEnvironmentDataDeps = DecryptionKeyDeps & {
 	decryptDataKey: typeof decryptDataKey
 	decryptData: typeof decryptData
 }
@@ -22,10 +27,85 @@ const defaultDecryptEnvironmentDataDeps: DecryptEnvironmentDataDeps = {
 	decryptData,
 }
 
+export type DecryptionKeyContext = DecryptionKeyDeps & {
+	loadPrivateKey: NonNullable<DecryptionKeyDeps["loadPrivateKey"]>
+	dispose: () => void
+}
+
+export const createDecryptionKeyContext = (
+	deps: DecryptionKeyDeps = {
+		getPrivateKeys,
+		discoverOnePasswordKeyCandidates,
+	},
+): DecryptionKeyContext => {
+	let privateKeysPromise: ReturnType<typeof deps.getPrivateKeys> | undefined
+	let discoveryPromise:
+		| ReturnType<typeof discoverOnePasswordKeyCandidates>
+		| undefined
+	const privateKeyPromises = new Map<string, Promise<PrivateKeyEntry>>()
+	let disposed = false
+	const discoverOnePassword = deps.discoverOnePasswordKeyCandidates
+	const loadPrivateKey =
+		deps.loadPrivateKey ??
+		((candidate: KeyCandidate) => candidate.loadPrivateKey())
+
+	return {
+		getPrivateKeys: () => {
+			privateKeysPromise ??= deps.getPrivateKeys()
+			return privateKeysPromise
+		},
+		discoverOnePasswordKeyCandidates: discoverOnePassword
+			? () => {
+					discoveryPromise ??= discoverOnePassword()
+					return discoveryPromise
+				}
+			: undefined,
+		loadPrivateKey: (candidate) => {
+			let privateKeyPromise = privateKeyPromises.get(candidate.selector)
+			if (!privateKeyPromise) {
+				privateKeyPromise = loadPrivateKey(candidate)
+				privateKeyPromises.set(candidate.selector, privateKeyPromise)
+			}
+			return privateKeyPromise
+		},
+		dispose: () => {
+			if (disposed) return
+			disposed = true
+			privateKeysPromise = undefined
+			discoveryPromise = undefined
+			privateKeyPromises.clear()
+		},
+	}
+}
+
+export type DecryptEnvironmentDataContext = DecryptEnvironmentDataDeps & {
+	dispose: () => void
+}
+
+export const createDecryptEnvironmentDataContext = (
+	deps: DecryptEnvironmentDataDeps = defaultDecryptEnvironmentDataDeps,
+): DecryptEnvironmentDataContext => {
+	const keyContext = createDecryptionKeyContext(deps)
+	return {
+		...deps,
+		...keyContext,
+	}
+}
+
 type EnvironmentDataKeyComparisonDeps = Pick<
 	DecryptEnvironmentDataDeps,
-	"getPrivateKeys" | "discoverOnePasswordKeyCandidates" | "decryptDataKey"
+	| "getPrivateKeys"
+	| "discoverOnePasswordKeyCandidates"
+	| "loadPrivateKey"
+	| "decryptDataKey"
 >
+
+class EnvironmentAccessDeniedError extends Error {
+	constructor(readonly availablePrivateKeyNames: string[]) {
+		super("Access denied to the environment.")
+		this.name = "EnvironmentAccessDeniedError"
+	}
+}
 
 const unwrapEnvironmentDataKey = async (
 	environment: Environment,
@@ -39,6 +119,7 @@ const unwrapEnvironmentDataKey = async (
 	let providerStatus:
 		| Awaited<ReturnType<typeof discoverOnePasswordKeyCandidates>>["status"]
 		| undefined
+	let providerKeyNames: string[] = []
 
 	for (const privateKeyEntry of availablePrivateKeys) {
 		grantedKey = environment.keys.find((key) => {
@@ -54,6 +135,9 @@ const unwrapEnvironmentDataKey = async (
 	if (!grantedKey && deps.discoverOnePasswordKeyCandidates) {
 		const discovery = await deps.discoverOnePasswordKeyCandidates()
 		providerStatus = discovery.status
+		providerKeyNames = discovery.keys.map(
+			(candidate) => `${candidate.group.label} / ${candidate.name}`,
+		)
 		const matchingCandidates = discovery.keys
 			.filter((candidate) =>
 				environment.keys.some(
@@ -64,7 +148,8 @@ const unwrapEnvironmentDataKey = async (
 
 		if (matchingCandidates.length > 0) {
 			const candidate = matchingCandidates[0]
-			selectedPrivateKey = await candidate.loadPrivateKey()
+			selectedPrivateKey = await (deps.loadPrivateKey?.(candidate) ??
+				candidate.loadPrivateKey())
 			grantedKey = environment.keys.find(
 				(key) => key.fingerprint === selectedPrivateKey?.fingerprint,
 			)
@@ -94,7 +179,12 @@ const unwrapEnvironmentDataKey = async (
 				"No private keys found. Please ensure you have SSH keys in ~/.ssh/ or set DOTENC_PRIVATE_KEY_BASE64.",
 			)
 		}
-		throw new Error("Access denied to the environment.")
+		throw new EnvironmentAccessDeniedError([
+			...new Set([
+				...availablePrivateKeys.map((key) => key.name),
+				...providerKeyNames,
+			]),
+		])
 	}
 
 	let dataKey: Buffer
@@ -120,15 +210,23 @@ export const environmentDataKeysEqual = async (
 	head: Environment,
 	deps: EnvironmentDataKeyComparisonDeps = defaultDecryptEnvironmentDataDeps,
 ): Promise<boolean> => {
+	const keyContext = createDecryptionKeyContext(deps)
 	let baseDataKey: Buffer | undefined
 	let headDataKey: Buffer | undefined
 	try {
-		baseDataKey = await unwrapEnvironmentDataKey(base, deps)
-		headDataKey = await unwrapEnvironmentDataKey(head, deps)
+		baseDataKey = await unwrapEnvironmentDataKey(base, {
+			...deps,
+			...keyContext,
+		})
+		headDataKey = await unwrapEnvironmentDataKey(head, {
+			...deps,
+			...keyContext,
+		})
 		return timingSafeEqual(baseDataKey, headDataKey)
 	} finally {
 		baseDataKey?.fill(0)
 		headDataKey?.fill(0)
+		keyContext.dispose()
 	}
 }
 
@@ -175,15 +273,15 @@ export const decryptEnvironment = async (
 	try {
 		return await decryptEnvironmentData(name, environmentJson, deps)
 	} catch (error) {
-		if (
-			error instanceof Error &&
-			error.message === "Access denied to the environment."
-		) {
-			const { keys: availablePrivateKeys } = await deps.getPrivateKeys()
+		if (error instanceof EnvironmentAccessDeniedError) {
+			const availablePrivateKeys =
+				error.availablePrivateKeyNames.length > 0
+					? error.availablePrivateKeyNames
+					: ["(none)"]
 			deps.logError(
 				`You do not have access to this environment.\n
-      These are your available private keys:\n
-      ${availablePrivateKeys.map((key) => `- ${chalk.green(key.name)}`).join("\n")}\n
+		      These are your available private keys:\n
+		      ${availablePrivateKeys.map((name) => `- ${chalk.green(name)}`).join("\n")}\n
       Please ask the owners of any of the following keys to grant you access:\n
       ${environmentJson.keys.map((key) => `- ${chalk.green(key.name)}`).join("\n")}\n`,
 			)
