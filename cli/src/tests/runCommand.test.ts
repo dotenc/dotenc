@@ -9,6 +9,7 @@ import {
 } from "bun:test"
 import * as realFs from "node:fs"
 import path from "node:path"
+import type { DecryptEnvironmentDataContext } from "../helpers/decryptEnvironment"
 
 const ROOT = "/workspace"
 const SUBDIR = path.join(ROOT, "packages", "web")
@@ -220,6 +221,31 @@ describe("runCommand", () => {
 		expect(disposeDecryptionContext).toHaveBeenCalledTimes(1)
 		errSpy.mockRestore()
 		exitSpy.mockRestore()
+	})
+
+	test("does not dispose a caller-owned decryption context", async () => {
+		const externalDispose = mock(() => {})
+		const externalContext = {
+			...decryptionContext,
+			dispose: externalDispose,
+		} as unknown as DecryptEnvironmentDataContext
+		const filePath = path.join(ROOT, ".env.staging.enc")
+		existsSyncMock.mockImplementation((p) => p === filePath)
+		spawnMock.mockImplementation(() => {
+			const child = {
+				on: (_event: string, _cb: (code: number | null) => void) => child,
+			}
+			return child as never
+		})
+
+		await runCommand("echo", ["ok"], {
+			env: "staging",
+			decryptionContext: externalContext,
+		})
+
+		expect(createDecryptEnvironmentDataContext).not.toHaveBeenCalled()
+		expect(decryptEnvironmentData.mock.calls[0][2]).toBe(externalContext)
+		expect(externalDispose).not.toHaveBeenCalled()
 	})
 
 	test("exits when strict mode is enabled and any environment fails", async () => {

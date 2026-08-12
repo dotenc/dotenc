@@ -65,6 +65,7 @@ export const runCommand = async (
 	}
 
 	let failureCount = 0
+	const ownsDecryptionContext = options.decryptionContext === undefined
 	const decryptionContext =
 		options.decryptionContext ?? createDecryptEnvironmentDataContext()
 	const decryptedEnvs = await (async () => {
@@ -116,7 +117,7 @@ export const runCommand = async (
 				}),
 			)
 		} finally {
-			decryptionContext.dispose()
+			if (ownsDecryptionContext) decryptionContext.dispose()
 		}
 	})()
 

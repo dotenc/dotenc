@@ -111,9 +111,11 @@ fingerprint-matched private key with `op read --account ...` through a pipe. It
 validates the retrieved key's fingerprint before use and never writes it to
 disk, stores it in a persistent cache, logs it, or adds it to a child process
 environment or argument. A decryption batch may reuse the in-memory key for
-environments that select the same qualified item; dotenc releases the batch
-references before starting a wrapped command. Authorization and session scope
-remain controlled by the 1Password CLI and desktop app.
+environments that select the same qualified item. The command that creates the
+shared decryption context owns its cleanup and releases those batch references
+immediately after the decryption handoff; they are never forwarded to a wrapped
+command. Authorization and session scope remain controlled by the 1Password CLI
+and desktop app.
 
 The built-in SSH private-key field is addressed by its stable `private_key` ID,
 not by a language-dependent display label.
