@@ -9,6 +9,7 @@ import {
 	getKeyCandidates,
 } from "../helpers/getKeyCandidates"
 import type { KeyCandidate } from "../helpers/keyCandidate"
+import { rememberOnePasswordCandidate } from "../helpers/onePasswordLocatorCache"
 import { logger } from "../ui/logger"
 import {
 	type GroupedSelectOption,
@@ -341,7 +342,15 @@ export async function _runChooseKeyCandidatePrompt(
 	}
 }
 
-export const chooseKeyCandidatePrompt = (
+export const chooseKeyCandidatePrompt = async (
 	message: string,
 	options: ChooseKeyCandidateOptions = {},
-) => _runChooseKeyCandidatePrompt(message, defaultDeps, options)
+) => {
+	const candidate = await _runChooseKeyCandidatePrompt(
+		message,
+		defaultDeps,
+		options,
+	)
+	await rememberOnePasswordCandidate(candidate)
+	return candidate
+}

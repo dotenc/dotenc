@@ -99,18 +99,22 @@ This means:
 and never copies, moves, or stores them elsewhere. Public-only selection flows
 derive and store only `.dotenc/<name>.pub`.
 
-**1Password SSH keys are optional and memory-only** — when the installed `op`
+**1Password SSH private keys are optional and memory-only** — when the installed `op`
 CLI exposes configured accounts, dotenc can discover SSH Key items through
 their public metadata. Interactive `dotenc init` and `dotenc key add` defer that
 discovery until the user explicitly chooses the 1Password action; local key
 selection in those pickers does not invoke `op`. Accounts are addressed by
 complete `account_uuid`; vaults and items are addressed by stable IDs. Those
-commands never request a private field. If decryption has no matching
+commands never request a private field. Selecting a 1Password key caches only
+its canonical fingerprint and opaque account, vault, and item IDs in the
+user's machine-local locator cache. If decryption has no matching
 environment or filesystem key, dotenc retrieves exactly one
 fingerprint-matched private key with `op read --account ...` through a pipe. It
-validates the retrieved key's fingerprint before use and never writes it to
-disk, stores it in a persistent cache, logs it, or adds it to a child process
-environment or argument. A decryption batch may reuse the in-memory key for
+first checks the locator cache, avoiding account and item discovery after a
+successful selection or use. It validates the retrieved key's fingerprint
+before use. Private key material is never written to disk, stored in a
+persistent cache, logged, or added to a child process environment or argument.
+A decryption batch may reuse the in-memory key for
 environments that select the same qualified item. The command that creates the
 shared decryption context owns its cleanup and releases those batch references
 immediately after the decryption handoff; they are never forwarded to a wrapped
@@ -125,8 +129,17 @@ Structured output is schema-checked, bounded, and subject to a timeout;
 arbitrary stdout and stderr are not included in diagnostics. Buffered private
 key output, including chunks delivered after a timeout or output-limit failure,
 is overwritten before release. OpenSSH parsing also clears decoded key buffers
-and temporary DER copies. Account, vault, and item IDs are local metadata and
-are not persisted in project files.
+and temporary DER copies.
+
+Account, vault, and item IDs are local metadata and are never persisted in
+project files. The locator cache stores only `fingerprint -> accountId, vaultId,
+itemId` entries under `~/.cache/dotenc` (or the applicable XDG/Windows cache
+root), with `0700` directories and `0600` files. Entries use a bounded,
+versioned schema and atomic replacement. No private or public key, item or vault
+name, account URL, project path, negative result, or authorization decision is
+cached. The cache is treated as untrusted and disposable: every retrieved
+private key is fingerprint-verified, and stale, failed, or mismatched locators
+are evicted.
 
 **In-memory zeroing:** After the private key is used to decrypt the data key, the raw key bytes are explicitly overwritten with zeros before being released:
 
@@ -249,10 +262,14 @@ On first initialization, dotenc registers the selected public key and creates th
 
 When `dotenc init` detects an existing project, it performs Git setup only: it configures `diff.dotenc.textconv` in that clone's local Git configuration and ensures the repository's `*.enc` diff attribute. It does not prompt for or modify identities, keys, encrypted environments, access rules, or a local plaintext `.env`. The Git subprocess result is checked before `.gitattributes` is changed, so a configuration failure aborts without reporting success or leaving a tracked attribute change.
 
-The `textconv` Git diff driver is deliberately local-only: it checks
-environment-provided and filesystem keys but never invokes `op` or triggers a
-1Password authorization prompt. When those local sources cannot decrypt a
-file, `textconv` emits the raw encrypted content for Git instead.
+The `textconv` Git diff driver checks environment-provided and filesystem keys,
+then may use a previously verified machine-local 1Password locator. It never
+runs full account or item discovery. A warm locator can invoke one bounded
+`op read` and trigger 1Password's native authorization dialog; the returned key
+must match the environment fingerprint. On a cold, failed, stale, declined, or
+mismatched cache lookup, `textconv` emits the raw encrypted content for Git
+instead. Git textconv output caching remains disabled because persisting its
+plaintext output would violate dotenc's key and secret handling guarantees.
 
 ### Hierarchical Environment Loading
 

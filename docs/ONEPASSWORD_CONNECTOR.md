@@ -19,6 +19,9 @@ requiring project configuration or a 1Password shell plugin.
 - Commands that decrypt environments, including `dotenc run`, should retrieve
   private material only for a key whose fingerprint is authorized by the
   selected environment.
+- Successful selections and private-key retrievals should cache only the
+  fingerprint-to-locator mapping in the user's machine-local cache. Warm
+  decryptions should use that locator directly instead of repeating discovery.
 - 1Password may present its normal system authorization dialog. Explicit user
   authorization is part of the intended flow, not an error or configuration
   step.
@@ -42,6 +45,8 @@ dotenc to discover and fingerprint-match all available SSH Key items.
 - Avoid retrieving private material during key discovery and selection.
 - Retrieve at most one matching 1Password private key for a decryption
   operation.
+- Skip account and item discovery when a verified machine-local locator is
+  already available.
 - Fail closed when the retrieved key does not match its discovered fingerprint
   or the environment recipient.
 
@@ -116,8 +121,9 @@ item title. One acceptable internal representation is:
 
 The key fingerprint remains the cryptographic identity. The locator only tells
 dotenc where to retrieve the current item. A 1Password item ID may change when
-the item moves to another vault, so key discovery must rebuild locators rather
-than treating them as permanent cryptographic identifiers.
+the item moves to another vault, so a failed or mismatched cached lookup must be
+evicted and rebuilt through discovery rather than treated as a permanent
+cryptographic identifier.
 
 1Password documents IDs as the stable and efficient way to address objects and
 supports an account ID with `--account`:
@@ -268,7 +274,7 @@ The initialization and interactive key-add flows need only public key material:
 3. Only after that action is selected, discover 1Password public metadata and
    replace the temporary loading group with stable account categories.
 4. When a 1Password candidate is selected, use the already retrieved and
-   validated public key.
+   validated public key and cache its fingerprint-to-locator mapping locally.
 5. Export the public key in dotenc's existing SPKI PEM format.
 6. Continue through the existing `key add` and environment creation paths.
 
@@ -286,15 +292,20 @@ Commands that need to decrypt an environment should resolve keys in this order:
 1. Read the selected environment and its authorized recipient fingerprints.
 2. Check environment-provided bootstrap keys.
 3. Check keys in `~/.ssh`.
-4. If no available local key matches an authorized fingerprint, discover
-   1Password public candidates.
-5. Find a 1Password candidate whose canonical fingerprint matches an
+4. If no available local key matches an authorized fingerprint, check the
+   machine-local locator cache for those fingerprints.
+5. When a cached locator exists, retrieve that item directly and require its
+   recalculated fingerprint to match the environment recipient.
+6. If the cache misses or the locator is evicted after a failed or mismatched
+   read, discover 1Password public candidates once.
+7. Find a 1Password candidate whose canonical fingerprint matches an
    authorized recipient.
-6. Retrieve only that item's private key.
-7. Parse the key, recalculate its fingerprint, and compare it to both the
+8. Retrieve only that item's private key.
+9. Parse the key, recalculate its fingerprint, and compare it to both the
    discovered candidate and the environment recipient.
-8. Use the existing data-key decryption path.
-9. Release references to the retrieved private material as soon as the
+10. Cache the verified fingerprint-to-locator mapping and use the existing
+    data-key decryption path.
+11. Release references to the retrieved private material as soon as the
    operation completes.
 
 Private key retrieval should use an ID-addressed secret reference and the
@@ -319,9 +330,11 @@ All commands that share the private-key resolver should receive the same
 capability, including `run`, `dev`, environment edit/decrypt flows, and
 operations that must decrypt an environment before rotating access. The
 connector must not be implemented only as a special case inside `run`.
-`textconv` is intentionally excluded: Git may launch it once per file, so it
-must remain local-only and return encrypted content without invoking `op` when
-local decryption is unavailable.
+`textconv` may use the locator-cache fast path, but it must never run full
+1Password discovery. A warm cache therefore permits one direct `op read` and
+the native authorization dialog. A cold, stale, declined, or mismatched lookup
+returns encrypted content to Git immediately after the bounded direct read
+fails; it does not fan out into account and item scans.
 
 Identity-only flows may discover public metadata for project identities that
 do not match a local private key. Plain `dev` keeps a local match provider-free;
@@ -378,8 +391,20 @@ provider structure and should be handled as private local metadata:
 - do not commit them to `.dotenc`, encrypted environment files, or other
   project files;
 - do not print complete IDs in routine UI;
-- do not add persistent caching in the first phase;
-- rediscover locators and use fingerprints as the durable access identity.
+- persist them only in the disposable machine-local locator cache, keyed by the
+  canonical public-key fingerprint;
+- never cache item titles, vault names, account URLs, public keys, private keys,
+  project paths, authorization failures, or empty discovery results;
+- create cache directories and files with modes `0700` and `0600`, use atomic
+  replacement, validate a bounded versioned schema, and treat corruption as a
+  cache miss;
+- treat the cache as untrusted metadata: recalculate the retrieved private
+  key's fingerprint before use and evict failed or mismatched locators.
+
+On Unix-like systems the default root is `~/.cache/dotenc`, overridden by an
+absolute `XDG_CACHE_HOME`. Windows uses `%LOCALAPPDATA%\dotenc\Cache`. Each
+fingerprint has an independently replaceable entry so concurrent Git processes
+cannot overwrite unrelated mappings.
 
 ## Failure behavior
 
@@ -392,7 +417,7 @@ provider structure and should be handled as private local metadata:
 | One of several accounts fails | Keep successful categories available and explicitly report the unavailable account. |
 | No supported SSH Key items | Omit that account's empty key category; when no local key exists, preserve the no-private-keys guidance. |
 | Duplicate account or item labels | Keep entries distinct through complete ID-backed values and disambiguating hints. |
-| Item moved or removed | Rediscover; do not depend on a stale locator. |
+| Cached item moved, removed, or mismatched | Evict the locator; normal decryptions rediscover once, while `textconv` returns encrypted content without scanning. |
 | Public/private fingerprint mismatch | Reject the key and fail closed before data-key decryption. |
 | No candidate matches an environment | Return access denied only when at least one supported local or provider key was found; otherwise preserve the no-private-keys guidance. |
 | `op` returns malformed or excessive output | Treat the provider as failed and do not parse partial key material. |
@@ -421,12 +446,13 @@ provider structure and should be handled as private local metadata:
 3. Add grouped select support to the prompt layer.
 4. Integrate opt-in public-only candidate discovery into `dotenc init` and
    interactive `dotenc key add` without delaying the initial local picker.
-5. Integrate lazy fingerprint-matched retrieval into the shared environment
-   decryption path.
-6. Update safe user-facing diagnostics for local and 1Password sources.
-7. Update `SECURITY.md` when implementation changes key handling and child
+5. Integrate cache-first fingerprint-matched retrieval into the shared
+   environment decryption path.
+6. Allow `textconv` to use cached locators without enabling full discovery.
+7. Update safe user-facing diagnostics for local and 1Password sources.
+8. Update `SECURITY.md` when implementation changes key handling and child
    process execution.
-8. Add unit, packaging, and manual integration coverage before documenting the
+9. Add unit, packaging, and manual integration coverage before documenting the
    connector as shipped.
 
 ## Acceptance criteria
@@ -445,11 +471,16 @@ provider structure and should be handled as private local metadata:
 - `dotenc init` and interactive `dotenc key add` never retrieve a private
   1Password field.
 - Selecting a 1Password key stores only its public key in the dotenc project.
+- Selecting or successfully using a 1Password key stores only its fingerprint
+  and opaque account, vault, and item IDs in the machine-local locator cache.
 - A local decryption flow prompts through 1Password when no environment-provided
   or local filesystem key matches, retrieves one matching private key, and
   decrypts the environment successfully.
 - A batch that decrypts multiple environments with the same 1Password item runs
   discovery and retrieves that private key only once.
+- A later process with a warm locator skips account and item discovery and goes
+  directly to one fingerprint-verified `op read`.
+- `textconv` uses a warm locator but never runs full 1Password discovery.
 - A retrieved key with a different fingerprint is rejected before use.
 - RSA 2048+ and Ed25519 items work; weaker RSA and unsupported algorithms are
   rejected consistently with filesystem keys.

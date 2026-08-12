@@ -74,6 +74,39 @@ describe("decryptEnvironmentData", () => {
 		expect(discover).not.toHaveBeenCalled()
 	})
 
+	test("uses a cached 1Password locator before full discovery", async () => {
+		const privateKey = makePrivateKeyEntry(
+			"fp-provider",
+			"1Password / cached SSH key",
+		)
+		const loadCachedOnePasswordPrivateKey = mock(async () => privateKey)
+		const discoverOnePasswordKeyCandidates = mock(async () => ({
+			status: "available" as const,
+			keys: [],
+			unsupportedKeys: [],
+			unavailableAccounts: [],
+		}))
+		const deps: DecryptEnvironmentDataDeps = {
+			getPrivateKeys: async () => ({ keys: [], passphraseProtectedKeys: [] }),
+			loadCachedOnePasswordPrivateKey,
+			discoverOnePasswordKeyCandidates,
+			decryptDataKey: (() => Buffer.alloc(32)) as never,
+			decryptData: (async () => "OK") as never,
+		}
+
+		expect(
+			await decryptEnvironmentData(
+				"test-env",
+				makeEnvironment("fp-provider"),
+				deps,
+			),
+		).toBe("OK")
+		expect(loadCachedOnePasswordPrivateKey).toHaveBeenCalledWith([
+			"fp-provider",
+		])
+		expect(discoverOnePasswordKeyCandidates).not.toHaveBeenCalled()
+	})
+
 	test("loads only one matching 1Password private key after local keys miss", async () => {
 		const privateKey = makePrivateKeyEntry("fp-provider", "1Password / key")
 		const loadPrivateKey = mock(async () => privateKey)

@@ -205,7 +205,7 @@ exit 1
 		}
 	}, TIMEOUT)
 
-	test("textconv never invokes 1Password for an inaccessible environment", () => {
+	test("textconv uses a warm locator without running discovery", () => {
 		writeFileSync(logPath, "")
 		const encryptedPath = path.join(workspace, ".env.development.enc")
 		const result = runCli(
@@ -216,26 +216,54 @@ exit 1
 		)
 
 		expect(result.exitCode).toBe(0)
-		expect(result.stdout).toBe(readFileSync(encryptedPath, "utf8"))
-		expect(readFileSync(logPath, "utf8")).toBe("")
+		expect(result.stdout).toContain("ONEPASSWORD_E2E=provider-value")
+		expect(readFileSync(logPath, "utf8").trim().split("\n")).toEqual([
+			`read --account ${ACCOUNT_A} op://${VAULT_A}/${ITEM_A}/private_key?ssh-format=openssh`,
+		])
+	}, TIMEOUT)
+
+	test("textconv with a cold cache returns encrypted content without discovery", () => {
+		const coldHome = mkdtempSync(path.join(os.tmpdir(), "e2e-29-cold-home-"))
+		writeFileSync(logPath, "")
+		const encryptedPath = path.join(workspace, ".env.development.enc")
+
+		try {
+			const result = runCli(
+				coldHome,
+				workspace,
+				["textconv", encryptedPath],
+				env,
+			)
+
+			expect(result.exitCode).toBe(0)
+			expect(result.stdout).toBe(readFileSync(encryptedPath, "utf8"))
+			expect(readFileSync(logPath, "utf8")).toBe("")
+		} finally {
+			rmSync(coldHome, { recursive: true, force: true })
+		}
 	}, TIMEOUT)
 
 	test("available accounts without supported keys preserve no-key guidance", () => {
+		const coldHome = mkdtempSync(path.join(os.tmpdir(), "e2e-29-empty-home-"))
 		writeFileSync(logPath, "")
-		const result = runCli(
-			home,
-			workspace,
-			["run", "-e", "development", "--", "true"],
-			{ ...env, DOTENC_OP_EMPTY_ITEMS: "1" },
-		)
+		try {
+			const result = runCli(
+				coldHome,
+				workspace,
+				["run", "-e", "development", "--", "true"],
+				{ ...env, DOTENC_OP_EMPTY_ITEMS: "1" },
+			)
 
-		expect(result.exitCode).toBe(1)
-		expect(result.stderr).toContain("No private keys found")
-		expect(result.stderr).not.toContain("Access denied to the environment")
-		expect(readFileSync(logPath, "utf8")).not.toContain("read --account")
+			expect(result.exitCode).toBe(1)
+			expect(result.stderr).toContain("No private keys found")
+			expect(result.stderr).not.toContain("Access denied to the environment")
+			expect(readFileSync(logPath, "utf8")).not.toContain("read --account")
+		} finally {
+			rmSync(coldHome, { recursive: true, force: true })
+		}
 	}, TIMEOUT)
 
-	test("run lazily retrieves one matching private key and does not forward it", () => {
+	test("run uses one cached read and does not forward the private key", () => {
 		writeFileSync(logPath, "")
 		const result = runCli(
 			home,
@@ -260,6 +288,8 @@ exit 1
 		expect(reads).toEqual([
 			`read --account ${ACCOUNT_A} op://${VAULT_A}/${ITEM_A}/private_key?ssh-format=openssh`,
 		])
+		expect(readFileSync(logPath, "utf8")).not.toContain("item list")
+		expect(readFileSync(logPath, "utf8")).not.toContain("item get")
 	}, TIMEOUT)
 
 	test("whoami resolves a 1Password-only identity from public metadata", () => {

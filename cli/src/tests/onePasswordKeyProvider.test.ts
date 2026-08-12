@@ -3,12 +3,15 @@ import { execFileSync } from "node:child_process"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
+import { getKeyFingerprint } from "../helpers/getKeyFingerprint"
 import {
 	discoverOnePasswordKeyCandidates,
+	loadCachedOnePasswordPrivateKey,
 	OnePasswordProviderError,
 	type RunOpCommand,
 	runOpCommand,
 } from "../helpers/onePasswordKeyProvider"
+import { parseOpenSSHPublicKey } from "../helpers/parseOpenSSHPublicKey"
 
 const ACCOUNT_A = "A".repeat(26)
 const ACCOUNT_B = "B".repeat(26)
@@ -48,6 +51,7 @@ describe("discoverOnePasswordKeyCandidates", () => {
 		const keyA = generateKey()
 		const keyB = generateKey("rsa")
 		const calls: string[][] = []
+		const rememberLocator = mock(async () => true)
 		const runOpCommand: RunOpCommand = mock(async (args) => {
 			calls.push(args)
 			if (args[0] === "--version") return Buffer.from("2.35.0\n")
@@ -88,7 +92,10 @@ describe("discoverOnePasswordKeyCandidates", () => {
 		})
 
 		try {
-			const result = await discoverOnePasswordKeyCandidates({ runOpCommand })
+			const result = await discoverOnePasswordKeyCandidates({
+				runOpCommand,
+				rememberLocator,
+			})
 			expect(result.status).toBe("available")
 			expect(result.keys).toHaveLength(2)
 			expect(result.keys.map((key) => key.name)).toEqual(["GitHub", "GitHub"])
@@ -118,6 +125,11 @@ describe("discoverOnePasswordKeyCandidates", () => {
 					`op://${VAULT_B}/${ITEM_B}/private_key?ssh-format=openssh`,
 				],
 			])
+			expect(rememberLocator).toHaveBeenCalledWith(selected.fingerprint, {
+				accountId: ACCOUNT_B,
+				vaultId: VAULT_B,
+				itemId: ITEM_B,
+			})
 		} finally {
 			fs.rmSync(keyA.directory, { recursive: true, force: true })
 			fs.rmSync(keyB.directory, { recursive: true, force: true })
@@ -287,6 +299,76 @@ describe("discoverOnePasswordKeyCandidates", () => {
 		} finally {
 			fs.rmSync(publicFixture.directory, { recursive: true, force: true })
 			fs.rmSync(privateFixture.directory, { recursive: true, force: true })
+		}
+	})
+})
+
+describe("loadCachedOnePasswordPrivateKey", () => {
+	test("loads a fingerprint-matched key with one direct op read", async () => {
+		const key = generateKey()
+		const fingerprint = getKeyFingerprint(
+			parseOpenSSHPublicKey(key.publicKey) as NonNullable<
+				ReturnType<typeof parseOpenSSHPublicKey>
+			>,
+		)
+		const calls: string[][] = []
+		const removeLocator = mock(async () => {})
+
+		try {
+			const result = await loadCachedOnePasswordPrivateKey([fingerprint], {
+				runOpCommand: async (args) => {
+					calls.push(args)
+					return Buffer.from(key.privateKey)
+				},
+				readLocator: async () => ({
+					accountId: ACCOUNT_A,
+					vaultId: VAULT_A,
+					itemId: ITEM_A,
+				}),
+				removeLocator,
+			})
+
+			expect(result?.fingerprint).toBe(fingerprint)
+			expect(calls).toEqual([
+				[
+					"read",
+					"--account",
+					ACCOUNT_A,
+					`op://${VAULT_A}/${ITEM_A}/private_key?ssh-format=openssh`,
+				],
+			])
+			expect(removeLocator).not.toHaveBeenCalled()
+		} finally {
+			fs.rmSync(key.directory, { recursive: true, force: true })
+		}
+	})
+
+	test("evicts a stale locator when the returned fingerprint differs", async () => {
+		const expected = generateKey()
+		const stale = generateKey()
+		const fingerprint = getKeyFingerprint(
+			parseOpenSSHPublicKey(expected.publicKey) as NonNullable<
+				ReturnType<typeof parseOpenSSHPublicKey>
+			>,
+		)
+		const removeLocator = mock(async () => {})
+
+		try {
+			expect(
+				await loadCachedOnePasswordPrivateKey([fingerprint], {
+					runOpCommand: async () => Buffer.from(stale.privateKey),
+					readLocator: async () => ({
+						accountId: ACCOUNT_A,
+						vaultId: VAULT_A,
+						itemId: ITEM_A,
+					}),
+					removeLocator,
+				}),
+			).toBeUndefined()
+			expect(removeLocator).toHaveBeenCalledWith(fingerprint)
+		} finally {
+			fs.rmSync(expected.directory, { recursive: true, force: true })
+			fs.rmSync(stale.directory, { recursive: true, force: true })
 		}
 	})
 })

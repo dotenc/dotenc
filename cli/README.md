@@ -611,12 +611,23 @@ scripts, `--private-key` and `--from-private-key` accept a qualified
 `1password:<account-id>:<vault-id>:<item-id>` selector and load its provider
 metadata directly.
 
+After a 1Password key is selected or successfully used, dotenc stores a
+disposable machine-local locator under `~/.cache/dotenc` (or the platform cache
+directory). It contains only the public-key fingerprint and opaque account,
+vault, and item IDs—never key material, names, account URLs, or project paths.
+Later commands can go directly to one fingerprint-verified `op read` instead of
+rescanning every account and SSH item. Stale or mismatched entries are evicted.
+
 Local keys keep priority during decryption. If none matches an environment,
 local commands such as `run`, `dev`, environment edit/decrypt, and access
 rotation can ask `op` for one fingerprint-matched private key. 1Password may
 show its native authorization dialog at that point. After `op read` returns,
 the key remains only in the dotenc process: it is not written to disk, persisted
 in project files, or forwarded to a wrapped command or its environment.
+
+Git `textconv` may use an already cached locator and show the same authorization
+dialog, but it never performs full 1Password discovery. Without a valid cached
+locator it immediately preserves the encrypted diff content.
 
 See [1Password SSH key connector](../docs/ONEPASSWORD_CONNECTOR.md) for the full
 behavior and security boundaries.

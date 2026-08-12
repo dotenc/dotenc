@@ -7,6 +7,12 @@ import type {
 	UnsupportedPrivateKeyEntry,
 } from "./getPrivateKeys"
 import type { KeyCandidate } from "./keyCandidate"
+import {
+	type OnePasswordLocator,
+	readOnePasswordLocator,
+	removeOnePasswordLocator,
+	writeOnePasswordLocator,
+} from "./onePasswordLocatorCache"
 import { parseOpenSSHPrivateKey } from "./parseOpenSSHKey"
 import { parseOpenSSHPublicKey } from "./parseOpenSSHPublicKey"
 import { validatePublicKey } from "./validatePublicKey"
@@ -350,21 +356,65 @@ function itemSelector(
 	return `1password:${accountId}:${item.vault.id}:${item.id}`
 }
 
-function privateKeyReference(
-	accountId: string,
-	item: OnePasswordItemOverview,
-): string {
+function privateKeyReference(locator: OnePasswordLocator): string {
 	if (
-		!ONE_PASSWORD_ID_PATTERN.test(accountId) ||
-		!ONE_PASSWORD_ID_PATTERN.test(item.vault.id) ||
-		!ONE_PASSWORD_ID_PATTERN.test(item.id)
+		!ONE_PASSWORD_ID_PATTERN.test(locator.accountId) ||
+		!ONE_PASSWORD_ID_PATTERN.test(locator.vaultId) ||
+		!ONE_PASSWORD_ID_PATTERN.test(locator.itemId)
 	) {
 		throw new OnePasswordProviderError(
 			"1Password returned an invalid object identifier.",
 			"invalid-response",
 		)
 	}
-	return `op://${item.vault.id}/${item.id}/private_key?ssh-format=openssh`
+	return `op://${locator.vaultId}/${locator.itemId}/private_key?ssh-format=openssh`
+}
+
+async function loadPrivateKeyFromLocator(
+	fingerprint: string,
+	locator: OnePasswordLocator,
+	name: string,
+	runCommand: RunOpCommand,
+): Promise<PrivateKeyEntry> {
+	let output: Buffer
+	try {
+		output = await runCommand(
+			["read", "--account", locator.accountId, privateKeyReference(locator)],
+			{ maxOutputBytes: OP_PRIVATE_KEY_MAX_BYTES },
+		)
+	} catch (error) {
+		throw new OnePasswordProviderError(
+			`Unable to retrieve ${name} from 1Password.`,
+			"command-failed",
+			{ cause: error },
+		)
+	}
+
+	const privateKey = parsePrivateKey(output)
+	if (!privateKey) {
+		throw new OnePasswordProviderError(
+			`1Password returned an invalid private key for ${name}.`,
+			"invalid-private-key",
+		)
+	}
+
+	const entry = privateKeyEntry(name, privateKey)
+	if (!entry) {
+		throw new OnePasswordProviderError(
+			`1Password returned an unsupported private key for ${name}.`,
+			"invalid-private-key",
+		)
+	}
+
+	if (entry.fingerprint !== fingerprint) {
+		entry.rawPublicKey?.fill(0)
+		throw new OnePasswordProviderError(
+			`The private key returned by 1Password no longer matches ${name}.`,
+			"fingerprint-mismatch",
+		)
+	}
+
+	return entry
 }
 
 function createCandidate(
@@ -372,6 +422,7 @@ function createCandidate(
 	item: OnePasswordItemOverview,
 	publicKey: crypto.KeyObject,
 	runCommand: RunOpCommand,
+	rememberLocator?: typeof writeOnePasswordLocator,
 ): KeyCandidate {
 	const algorithm = detectAlgorithm(publicKey)
 	if (!algorithm) {
@@ -389,6 +440,11 @@ function createCandidate(
 	const name = itemName(item)
 	const fingerprint = getKeyFingerprint(publicKey)
 	const label = accountLabel(account)
+	const locator: OnePasswordLocator = {
+		accountId: account.account_uuid,
+		vaultId: item.vault.id,
+		itemId: item.id,
+	}
 
 	return {
 		source: "1password",
@@ -403,52 +459,63 @@ function createCandidate(
 		fingerprint,
 		algorithm,
 		loadPrivateKey: async () => {
-			let output: Buffer
-			try {
-				output = await runCommand(
-					[
-						"read",
-						"--account",
-						account.account_uuid,
-						privateKeyReference(account.account_uuid, item),
-					],
-					{ maxOutputBytes: OP_PRIVATE_KEY_MAX_BYTES },
-				)
-			} catch (error) {
-				throw new OnePasswordProviderError(
-					`Unable to retrieve ${name} from ${label}.`,
-					"command-failed",
-					{ cause: error },
-				)
-			}
-
-			const privateKey = parsePrivateKey(output)
-			if (!privateKey) {
-				throw new OnePasswordProviderError(
-					`1Password returned an invalid private key for ${name}.`,
-					"invalid-private-key",
-				)
-			}
-
-			const entry = privateKeyEntry(`${label} / ${name}`, privateKey)
-			if (!entry) {
-				throw new OnePasswordProviderError(
-					`1Password returned an unsupported private key for ${name}.`,
-					"invalid-private-key",
-				)
-			}
-
-			if (entry.fingerprint !== fingerprint) {
-				entry.rawPublicKey?.fill(0)
-				throw new OnePasswordProviderError(
-					`The private key returned by 1Password no longer matches ${name}.`,
-					"fingerprint-mismatch",
-				)
-			}
-
+			const entry = await loadPrivateKeyFromLocator(
+				fingerprint,
+				locator,
+				`${label} / ${name}`,
+				runCommand,
+			)
+			await rememberLocator?.(fingerprint, locator)
 			return entry
 		},
 	}
+}
+
+type LoadCachedOnePasswordPrivateKeyDeps = {
+	runOpCommand: RunOpCommand
+	readLocator: typeof readOnePasswordLocator
+	removeLocator: typeof removeOnePasswordLocator
+}
+
+const defaultCachedKeyDeps: LoadCachedOnePasswordPrivateKeyDeps = {
+	runOpCommand,
+	readLocator: readOnePasswordLocator,
+	removeLocator: removeOnePasswordLocator,
+}
+
+export async function loadCachedOnePasswordPrivateKey(
+	fingerprints: string[],
+	deps: LoadCachedOnePasswordPrivateKeyDeps = defaultCachedKeyDeps,
+): Promise<PrivateKeyEntry | undefined> {
+	const cached = (
+		await Promise.all(
+			[...new Set(fingerprints)].map(async (fingerprint) => {
+				const locator = await deps.readLocator(fingerprint)
+				return locator ? { fingerprint, locator } : undefined
+			}),
+		)
+	)
+		.filter((entry) => entry !== undefined)
+		.sort((left, right) => {
+			const leftSelector = `${left.locator.accountId}:${left.locator.vaultId}:${left.locator.itemId}`
+			const rightSelector = `${right.locator.accountId}:${right.locator.vaultId}:${right.locator.itemId}`
+			return leftSelector.localeCompare(rightSelector)
+		})
+
+	for (const { fingerprint, locator } of cached) {
+		try {
+			return await loadPrivateKeyFromLocator(
+				fingerprint,
+				locator,
+				"cached SSH key",
+				deps.runOpCommand,
+			)
+		} catch {
+			await deps.removeLocator(fingerprint)
+		}
+	}
+
+	return undefined
 }
 
 function emptyResult(
@@ -459,12 +526,16 @@ function emptyResult(
 
 type DiscoverOnePasswordDeps = {
 	runOpCommand: RunOpCommand
+	rememberLocator?: typeof writeOnePasswordLocator
 	discoveryTimeoutMs?: number
 	itemConcurrency?: number
 	now?: () => number
 }
 
-const defaultDeps: DiscoverOnePasswordDeps = { runOpCommand }
+const defaultDeps: DiscoverOnePasswordDeps = {
+	runOpCommand,
+	rememberLocator: writeOnePasswordLocator,
+}
 
 export async function discoverOnePasswordKeyCandidates(
 	deps: DiscoverOnePasswordDeps = defaultDeps,
@@ -636,6 +707,7 @@ export async function discoverOnePasswordKeyCandidates(
 							item,
 							publicKey,
 							deps.runOpCommand,
+							deps.rememberLocator,
 						),
 					}
 				} catch (error) {

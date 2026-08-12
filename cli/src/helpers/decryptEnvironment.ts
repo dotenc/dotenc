@@ -7,10 +7,14 @@ import { passphraseProtectedKeyError } from "./errors"
 import { getEnvironmentByName } from "./getEnvironmentByName"
 import { getPrivateKeys, type PrivateKeyEntry } from "./getPrivateKeys"
 import type { KeyCandidate } from "./keyCandidate"
-import { discoverOnePasswordKeyCandidates } from "./onePasswordKeyProvider"
+import {
+	discoverOnePasswordKeyCandidates,
+	loadCachedOnePasswordPrivateKey,
+} from "./onePasswordKeyProvider"
 
 type DecryptionKeyDeps = {
 	getPrivateKeys: typeof getPrivateKeys
+	loadCachedOnePasswordPrivateKey?: typeof loadCachedOnePasswordPrivateKey
 	discoverOnePasswordKeyCandidates?: typeof discoverOnePasswordKeyCandidates
 	loadPrivateKey?: (candidate: KeyCandidate) => Promise<PrivateKeyEntry>
 }
@@ -22,6 +26,7 @@ type DecryptEnvironmentDataDeps = DecryptionKeyDeps & {
 
 const defaultDecryptEnvironmentDataDeps: DecryptEnvironmentDataDeps = {
 	getPrivateKeys,
+	loadCachedOnePasswordPrivateKey,
 	discoverOnePasswordKeyCandidates,
 	decryptDataKey,
 	decryptData,
@@ -35,6 +40,7 @@ export type DecryptionKeyContext = DecryptionKeyDeps & {
 export const createDecryptionKeyContext = (
 	deps: DecryptionKeyDeps = {
 		getPrivateKeys,
+		loadCachedOnePasswordPrivateKey,
 		discoverOnePasswordKeyCandidates,
 	},
 ): DecryptionKeyContext => {
@@ -43,6 +49,10 @@ export const createDecryptionKeyContext = (
 		| ReturnType<typeof discoverOnePasswordKeyCandidates>
 		| undefined
 	const privateKeyPromises = new Map<string, Promise<PrivateKeyEntry>>()
+	const cachedPrivateKeyPromises = new Map<
+		string,
+		Promise<PrivateKeyEntry | undefined>
+	>()
 	let disposed = false
 	const discoverOnePassword = deps.discoverOnePasswordKeyCandidates
 	const loadPrivateKey =
@@ -54,6 +64,19 @@ export const createDecryptionKeyContext = (
 			privateKeysPromise ??= deps.getPrivateKeys()
 			return privateKeysPromise
 		},
+		loadCachedOnePasswordPrivateKey: deps.loadCachedOnePasswordPrivateKey
+			? (fingerprints) => {
+					const cacheKey = [...new Set(fingerprints)].sort().join("\0")
+					let privateKeyPromise = cachedPrivateKeyPromises.get(cacheKey)
+					if (!privateKeyPromise) {
+						privateKeyPromise = deps.loadCachedOnePasswordPrivateKey?.(
+							fingerprints,
+						) as Promise<PrivateKeyEntry | undefined>
+						cachedPrivateKeyPromises.set(cacheKey, privateKeyPromise)
+					}
+					return privateKeyPromise
+				}
+			: undefined,
 		discoverOnePasswordKeyCandidates: discoverOnePassword
 			? () => {
 					discoveryPromise ??= discoverOnePassword()
@@ -74,6 +97,7 @@ export const createDecryptionKeyContext = (
 			privateKeysPromise = undefined
 			discoveryPromise = undefined
 			privateKeyPromises.clear()
+			cachedPrivateKeyPromises.clear()
 		},
 	}
 }
@@ -95,6 +119,7 @@ export const createDecryptEnvironmentDataContext = (
 type EnvironmentDataKeyComparisonDeps = Pick<
 	DecryptEnvironmentDataDeps,
 	| "getPrivateKeys"
+	| "loadCachedOnePasswordPrivateKey"
 	| "discoverOnePasswordKeyCandidates"
 	| "loadPrivateKey"
 	| "decryptDataKey"
@@ -130,6 +155,17 @@ const unwrapEnvironmentDataKey = async (
 		if (grantedKey) {
 			selectedPrivateKey = privateKeyEntry
 			break
+		}
+	}
+
+	if (!grantedKey && deps.loadCachedOnePasswordPrivateKey) {
+		selectedPrivateKey = await deps.loadCachedOnePasswordPrivateKey(
+			environment.keys.map((key) => key.fingerprint),
+		)
+		if (selectedPrivateKey) {
+			grantedKey = environment.keys.find(
+				(key) => key.fingerprint === selectedPrivateKey?.fingerprint,
+			)
 		}
 	}
 
