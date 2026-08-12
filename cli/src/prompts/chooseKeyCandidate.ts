@@ -2,6 +2,7 @@ import os from "node:os"
 import path from "node:path"
 import chalk from "chalk"
 import { createEd25519SshKey } from "../helpers/createEd25519SshKey"
+import { createOnePasswordSshKeyCopy } from "../helpers/createOnePasswordSshKeyCopy"
 import { createPasswordlessSshKeyCopy } from "../helpers/createPasswordlessSshKeyCopy"
 import { passphraseProtectedKeyError } from "../helpers/errors"
 import {
@@ -38,6 +39,7 @@ type ChooseKeyCandidateDeps = {
 	promptGroupedSelect: typeof promptGroupedSelect
 	runWithGroupedSpinner: typeof runWithGroupedSpinner
 	createEd25519SshKey: typeof createEd25519SshKey
+	createOnePasswordSshKeyCopy: typeof createOnePasswordSshKeyCopy
 	createPasswordlessSshKeyCopy: typeof createPasswordlessSshKeyCopy
 	homedir: typeof os.homedir
 	isInteractive: typeof isInteractive
@@ -51,6 +53,7 @@ const defaultDeps: ChooseKeyCandidateDeps = {
 	promptGroupedSelect,
 	runWithGroupedSpinner,
 	createEd25519SshKey,
+	createOnePasswordSshKeyCopy,
 	createPasswordlessSshKeyCopy,
 	homedir: os.homedir,
 	isInteractive,
@@ -205,6 +208,36 @@ function logDiscoveryWarnings(
 	}
 }
 
+async function finalizeCandidateSelection(
+	candidate: KeyCandidate,
+	deps: ChooseKeyCandidateDeps,
+	interactive: boolean,
+): Promise<KeyCandidate> {
+	if (!interactive || candidate.source !== "1password") return candidate
+
+	deps.logInfo(
+		`${chalk.yellow("Info:")} Keeping this key in 1Password is more secure, but future commands may prompt for authorization. A local copy is faster and avoids those prompts, but stores the unencrypted private key in ~/.ssh.`,
+	)
+	const shouldCreateLocalCopy = await deps.promptConfirm(
+		"Save an unencrypted local copy in ~/.ssh for faster access?",
+		{ initial: false },
+	)
+	if (!shouldCreateLocalCopy) return candidate
+
+	try {
+		const created = await deps.createOnePasswordSshKeyCopy(candidate)
+		deps.logInfo(
+			`${chalk.green("✔")} Created ${chalk.cyan(created.name)} at ${chalk.gray(created.path)}. Future dotenc commands can use this local copy without 1Password authorization.`,
+		)
+	} catch (error) {
+		deps.logWarn(
+			`${chalk.yellow("Warning:")} failed to create a local 1Password SSH key copy. Continuing with the locator-only option. ${error instanceof Error ? error.message : String(error)}`,
+		)
+	}
+
+	return candidate
+}
+
 export async function _runChooseKeyCandidatePrompt(
 	message: string,
 	deps: ChooseKeyCandidateDeps = defaultDeps,
@@ -226,7 +259,9 @@ export async function _runChooseKeyCandidatePrompt(
 	for (;;) {
 		if (options.preferredKeyName) {
 			const selected = selectPreferred(options.preferredKeyName, result)
-			if (selected) return selected
+			if (selected) {
+				return finalizeCandidateSelection(selected, deps, interactive)
+			}
 			result = await deps.runWithGroupedSpinner(
 				"1Password",
 				"Loading SSH keys...",
@@ -243,7 +278,9 @@ export async function _runChooseKeyCandidatePrompt(
 		}
 
 		if (!interactive) {
-			if (result.keys.length === 1) return result.keys[0]
+			if (result.keys.length === 1) {
+				return finalizeCandidateSelection(result.keys[0], deps, interactive)
+			}
 			if (result.keys.length > 1) {
 				throw new Error(
 					`Multiple supported SSH keys found: ${result.keys.map((key) => key.selector).join(", ")}\n\nPass ${options.nonInteractiveHint ?? "--private-key <name>"} to choose which key to use.`,
@@ -338,7 +375,9 @@ export async function _runChooseKeyCandidatePrompt(
 		}
 
 		const candidate = result.keys.find((key) => key.selector === selected)
-		if (candidate) return candidate
+		if (candidate) {
+			return finalizeCandidateSelection(candidate, deps, interactive)
+		}
 	}
 }
 

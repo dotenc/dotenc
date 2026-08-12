@@ -375,7 +375,8 @@ async function loadPrivateKeyFromLocator(
 	locator: OnePasswordLocator,
 	name: string,
 	runCommand: RunOpCommand,
-): Promise<PrivateKeyEntry> {
+	preserveSerializedKey = false,
+): Promise<{ entry: PrivateKeyEntry; serializedKey?: Buffer }> {
 	let output: Buffer
 	try {
 		output = await runCommand(
@@ -390,31 +391,37 @@ async function loadPrivateKeyFromLocator(
 		)
 	}
 
-	const privateKey = parsePrivateKey(output)
-	if (!privateKey) {
-		throw new OnePasswordProviderError(
-			`1Password returned an invalid private key for ${name}.`,
-			"invalid-private-key",
-		)
-	}
+	const serializedKey = preserveSerializedKey ? Buffer.from(output) : undefined
+	try {
+		const privateKey = parsePrivateKey(output)
+		if (!privateKey) {
+			throw new OnePasswordProviderError(
+				`1Password returned an invalid private key for ${name}.`,
+				"invalid-private-key",
+			)
+		}
 
-	const entry = privateKeyEntry(name, privateKey)
-	if (!entry) {
-		throw new OnePasswordProviderError(
-			`1Password returned an unsupported private key for ${name}.`,
-			"invalid-private-key",
-		)
-	}
+		const entry = privateKeyEntry(name, privateKey)
+		if (!entry) {
+			throw new OnePasswordProviderError(
+				`1Password returned an unsupported private key for ${name}.`,
+				"invalid-private-key",
+			)
+		}
 
-	if (entry.fingerprint !== fingerprint) {
-		entry.rawPublicKey?.fill(0)
-		throw new OnePasswordProviderError(
-			`The private key returned by 1Password no longer matches ${name}.`,
-			"fingerprint-mismatch",
-		)
-	}
+		if (entry.fingerprint !== fingerprint) {
+			entry.rawPublicKey?.fill(0)
+			throw new OnePasswordProviderError(
+				`The private key returned by 1Password no longer matches ${name}.`,
+				"fingerprint-mismatch",
+			)
+		}
 
-	return entry
+		return { entry, serializedKey }
+	} catch (error) {
+		serializedKey?.fill(0)
+		throw error
+	}
 }
 
 function createCandidate(
@@ -459,7 +466,7 @@ function createCandidate(
 		fingerprint,
 		algorithm,
 		loadPrivateKey: async () => {
-			const entry = await loadPrivateKeyFromLocator(
+			const { entry } = await loadPrivateKeyFromLocator(
 				fingerprint,
 				locator,
 				`${label} / ${name}`,
@@ -467,6 +474,28 @@ function createCandidate(
 			)
 			await rememberLocator?.(fingerprint, locator)
 			return entry
+		},
+		exportPrivateKey: async () => {
+			const { serializedKey } = await loadPrivateKeyFromLocator(
+				fingerprint,
+				locator,
+				`${label} / ${name}`,
+				runCommand,
+				true,
+			)
+			if (!serializedKey) {
+				throw new OnePasswordProviderError(
+					`1Password returned an invalid private key for ${name}.`,
+					"invalid-private-key",
+				)
+			}
+			try {
+				await rememberLocator?.(fingerprint, locator)
+				return serializedKey
+			} catch (error) {
+				serializedKey.fill(0)
+				throw error
+			}
 		},
 	}
 }
@@ -504,12 +533,14 @@ export async function loadCachedOnePasswordPrivateKey(
 
 	for (const { fingerprint, locator } of cached) {
 		try {
-			return await loadPrivateKeyFromLocator(
-				fingerprint,
-				locator,
-				"cached SSH key",
-				deps.runOpCommand,
-			)
+			return (
+				await loadPrivateKeyFromLocator(
+					fingerprint,
+					locator,
+					"cached SSH key",
+					deps.runOpCommand,
+				)
+			).entry
 		} catch {
 			await deps.removeLocator(fingerprint)
 		}

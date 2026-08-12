@@ -25,9 +25,10 @@ requiring project configuration or a 1Password shell plugin.
 - 1Password may present its normal system authorization dialog. Explicit user
   authorization is part of the intended flow, not an error or configuration
   step.
-- Private keys retrieved from 1Password must remain in the dotenc process. They
-  must never be written to disk, forwarded to the wrapped command, or included
-  in logs or diagnostics.
+- Private keys retrieved from 1Password remain process-only by default. They
+  must never be written to disk unless the user explicitly confirms the local
+  `~/.ssh` copy option, and must never be forwarded to the wrapped command or
+  included in logs or diagnostics.
 
 The integration should use the installed `op` CLI directly. A shell plugin is
 not the foundation for this feature because shell plugins require per-tool
@@ -47,6 +48,8 @@ dotenc to discover and fingerprint-match all available SSH Key items.
   operation.
 - Skip account and item discovery when a verified machine-local locator is
   already available.
+- Offer an explicit, secure-by-default choice between locator-only operation
+  and an unencrypted local `~/.ssh` copy that avoids future provider prompts.
 - Fail closed when the retrieved key does not match its discovered fingerprint
   or the environment recipient.
 
@@ -275,12 +278,19 @@ The initialization and interactive key-add flows need only public key material:
    replace the temporary loading group with stable account categories.
 4. When a 1Password candidate is selected, use the already retrieved and
    validated public key and cache its fingerprint-to-locator mapping locally.
-5. Export the public key in dotenc's existing SPKI PEM format.
-6. Continue through the existing `key add` and environment creation paths.
+5. In an interactive terminal, explain the security trade-off and default to
+   keeping the private key in 1Password.
+6. Only after explicit confirmation, retrieve and fingerprint-verify the
+   private key, then write the returned unencrypted OpenSSH copy under a generated,
+   non-conflicting `~/.ssh/id_<algorithm>_1password_<fingerprint>` path with
+   mode `0600`.
+7. Export the public key in dotenc's existing SPKI PEM format.
+8. Continue through the existing `key add` and environment creation paths.
 
-These flows must not call `op read` for the private key. Selecting a 1Password
-key during initialization should not export private material merely to derive
-information that 1Password already exposes publicly.
+These flows must not call `op read` merely to derive information already
+available in public metadata. They may retrieve the private field only after
+the user explicitly confirms the local-copy option. Non-interactive selection
+keeps the locator-only behavior.
 
 The repository key name remains owned by dotenc's existing prompts and
 arguments. It does not need to equal the 1Password item title.
@@ -359,8 +369,11 @@ identity remains selectable without retrieving private material early.
 
 - Never pass a private key in command arguments.
 - Capture the selected `op read` output through a pipe.
-- Never write it to a file, environment variable, persistent cache, debug log,
+- Never write it to an environment variable, persistent cache, debug log,
   exception, or telemetry event.
+- Never write it to a file unless an interactive user explicitly confirms the
+  local-copy option. That copy must use a generated fingerprint-backed filename,
+  exclusive creation, a `0700` SSH directory, and a `0600` private-key file.
 - Never forward it to the command launched by `dotenc run`.
 - Within one decryption batch, reuse discovery and a selected private key only
   in memory. Release the batch references before launching a wrapped command.
@@ -418,6 +431,7 @@ cannot overwrite unrelated mappings.
 | No supported SSH Key items | Omit that account's empty key category; when no local key exists, preserve the no-private-keys guidance. |
 | Duplicate account or item labels | Keep entries distinct through complete ID-backed values and disambiguating hints. |
 | Cached item moved, removed, or mismatched | Evict the locator; normal decryptions rediscover once, while `textconv` returns encrypted content without scanning. |
+| Confirmed local-copy write fails | Remove any partially created file, preserve existing files, warn safely, and continue with locator-only behavior. |
 | Public/private fingerprint mismatch | Reject the key and fail closed before data-key decryption. |
 | No candidate matches an environment | Return access denied only when at least one supported local or provider key was found; otherwise preserve the no-private-keys guidance. |
 | `op` returns malformed or excessive output | Treat the provider as failed and do not parse partial key material. |
@@ -468,9 +482,11 @@ cannot overwrite unrelated mappings.
   complete `account_uuid`.
 - Duplicate account labels, vault names, and item titles cannot select the
   wrong item.
-- `dotenc init` and interactive `dotenc key add` never retrieve a private
-  1Password field.
+- `dotenc init` and interactive `dotenc key add` retrieve a private 1Password
+  field only after explicit confirmation of the local-copy option.
 - Selecting a 1Password key stores only its public key in the dotenc project.
+- Declining the local-copy prompt stores no private key outside 1Password;
+  confirming it writes one fingerprint-verified unencrypted copy to `~/.ssh`.
 - Selecting or successfully using a 1Password key stores only its fingerprint
   and opaque account, vault, and item IDs in the machine-local locator cache.
 - A local decryption flow prompts through 1Password when no environment-provided

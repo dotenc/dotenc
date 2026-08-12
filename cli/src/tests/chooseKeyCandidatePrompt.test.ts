@@ -87,6 +87,10 @@ function deps(
 				task(),
 		) as never,
 		createEd25519SshKey: mock(async () => "/tmp/key") as never,
+		createOnePasswordSshKeyCopy: mock(async () => ({
+			name: "id_ed25519_1password_example",
+			path: "/home/tester/.ssh/id_ed25519_1password_example",
+		})) as never,
 		createPasswordlessSshKeyCopy: mock(async () => ({
 			name: "copy",
 			path: "/tmp/copy",
@@ -162,6 +166,54 @@ describe("chooseKeyCandidatePrompt", () => {
 				(option) => option.label === "Use a key from 1Password (experimental)",
 			),
 		).toBe(false)
+	})
+
+	test("keeps locator-only storage as the default for a selected 1Password key", async () => {
+		const provider = candidate(ACCOUNT_A, ITEM_A, "Account A")
+		const testDeps = deps(result([provider]))
+
+		await expect(
+			_runChooseKeyCandidatePrompt("Choose", testDeps),
+		).resolves.toBe(provider)
+		expect(testDeps.promptConfirm).toHaveBeenCalledWith(
+			"Save an unencrypted local copy in ~/.ssh for faster access?",
+			{ initial: false },
+		)
+		expect(testDeps.createOnePasswordSshKeyCopy).not.toHaveBeenCalled()
+	})
+
+	test("creates an explicitly confirmed local copy of a selected 1Password key", async () => {
+		const provider = candidate(ACCOUNT_A, ITEM_A, "Account A")
+		const testDeps = {
+			...deps(result([provider])),
+			promptConfirm: mock(async () => true) as never,
+		}
+
+		await expect(
+			_runChooseKeyCandidatePrompt("Choose", testDeps),
+		).resolves.toBe(provider)
+		expect(testDeps.createOnePasswordSshKeyCopy).toHaveBeenCalledWith(provider)
+		expect(testDeps.logInfo).toHaveBeenCalledWith(
+			expect.stringContaining("without 1Password authorization"),
+		)
+	})
+
+	test("continues with the locator when local 1Password copy creation fails", async () => {
+		const provider = candidate(ACCOUNT_A, ITEM_A, "Account A")
+		const testDeps = {
+			...deps(result([provider])),
+			promptConfirm: mock(async () => true) as never,
+			createOnePasswordSshKeyCopy: mock(async () => {
+				throw new Error("copy failed")
+			}) as never,
+		}
+
+		await expect(
+			_runChooseKeyCandidatePrompt("Choose", testDeps),
+		).resolves.toBe(provider)
+		expect(testDeps.logWarn).toHaveBeenCalledWith(
+			expect.stringContaining("Continuing with the locator-only option"),
+		)
 	})
 
 	test("reports opt-in provider failures and keeps local keys usable", async () => {
@@ -309,6 +361,8 @@ describe("chooseKeyCandidatePrompt", () => {
 			[{ includeOnePassword: false }],
 			[{ includeOnePassword: true }],
 		])
+		expect(testDeps.promptConfirm).not.toHaveBeenCalled()
+		expect(testDeps.createOnePasswordSshKeyCopy).not.toHaveBeenCalled()
 	})
 
 	test("keeps environment passphrase keys out of the local-copy choices", async () => {
@@ -422,6 +476,8 @@ describe("chooseKeyCandidatePrompt", () => {
 			[{ includeOnePassword: false }],
 			[{ includeOnePassword: true }],
 		])
+		expect(testDeps.promptConfirm).not.toHaveBeenCalled()
+		expect(testDeps.createOnePasswordSshKeyCopy).not.toHaveBeenCalled()
 	})
 
 	test("reports non-interactive ambiguity with qualified selectors", async () => {

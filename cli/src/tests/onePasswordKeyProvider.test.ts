@@ -130,6 +130,10 @@ describe("discoverOnePasswordKeyCandidates", () => {
 				vaultId: VAULT_B,
 				itemId: ITEM_B,
 			})
+			const exported = await selected.exportPrivateKey?.()
+			expect(exported?.toString("utf8")).toContain("BEGIN OPENSSH PRIVATE KEY")
+			expect(calls.filter((args) => args[0] === "read")).toHaveLength(2)
+			exported?.fill(0)
 		} finally {
 			fs.rmSync(keyA.directory, { recursive: true, force: true })
 			fs.rmSync(keyB.directory, { recursive: true, force: true })

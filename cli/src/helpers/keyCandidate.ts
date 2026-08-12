@@ -18,4 +18,5 @@ export type KeyCandidate = {
 	fingerprint: string
 	algorithm: "rsa" | "ed25519"
 	loadPrivateKey: () => Promise<PrivateKeyEntry>
+	exportPrivateKey?: () => Promise<Buffer>
 }

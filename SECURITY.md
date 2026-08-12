@@ -95,31 +95,45 @@ This means:
 
 ### Private Key Isolation
 
-**Filesystem SSH private keys stay in `~/.ssh/`** — dotenc reads them in place
-and never copies, moves, or stores them elsewhere. Public-only selection flows
-derive and store only `.dotenc/<name>.pub`.
+**Filesystem SSH private keys stay in `~/.ssh/`** — dotenc reads existing keys
+in place and never moves them elsewhere. Public-only selection flows derive and
+store only `.dotenc/<name>.pub`. Optional passwordless and 1Password local-copy
+flows create a new `~/.ssh` file only after explicit user confirmation.
 
-**1Password SSH private keys are optional and memory-only** — when the installed `op`
+**1Password SSH private keys are memory-only by default** — when the installed `op`
 CLI exposes configured accounts, dotenc can discover SSH Key items through
 their public metadata. Interactive `dotenc init` and `dotenc key add` defer that
 discovery until the user explicitly chooses the 1Password action; local key
 selection in those pickers does not invoke `op`. Accounts are addressed by
 complete `account_uuid`; vaults and items are addressed by stable IDs. Those
-commands never request a private field. Selecting a 1Password key caches only
+commands do not request a private field during discovery or ordinary selection.
+Selecting a 1Password key caches only
 its canonical fingerprint and opaque account, vault, and item IDs in the
 user's machine-local locator cache. If decryption has no matching
 environment or filesystem key, dotenc retrieves exactly one
 fingerprint-matched private key with `op read --account ...` through a pipe. It
 first checks the locator cache, avoiding account and item discovery after a
 successful selection or use. It validates the retrieved key's fingerprint
-before use. Private key material is never written to disk, stored in a
-persistent cache, logged, or added to a child process environment or argument.
+before use. Private key material is never stored in the locator cache, logged,
+or added to a child process environment or argument.
 A decryption batch may reuse the in-memory key for
 environments that select the same qualified item. The command that creates the
 shared decryption context owns its cleanup and releases those batch references
 immediately after the decryption handoff; they are never forwarded to a wrapped
 command. Authorization and session scope remain controlled by the 1Password CLI
 and desktop app.
+
+After an interactive 1Password selection, dotenc explains the trade-off and
+defaults to keeping the private key provider-managed. If the user explicitly
+confirms the local-copy option, dotenc retrieves and independently
+fingerprint-verifies the returned OpenSSH key, and creates a
+non-conflicting `~/.ssh/id_<algorithm>_1password_<fingerprint>` file. The SSH
+directory is mode `0700`; the key file is created exclusively with mode `0600`.
+Item titles never become paths, existing files are never overwritten, and a
+failed write removes only a file created by that attempt before continuing with
+locator-only behavior. This opt-in removes future 1Password authorization and
+latency for that identity, but expands private-key exposure to persistent local
+storage.
 
 The built-in SSH private-key field is addressed by its stable `private_key` ID,
 not by a language-dependent display label.
@@ -198,6 +212,7 @@ await fs.writeFile(tempFilePath, Buffer.alloc(stat.size, 0))
 | Resource | Mode | Notes |
 |----------|------|-------|
 | SSH key directory (`~/.ssh/`) | `0o700` | Created if absent |
+| Confirmed local SSH private-key copies | `0o600` | Created exclusively; never overwrite an existing path |
 | Temporary plaintext files | `0o600` | Zeroed before deletion |
 | `.env.*.enc` files | Default umask | Encrypted; safe to be world-readable |
 | `.dotenc/*.pub` files | Default umask | Public keys; intentionally public |

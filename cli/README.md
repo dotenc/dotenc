@@ -618,6 +618,14 @@ vault, and item IDs—never key material, names, account URLs, or project paths.
 Later commands can go directly to one fingerprint-verified `op read` instead of
 rescanning every account and SSH item. Stale or mismatched entries are evicted.
 
+After an interactive 1Password selection, dotenc also offers to save an
+unencrypted private-key copy in `~/.ssh`. The default remains locator-only. If
+you explicitly opt in, dotenc fingerprint-verifies the retrieved key, chooses a
+non-conflicting `id_<algorithm>_1password_<fingerprint>` filename, and writes it
+with mode `0600`. This avoids future 1Password authorization and provider
+latency, but expands private-key exposure from 1Password-managed memory access
+to a persistent local file.
+
 Local keys keep priority during decryption. If none matches an environment,
 local commands such as `run`, `dev`, environment edit/decrypt, and access
 rotation can ask `op` for one fingerprint-matched private key. 1Password may
