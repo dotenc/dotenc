@@ -21643,7 +21643,7 @@ function privateKeyReference(accountId, item) {
   if (!ONE_PASSWORD_ID_PATTERN.test(accountId) || !ONE_PASSWORD_ID_PATTERN.test(item.vault.id) || !ONE_PASSWORD_ID_PATTERN.test(item.id)) {
     throw new OnePasswordProviderError("1Password returned an invalid object identifier.", "invalid-response");
   }
-  return `op://${item.vault.id}/${item.id}/private key?ssh-format=openssh`;
+  return `op://${item.vault.id}/${item.id}/private_key?ssh-format=openssh`;
 }
 function createCandidate(account, item, publicKey, runCommand) {
   const algorithm = detectAlgorithm2(publicKey);
