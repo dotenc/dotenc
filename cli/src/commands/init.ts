@@ -57,7 +57,10 @@ export const initCommand = async (options: Options) => {
 
 	const username =
 		options.name ||
-		(await inputNamePrompt("What's your name?", os.userInfo().username))
+		(await inputNamePrompt(
+			"Choose a username (defaults to your system username)",
+			os.userInfo().username,
+		))
 
 	if (!username) {
 		console.error(`${chalk.red("Error:")} no name provided.`)

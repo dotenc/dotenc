@@ -112,6 +112,20 @@ beforeEach(() => {
 })
 
 describe("initCommand", () => {
+	test("explains and supplies the system username default", async () => {
+		const logSpy = spyOn(console, "log").mockImplementation(() => {})
+
+		await initCommand({})
+
+		expect(inputNamePromptMock).toHaveBeenCalledWith(
+			"Choose a username (defaults to your system username)",
+			"tester",
+		)
+		expect(userInfoMock).toHaveBeenCalledTimes(1)
+
+		logSpy.mockRestore()
+	})
+
 	test("exits when no name is provided", async () => {
 		inputNamePromptMock.mockImplementation(async () => "")
 
