@@ -123,10 +123,11 @@ item title. One acceptable internal representation is:
 ```
 
 The key fingerprint remains the cryptographic identity. The locator only tells
-dotenc where to retrieve the current item. A 1Password item ID may change when
-the item moves to another vault, so a failed or mismatched cached lookup must be
-evicted and rebuilt through discovery rather than treated as a permanent
-cryptographic identifier.
+dotenc where to retrieve the current item. Invalid key data or a fingerprint
+mismatch evicts the locator so discovery can rebuild it. A moved or removed item
+can produce the same safe command-failure class as an authorization decline, so
+ambiguous CLI, timeout, and authorization failures preserve the locator for a
+later process rather than treating it as a permanent cryptographic identifier.
 
 1Password documents IDs as the stable and efficient way to address objects and
 supports an account ID with `--account`:
@@ -267,6 +268,10 @@ Existing filesystem names remain valid for backwards compatibility. A
 selector. An unqualified 1Password title must not be accepted when it could
 resolve to more than one item.
 
+A complete selector loads exactly that item's ID-addressed `public_key` field.
+It does not enumerate accounts, vaults, or unrelated SSH items. Bare titles and
+incomplete selectors retain discovery-based resolution.
+
 Error output may show a copyable qualified selector, but it should avoid
 printing unrelated account or item identifiers.
 
@@ -308,8 +313,9 @@ Commands that need to decrypt an environment should resolve keys in this order:
    machine-local locator cache for those fingerprints.
 5. When a cached locator exists, retrieve that item directly and require its
    recalculated fingerprint to match the environment recipient.
-6. If the cache misses or the locator is evicted after a failed or mismatched
-   read, discover 1Password public candidates once.
+6. If the cache misses or the locator is evicted after an invalid or mismatched
+   read, discover 1Password public candidates once. Preserve the locator after
+   transient CLI, timeout, or authorization failures.
 7. Find a 1Password candidate whose canonical fingerprint matches an
    authorized recipient.
 8. Retrieve only that item's private key.
@@ -418,7 +424,8 @@ provider structure and should be handled as private local metadata:
   replacement, validate a bounded versioned schema, and treat corruption as a
   cache miss;
 - treat the cache as untrusted metadata: recalculate the retrieved private
-  key's fingerprint before use and evict failed or mismatched locators.
+  key's fingerprint before use, evict invalid or mismatched locators, and
+  preserve locators across transient CLI, timeout, or authorization failures.
 
 On Unix-like systems the default root is `~/.cache/dotenc`, overridden by an
 absolute `XDG_CACHE_HOME`. Windows uses `%LOCALAPPDATA%\dotenc\Cache`. Each
@@ -433,10 +440,12 @@ cannot overwrite unrelated mappings.
 | No configured accounts | Preserve current behavior; mention 1Password only when explaining why no key was available. |
 | Account authorization is required | Allow the native 1Password dialog to appear. |
 | Authorization is declined | Report the affected account as unavailable; do not call it empty. |
+| A cached read has a transient CLI, timeout, or authorization failure | Preserve the locator and fail closed for the current operation. |
 | One of several accounts fails | Keep successful categories available and explicitly report the unavailable account. |
 | No supported SSH Key items | Omit that account's empty key category; when no local key exists, preserve the no-private-keys guidance. |
 | Duplicate account or item labels | Keep entries distinct through complete ID-backed values and disambiguating hints. |
-| Cached item moved, removed, or mismatched | Evict the locator; normal decryptions rediscover once, while `textconv` returns encrypted content without scanning. |
+| Cached private-key data is invalid or mismatched | Evict the locator; normal decryptions rediscover once, while `textconv` returns encrypted content without scanning. |
+| Cached item is moved or removed, or the CLI/authorization is unavailable | Preserve the ambiguous locator failure; normal decryptions may discover for the current operation, while `textconv` returns encrypted content without scanning. |
 | Confirmed local-copy write fails | Remove any partially created file, preserve existing files, warn safely, and continue with locator-only behavior. |
 | Public/private fingerprint mismatch | Reject the key and fail closed before data-key decryption. |
 | No candidate matches an environment | Return access denied only when at least one supported local or provider key was found; otherwise preserve the no-private-keys guidance. |

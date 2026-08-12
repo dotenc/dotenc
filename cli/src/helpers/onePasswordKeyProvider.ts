@@ -9,6 +9,7 @@ import type {
 import type { KeyCandidate } from "./keyCandidate"
 import {
 	type OnePasswordLocator,
+	parseOnePasswordSelector,
 	readOnePasswordLocator,
 	removeOnePasswordLocator,
 	writeOnePasswordLocator,
@@ -373,6 +374,7 @@ async function loadPrivateKeyFromLocator(
 			{ maxOutputBytes: OP_PRIVATE_KEY_MAX_BYTES },
 		)
 	} catch (error) {
+		if (error instanceof OnePasswordProviderError) throw error
 		throw new OnePasswordProviderError(
 			`Unable to retrieve ${name} from 1Password.`,
 			"command-failed",
@@ -489,6 +491,42 @@ function createCandidate(
 	}
 }
 
+type LoadOnePasswordKeyCandidateDeps = {
+	runOpCommand: RunOpCommand
+	rememberLocator?: typeof writeOnePasswordLocator
+}
+
+const defaultQualifiedCandidateDeps: LoadOnePasswordKeyCandidateDeps = {
+	runOpCommand,
+	rememberLocator: writeOnePasswordLocator,
+}
+
+export async function loadOnePasswordKeyCandidateBySelector(
+	selector: string,
+	deps: LoadOnePasswordKeyCandidateDeps = defaultQualifiedCandidateDeps,
+): Promise<KeyCandidate> {
+	const locator = parseOnePasswordSelector(selector)
+	if (!locator) {
+		throw new OnePasswordProviderError(
+			"The 1Password SSH key selector is invalid.",
+			"invalid-response",
+		)
+	}
+
+	const publicKey = await loadPublicKeyFromLocator(locator, deps.runOpCommand)
+	return createCandidate(
+		{ account_uuid: locator.accountId },
+		{
+			id: locator.itemId,
+			title: `SSH key ${shortId(locator.itemId)}`,
+			vault: { id: locator.vaultId },
+		},
+		publicKey,
+		deps.runOpCommand,
+		deps.rememberLocator,
+	)
+}
+
 type LoadCachedOnePasswordPrivateKeyDeps = {
 	runOpCommand: RunOpCommand
 	readLocator: typeof readOnePasswordLocator
@@ -530,8 +568,14 @@ export async function loadCachedOnePasswordPrivateKey(
 					deps.runOpCommand,
 				)
 			).entry
-		} catch {
-			await deps.removeLocator(fingerprint)
+		} catch (error) {
+			if (
+				error instanceof OnePasswordProviderError &&
+				(error.code === "invalid-private-key" ||
+					error.code === "fingerprint-mismatch")
+			) {
+				await deps.removeLocator(fingerprint)
+			}
 		}
 	}
 

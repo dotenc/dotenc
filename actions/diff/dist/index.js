@@ -21759,6 +21759,8 @@ async function loadPrivateKeyFromLocator(fingerprint, locator, name, runCommand,
   try {
     output = await runCommand(["read", "--account", locator.accountId, privateKeyReference(locator)], { maxOutputBytes: OP_PRIVATE_KEY_MAX_BYTES });
   } catch (error51) {
+    if (error51 instanceof OnePasswordProviderError)
+      throw error51;
     throw new OnePasswordProviderError(`Unable to retrieve ${name} from 1Password.`, "command-failed", { cause: error51 });
   }
   const serializedKey = preserveSerializedKey ? Buffer.from(output) : undefined;
@@ -21847,8 +21849,10 @@ async function loadCachedOnePasswordPrivateKey(fingerprints, deps = defaultCache
   for (const { fingerprint, locator } of cached2) {
     try {
       return (await loadPrivateKeyFromLocator(fingerprint, locator, "cached SSH key", deps.runOpCommand)).entry;
-    } catch {
-      await deps.removeLocator(fingerprint);
+    } catch (error51) {
+      if (error51 instanceof OnePasswordProviderError && (error51.code === "invalid-private-key" || error51.code === "fingerprint-mismatch")) {
+        await deps.removeLocator(fingerprint);
+      }
     }
   }
   return;

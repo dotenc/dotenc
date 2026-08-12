@@ -10,7 +10,11 @@ import {
 	getKeyCandidates,
 } from "../helpers/getKeyCandidates"
 import type { KeyCandidate } from "../helpers/keyCandidate"
-import { rememberOnePasswordCandidate } from "../helpers/onePasswordLocatorCache"
+import { loadOnePasswordKeyCandidateBySelector } from "../helpers/onePasswordKeyProvider"
+import {
+	parseOnePasswordSelector,
+	rememberOnePasswordCandidate,
+} from "../helpers/onePasswordLocatorCache"
 import { logger } from "../ui/logger"
 import {
 	type GroupedSelectOption,
@@ -35,6 +39,7 @@ type ChooseKeyCandidateOptions = {
 
 type ChooseKeyCandidateDeps = {
 	getKeyCandidates: typeof getKeyCandidates
+	loadOnePasswordKeyCandidateBySelector: typeof loadOnePasswordKeyCandidateBySelector
 	promptConfirm: typeof promptConfirm
 	promptGroupedSelect: typeof promptGroupedSelect
 	runWithGroupedSpinner: typeof runWithGroupedSpinner
@@ -49,6 +54,7 @@ type ChooseKeyCandidateDeps = {
 
 const defaultDeps: ChooseKeyCandidateDeps = {
 	getKeyCandidates,
+	loadOnePasswordKeyCandidateBySelector,
 	promptConfirm,
 	promptGroupedSelect,
 	runWithGroupedSpinner,
@@ -245,9 +251,17 @@ export async function _runChooseKeyCandidatePrompt(
 ): Promise<KeyCandidate> {
 	let autoSelectName: string | undefined
 	const interactive = deps.isInteractive()
+	const preferredKeyName = options.preferredKeyName
+	if (preferredKeyName && parseOnePasswordSelector(preferredKeyName)) {
+		const selected = await deps.runWithGroupedSpinner(
+			"1Password",
+			"Loading SSH key...",
+			() => deps.loadOnePasswordKeyCandidateBySelector(preferredKeyName),
+		)
+		return finalizeCandidateSelection(selected, deps, interactive)
+	}
 	let result = await deps.getKeyCandidates({
-		includeOnePassword:
-			options.preferredKeyName?.startsWith("1password:") === true,
+		includeOnePassword: false,
 	})
 	const loggedWarnings = new Set<string>()
 	const logWarnOnce = (warning: string) => {

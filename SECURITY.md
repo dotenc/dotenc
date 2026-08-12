@@ -153,8 +153,9 @@ root), with `0700` directories and `0600` files. Entries use a bounded,
 versioned schema and atomic replacement. No private or public key, item or vault
 name, account URL, project path, negative result, or authorization decision is
 cached. The cache is treated as untrusted and disposable: every retrieved
-private key is fingerprint-verified, and stale, failed, or mismatched locators
-are evicted.
+private key is fingerprint-verified, and invalid or mismatched locators are
+evicted. Transient CLI, timeout, and authorization failures preserve the
+locator so a later process can retry without a full provider scan.
 
 **In-memory zeroing:** After the private key is used to decrypt the data key, the raw key bytes are explicitly overwritten with zeros before being released:
 

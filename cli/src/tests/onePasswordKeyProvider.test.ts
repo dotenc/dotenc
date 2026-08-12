@@ -7,6 +7,7 @@ import { getKeyFingerprint } from "../helpers/getKeyFingerprint"
 import {
 	discoverOnePasswordKeyCandidates,
 	loadCachedOnePasswordPrivateKey,
+	loadOnePasswordKeyCandidateBySelector,
 	OnePasswordProviderError,
 	type RunOpCommand,
 	runOpCommand,
@@ -402,6 +403,62 @@ describe("loadCachedOnePasswordPrivateKey", () => {
 		} finally {
 			fs.rmSync(expected.directory, { recursive: true, force: true })
 			fs.rmSync(stale.directory, { recursive: true, force: true })
+		}
+	})
+
+	test.each([
+		"not-installed",
+		"timeout",
+		"command-failed",
+	] as const)("keeps a locator after a transient %s failure", async (code) => {
+		const removeLocator = mock(async () => {})
+		const result = await loadCachedOnePasswordPrivateKey(["fingerprint"], {
+			runOpCommand: async () => {
+				throw new OnePasswordProviderError("provider unavailable", code)
+			},
+			readLocator: async () => ({
+				accountId: ACCOUNT_A,
+				vaultId: VAULT_A,
+				itemId: ITEM_A,
+			}),
+			removeLocator,
+		})
+
+		expect(result).toBeUndefined()
+		expect(removeLocator).not.toHaveBeenCalled()
+	})
+})
+
+describe("loadOnePasswordKeyCandidateBySelector", () => {
+	test("reads only the selected public key by its complete locator", async () => {
+		const key = generateKey()
+		const calls: string[][] = []
+		const selector = `1password:${ACCOUNT_A}:${VAULT_A}:${ITEM_A}`
+
+		try {
+			const candidate = await loadOnePasswordKeyCandidateBySelector(selector, {
+				runOpCommand: async (args) => {
+					calls.push(args)
+					return Buffer.from(key.publicKey)
+				},
+			})
+
+			expect(candidate.selector).toBe(selector)
+			expect(candidate.name).toBe("SSH key IIII...IIII")
+			expect(candidate.group).toEqual({
+				id: `1password:${ACCOUNT_A}`,
+				label: "1Password - 1Password account [AAAA...AAAA]",
+			})
+			expect(calls).toEqual([
+				[
+					"read",
+					"--account",
+					ACCOUNT_A,
+					`op://${VAULT_A}/${ITEM_A}/public_key`,
+				],
+			])
+		} finally {
+			fs.rmSync(key.directory, { recursive: true, force: true })
 		}
 	})
 })

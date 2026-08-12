@@ -80,6 +80,9 @@ function deps(
 ) {
 	return {
 		getKeyCandidates: mock(async () => value) as never,
+		loadOnePasswordKeyCandidateBySelector: mock(
+			async () => value.keys[0],
+		) as never,
 		promptConfirm: mock(async () => false) as never,
 		promptGroupedSelect: mock(async () => selected) as never,
 		runWithGroupedSpinner: mock(
@@ -313,13 +316,26 @@ describe("chooseKeyCandidatePrompt", () => {
 	})
 
 	test("accepts an exact qualified selector without prompting", async () => {
-		const first = candidate(ACCOUNT_A, ITEM_A, "Account A")
 		const second = candidate(ACCOUNT_B, ITEM_B, "Account B")
-		const testDeps = deps(result([first, second]))
+		const loadOnePasswordKeyCandidateBySelector = mock(async () => second)
+		const testDeps = {
+			...deps(result([], "not-requested")),
+			loadOnePasswordKeyCandidateBySelector:
+				loadOnePasswordKeyCandidateBySelector as never,
+		}
 		const selected = await _runChooseKeyCandidatePrompt("Choose", testDeps, {
 			preferredKeyName: second.selector,
 		})
 		expect(selected).toBe(second)
+		expect(loadOnePasswordKeyCandidateBySelector).toHaveBeenCalledWith(
+			second.selector,
+		)
+		expect(testDeps.getKeyCandidates).not.toHaveBeenCalled()
+		expect(testDeps.runWithGroupedSpinner).toHaveBeenCalledWith(
+			"1Password",
+			"Loading SSH key...",
+			expect.any(Function),
+		)
 		expect(testDeps.promptGroupedSelect).not.toHaveBeenCalled()
 	})
 
