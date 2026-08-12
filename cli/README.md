@@ -599,15 +599,15 @@ dotenc keeps key management minimal by design. Your SSH keys are your identity -
 > **Private keys** stay in `~/.ssh/` where they belong. They are never copied or moved.
 > **Public keys** are stored in your project's `.dotenc/` folder, derived from the corresponding private keys.
 
-### 1Password SSH keys
+### 1Password SSH keys (experimental)
 
 When the 1Password CLI 2.x (`op`) is installed and authenticated, dotenc can use
 SSH Key items without additional configuration. `dotenc init` and interactive
 `dotenc key add` show local keys immediately. Choose **Use a key from
-1Password** under **Actions** to load public key metadata; a temporary loading
-group is then replaced by account groups backed by stable account IDs, so
-accounts and duplicate item titles remain unambiguous. For scripts,
-`--private-key` and `--from-private-key` accept a qualified
+1Password (experimental)** under **Actions** to load public key metadata; a
+temporary loading group is then replaced by account groups backed by stable
+account IDs, so accounts and duplicate item titles remain unambiguous. For
+scripts, `--private-key` and `--from-private-key` accept a qualified
 `1password:<account-id>:<vault-id>:<item-id>` selector and load its provider
 metadata directly.
 

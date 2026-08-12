@@ -146,7 +146,7 @@ function promptOptions(
 			? [
 					{
 						group: "Actions",
-						label: "Use a key from 1Password",
+						label: "Use a key from 1Password (experimental)",
 						hint: "load available SSH keys",
 						value: ONE_PASSWORD_CHOICE,
 					},

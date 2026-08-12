@@ -117,7 +117,8 @@ describe("chooseKeyCandidatePrompt", () => {
 				)
 				if (providerOption) return providerOption.value
 				return options.options.find(
-					(option) => option.label === "Use a key from 1Password",
+					(option) =>
+						option.label === "Use a key from 1Password (experimental)",
 				)?.value
 			},
 		)
@@ -143,7 +144,7 @@ describe("chooseKeyCandidatePrompt", () => {
 		expect(initialOptions).toContainEqual(
 			expect.objectContaining({
 				group: "Actions",
-				label: "Use a key from 1Password",
+				label: "Use a key from 1Password (experimental)",
 			}),
 		)
 		expect(
@@ -158,7 +159,7 @@ describe("chooseKeyCandidatePrompt", () => {
 		)
 		expect(
 			loadedOptions.some(
-				(option) => option.label === "Use a key from 1Password",
+				(option) => option.label === "Use a key from 1Password (experimental)",
 			),
 		).toBe(false)
 	})
