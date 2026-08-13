@@ -187,13 +187,18 @@ so a later process can retry the direct lookup.
 
 ```typescript
 // cli/src/helpers/decryptDataKey.ts
+let rawSeed
 try {
+    rawSeed = extractEd25519PrivateSeed(privDer)
     return eciesDecrypt(rawSeed, encryptedDataKey)
 } finally {
-    rawSeed.fill(0)   // zero Ed25519 seed bytes
+    rawSeed?.fill(0)  // zero Ed25519 seed bytes when extraction succeeded
     privDer.fill(0)   // zero DER-encoded private key buffer
 }
 ```
+
+The exported PKCS#8 DER buffer is cleared even when structural seed extraction
+rejects the encoding.
 
 **Provider bootstrap keys:** CI and provider runners should store bootstrap
 private keys as `DOTENC_PRIVATE_KEY_BASE64`, a base64-encoded private key file.
@@ -257,6 +262,14 @@ not a physical-erasure guarantee.
 | Temporary plaintext files | `0o600` | Best-effort overwrite before deletion; no physical-erasure guarantee |
 | `.env.*.enc` files | Default umask | Encrypted; safe to be world-readable |
 | `.dotenc/*.pub` files | Default umask | Public keys; intentionally public |
+
+The operating system's resolved home directory is the trust anchor for home
+configuration. dotenc rejects a symlink or non-standard file at the managed
+`~/.dotenc` directory or `config.json` component. On POSIX, it also opens the
+directory and file with no-follow semantics and applies permissions through the
+opened handles, preventing ordinary final-component symlink substitution.
+Windows retains the same pre-open link/type validation, but Node does not expose
+portable `O_NOFOLLOW` semantics there.
 
 ---
 
@@ -492,9 +505,10 @@ This is a standard pattern used by many developer tools (Homebrew, Rust, Node.js
 - **Interactive AUR delegation** — the script delegates `dotenc-bin` only to an
   already installed `yay` or `paru` helper with a controlling terminal. It does
   not build an AUR recipe as root or silently confirm the transaction.
-- **Downloader redirect containment** — `curl` permits only HTTPS transfers,
-  including redirects. The `wget` fallback is used only for immutable direct
-  bootstrap objects and refuses redirects entirely.
+- **Downloader redirect containment** — the shared download boundary rejects
+  non-HTTPS source URLs before invoking either downloader. `curl` also permits
+  only HTTPS transfers, including redirects. The `wget` fallback is used only
+  for immutable direct bootstrap objects and refuses redirects entirely.
 
 The embedded hashes protect the first package-manager trust root if
 `packages.dotenc.org` alone is compromised. They cannot protect against a
@@ -509,11 +523,11 @@ curl -fsSL https://dotenc.org/install.sh -o install.sh
 sh install.sh
 ```
 
-`dotenc tools install-agent-skill` is a convenience installer. It pins the
-third-party runner to `skills@1.5.22`, but currently resolves the separately
-maintained `dotenc/skills` repository by its mutable repository name. Review
-that source or install a known revision manually when immutable supply-chain
-resolution is required.
+`dotenc tools install-agent-skill` is a convenience installer. It invokes the
+third-party runner through Bun at the exact `skills@1.5.22` package version and
+installs the separately maintained `dotenc/skills` source from a full-commit
+GitHub archive URL. Updating either pinned input requires an explicit dotenc
+release change.
 
 Alternatively, follow the [installation guide](docs/INSTALLATION.md) to install
 a native release package, configure APT or RPM manually, or use APK, AUR,

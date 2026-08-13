@@ -7,12 +7,18 @@ import { resolveExecutable } from "../helpers/resolveExecutable"
 describe("resolveExecutable", () => {
 	test("resolves a bare command against the original PATH", () => {
 		const dir = mkdtempSync(path.join(os.tmpdir(), "dotenc-resolve-command-"))
-		const command = path.join(dir, "safe-command")
+		const extension = process.platform === "win32" ? ".CMD" : ""
+		const command = path.join(dir, `safe-command${extension}`)
 		try {
-			writeFileSync(command, "#!/bin/sh\nexit 0\n")
-			chmodSync(command, 0o700)
+			writeFileSync(
+				command,
+				process.platform === "win32" ? "@exit /b 0\r\n" : "#!/bin/sh\nexit 0\n",
+			)
+			if (process.platform !== "win32") chmodSync(command, 0o700)
 
-			expect(resolveExecutable("safe-command", { PATH: dir })).toBe(command)
+			expect(
+				resolveExecutable("safe-command", { PATH: dir, PATHEXT: ".CMD" }),
+			).toBe(command)
 		} finally {
 			rmSync(dir, { recursive: true, force: true })
 		}

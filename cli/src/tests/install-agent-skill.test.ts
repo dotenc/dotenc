@@ -14,9 +14,12 @@ mock.module("../ui/prompts", () => ({
 	promptSelect: promptSelectMock,
 }))
 
-const { installAgentSkillCommand, _runNpx } = await import(
+const { installAgentSkillCommand, _runBunx } = await import(
 	"../commands/tools/install-agent-skill"
 )
+
+const IMMUTABLE_SKILL_SOURCE =
+	"https://github.com/dotenc/skills/archive/dc3245191988923fced07c63b31df8184a1d1853.tar.gz"
 
 const makeSpawn = (exitCode: number) => {
 	const child = new EventEmitter()
@@ -34,15 +37,15 @@ beforeEach(() => {
 })
 
 describe("installAgentSkillCommand", () => {
-	test("runs npx skills add for local installation", async () => {
+	test("runs bunx skills add with an immutable source for local installation", async () => {
 		spawnMock.mockImplementation(() => makeSpawn(0))
 
 		const logSpy = spyOn(console, "log").mockImplementation(() => {})
 		await installAgentSkillCommand({})
 
 		expect(spawnMock).toHaveBeenCalledWith(
-			"npx",
-			["skills@1.5.22", "add", "dotenc/skills", "--skill", "dotenc"],
+			"bunx",
+			["skills@1.5.22", "add", IMMUTABLE_SKILL_SOURCE, "--skill", "dotenc"],
 			expect.any(Object),
 		)
 		expect(
@@ -59,8 +62,15 @@ describe("installAgentSkillCommand", () => {
 		await installAgentSkillCommand({})
 
 		expect(spawnMock).toHaveBeenCalledWith(
-			"npx",
-			["skills@1.5.22", "add", "dotenc/skills", "--skill", "dotenc", "-g"],
+			"bunx",
+			[
+				"skills@1.5.22",
+				"add",
+				IMMUTABLE_SKILL_SOURCE,
+				"--skill",
+				"dotenc",
+				"-g",
+			],
 			expect.any(Object),
 		)
 		logSpy.mockRestore()
@@ -73,8 +83,15 @@ describe("installAgentSkillCommand", () => {
 		await installAgentSkillCommand({ force: true })
 
 		expect(spawnMock).toHaveBeenCalledWith(
-			"npx",
-			["skills@1.5.22", "add", "dotenc/skills", "--skill", "dotenc", "-y"],
+			"bunx",
+			[
+				"skills@1.5.22",
+				"add",
+				IMMUTABLE_SKILL_SOURCE,
+				"--skill",
+				"dotenc",
+				"-y",
+			],
 			expect.any(Object),
 		)
 		logSpy.mockRestore()
@@ -96,8 +113,8 @@ describe("installAgentSkillCommand", () => {
 
 		expect(promptSelectMock).toHaveBeenCalledTimes(1)
 		expect(spawnMock).toHaveBeenCalledWith(
-			"npx",
-			["skills@1.5.22", "add", "dotenc/skills", "--skill", "dotenc"],
+			"bunx",
+			["skills@1.5.22", "add", IMMUTABLE_SKILL_SOURCE, "--skill", "dotenc"],
 			expect.any(Object),
 		)
 		expect(infoSpy).toHaveBeenCalledWith(
@@ -120,7 +137,7 @@ describe("installAgentSkillCommand", () => {
 		expect(spawnMock).not.toHaveBeenCalled()
 	})
 
-	test("exits with updater exit code when npx returns non-zero", async () => {
+	test("exits with updater exit code when bunx returns non-zero", async () => {
 		spawnMock.mockImplementation(() => makeSpawn(7))
 
 		const errSpy = spyOn(console, "error").mockImplementation(() => {})
@@ -133,7 +150,7 @@ describe("installAgentSkillCommand", () => {
 		exitSpy.mockRestore()
 	})
 
-	test("exits with code 1 when npx command cannot be started", async () => {
+	test("exits with code 1 when bunx command cannot be started", async () => {
 		spawnMock.mockImplementation(() => {
 			throw new Error("spawn ENOENT")
 		})
@@ -149,20 +166,20 @@ describe("installAgentSkillCommand", () => {
 	})
 })
 
-describe("_runNpx", () => {
-	test("resolves with exit code when npx exits successfully", async () => {
+describe("_runBunx", () => {
+	test("resolves with exit code when bunx exits successfully", async () => {
 		const child = new EventEmitter()
 		const spawnImpl = mock(() => {
 			queueMicrotask(() => child.emit("exit", 0))
 			return child as never
 		})
 
-		const result = await _runNpx(["--version"], spawnImpl as never)
+		const result = await _runBunx(["--version"], spawnImpl as never)
 		expect(result).toBe(0)
 		expect(spawnImpl).toHaveBeenCalled()
 	})
 
-	test("rejects when npx process emits an error", async () => {
+	test("rejects when bunx process emits an error", async () => {
 		const child = new EventEmitter()
 		const spawnImpl = mock(() => {
 			queueMicrotask(() => child.emit("error", new Error("spawn ENOENT")))
@@ -170,7 +187,7 @@ describe("_runNpx", () => {
 		})
 
 		await expect(
-			_runNpx(["skills", "add"], spawnImpl as never),
+			_runBunx(["skills", "add"], spawnImpl as never),
 		).rejects.toThrow("spawn ENOENT")
 	})
 })

@@ -8,6 +8,7 @@ const RESERVED_EXACT_NAMES = new Set([
 
 const UNSAFE_EXACT_NAMES = new Set([
 	"BASH_ENV",
+	"BUN_OPTIONS",
 	"COMSPEC",
 	"ENV",
 	"_JAVA_OPTIONS",

@@ -20000,18 +20000,6 @@ function date4(params) {
 
 // node_modules/zod/v4/classic/external.js
 config(en_default());
-// cli/src/schemas/environment.ts
-var environmentSchema = exports_external.object({
-  version: exports_external.number().optional(),
-  keys: exports_external.array(exports_external.object({
-    name: exports_external.string(),
-    fingerprint: exports_external.string(),
-    encryptedDataKey: exports_external.string(),
-    algorithm: exports_external.enum(["rsa", "ed25519"])
-  })),
-  encryptedContent: exports_external.string()
-});
-
 // cli/src/schemas/environmentDiffReport.ts
 var ENVIRONMENT_DIFF_REPORT_SCHEMA_VERSION = 1;
 var ENVIRONMENT_DIFF_LIMITS = {
@@ -20029,6 +20017,52 @@ var ENVIRONMENT_DIFF_LIMITS = {
   maxVariablesPerEnvironment: 4096,
   maxVariableNameBytes: 256
 };
+
+// cli/src/schemas/environment.ts
+var containsControlCharacters = (value) => {
+  for (const character of value) {
+    const codePoint = character.codePointAt(0) ?? 0;
+    if (codePoint <= 31 || codePoint === 127)
+      return true;
+  }
+  return false;
+};
+var boundedText = (maximumBytes) => exports_external.string().min(1).refine((value) => Buffer.byteLength(value, "utf-8") <= maximumBytes, `must not exceed ${maximumBytes} UTF-8 bytes`).refine((value) => !containsControlCharacters(value), {
+  message: "must not contain control characters"
+});
+var canonicalBase64 = (maximumBytes) => exports_external.string().min(1).refine((value) => Buffer.byteLength(value, "utf-8") <= maximumBytes, `must not exceed ${maximumBytes} UTF-8 bytes`).refine((value) => value.length % 4 === 0 && /^[A-Za-z0-9+/]*={0,2}$/.test(value) && Buffer.from(value, "base64").toString("base64") === value, { message: "must be canonical base64" });
+var recipientSchema = exports_external.object({
+  name: boundedText(ENVIRONMENT_DIFF_LIMITS.maxRecipientNameBytes),
+  fingerprint: boundedText(ENVIRONMENT_DIFF_LIMITS.maxFingerprintBytes),
+  encryptedDataKey: canonicalBase64(ENVIRONMENT_DIFF_LIMITS.maxEncryptedDataKeyBytes),
+  algorithm: exports_external.enum(["rsa", "ed25519"])
+}).strict();
+var environmentSchema = exports_external.object({
+  version: exports_external.union([exports_external.literal(1), exports_external.literal(2)]).optional(),
+  keys: exports_external.array(recipientSchema).min(1).max(ENVIRONMENT_DIFF_LIMITS.maxRecipientsPerEnvironment),
+  encryptedContent: canonicalBase64(ENVIRONMENT_DIFF_LIMITS.maxFileBytes)
+}).strict().superRefine((environment, context) => {
+  const names = new Set;
+  const fingerprints = new Set;
+  for (const [index, recipient] of environment.keys.entries()) {
+    if (names.has(recipient.name)) {
+      context.addIssue({
+        code: "custom",
+        message: "recipient names must be unique",
+        path: ["keys", index, "name"]
+      });
+    }
+    if (fingerprints.has(recipient.fingerprint)) {
+      context.addIssue({
+        code: "custom",
+        message: "recipient fingerprints must be unique",
+        path: ["keys", index, "fingerprint"]
+      });
+    }
+    names.add(recipient.name);
+    fingerprints.add(recipient.fingerprint);
+  }
+});
 
 // cli/src/helpers/crypto.ts
 var import_node_buffer = require("node:buffer");
@@ -20083,6 +20117,105 @@ var import_eciesjs = __toESM(require_dist(), 1);
 import_eciesjs.ECIES_CONFIG.ellipticCurve = "ed25519";
 var eciesDecrypt = (privateKey, data) => import_eciesjs.decrypt(privateKey, data);
 
+// cli/src/helpers/ed25519Der.ts
+var ED25519_OID = Buffer.from([43, 101, 112]);
+var readElement = (der, offset) => {
+  if (offset < 0 || offset + 2 > der.byteLength) {
+    throw new Error("Invalid Ed25519 DER encoding.");
+  }
+  const tag = der[offset];
+  const firstLengthByte = der[offset + 1];
+  let contentLength;
+  let contentStart;
+  if ((firstLengthByte & 128) === 0) {
+    contentLength = firstLengthByte;
+    contentStart = offset + 2;
+  } else {
+    const lengthBytes = firstLengthByte & 127;
+    if (lengthBytes === 0 || lengthBytes > 4 || offset + 2 + lengthBytes > der.length) {
+      throw new Error("Invalid Ed25519 DER encoding.");
+    }
+    if (der[offset + 2] === 0) {
+      throw new Error("Invalid Ed25519 DER encoding.");
+    }
+    contentLength = 0;
+    for (let index = 0;index < lengthBytes; index++) {
+      contentLength = contentLength * 256 + der[offset + 2 + index];
+    }
+    if (contentLength < 128) {
+      throw new Error("Invalid Ed25519 DER encoding.");
+    }
+    contentStart = offset + 2 + lengthBytes;
+  }
+  const contentEnd = contentStart + contentLength;
+  if (!Number.isSafeInteger(contentEnd) || contentEnd > der.byteLength) {
+    throw new Error("Invalid Ed25519 DER encoding.");
+  }
+  return { tag, contentStart, contentEnd, nextOffset: contentEnd };
+};
+var readChildren = (der, parent) => {
+  const children = [];
+  let offset = parent.contentStart;
+  while (offset < parent.contentEnd) {
+    const child = readElement(der, offset);
+    if (child.nextOffset > parent.contentEnd) {
+      throw new Error("Invalid Ed25519 DER encoding.");
+    }
+    children.push(child);
+    offset = child.nextOffset;
+  }
+  if (offset !== parent.contentEnd) {
+    throw new Error("Invalid Ed25519 DER encoding.");
+  }
+  return children;
+};
+var validateEd25519Algorithm = (der, algorithm) => {
+  if (algorithm.tag !== 48)
+    throw new Error("Invalid Ed25519 DER encoding.");
+  const children = readChildren(der, algorithm);
+  if (children.length !== 1 || children[0].tag !== 6 || !der.subarray(children[0].contentStart, children[0].contentEnd).equals(ED25519_OID)) {
+    throw new Error("Invalid Ed25519 DER encoding.");
+  }
+};
+var extractEd25519PrivateSeed = (pkcs8) => {
+  const outer = readElement(pkcs8, 0);
+  if (outer.tag !== 48 || outer.nextOffset !== pkcs8.byteLength) {
+    throw new Error("Invalid Ed25519 DER encoding.");
+  }
+  const children = readChildren(pkcs8, outer);
+  if (children.length < 3)
+    throw new Error("Invalid Ed25519 DER encoding.");
+  const [version2, algorithm, privateKey, ...optional2] = children;
+  if (version2.tag !== 2 || version2.contentEnd - version2.contentStart !== 1 || pkcs8[version2.contentStart] !== 0 && pkcs8[version2.contentStart] !== 1) {
+    throw new Error("Invalid Ed25519 DER encoding.");
+  }
+  validateEd25519Algorithm(pkcs8, algorithm);
+  if (privateKey.tag !== 4)
+    throw new Error("Invalid Ed25519 DER encoding.");
+  const nested = readElement(pkcs8, privateKey.contentStart);
+  if (nested.tag !== 4 || nested.nextOffset !== privateKey.contentEnd || nested.contentEnd - nested.contentStart !== 32) {
+    throw new Error("Invalid Ed25519 DER encoding.");
+  }
+  let sawAttributes = false;
+  let sawPublicKey = false;
+  const versionValue = pkcs8[version2.contentStart];
+  for (const element of optional2) {
+    if (element.tag === 160 && !sawAttributes && !sawPublicKey) {
+      sawAttributes = true;
+      continue;
+    }
+    if (element.tag === 129 && !sawPublicKey && versionValue === 1 && element.contentEnd - element.contentStart === 33 && pkcs8[element.contentStart] === 0) {
+      sawPublicKey = true;
+      continue;
+    }
+    throw new Error("Invalid Ed25519 DER encoding.");
+  }
+  if (versionValue === 0 && sawPublicKey || versionValue === 1 && !sawPublicKey) {
+    throw new Error("Invalid Ed25519 DER encoding.");
+  }
+  return Buffer.from(pkcs8.subarray(nested.contentStart, nested.contentEnd));
+};
+
 // cli/src/helpers/decryptDataKey.ts
 var decryptDataKey = (keyInfo, encryptedDataKey) => {
   if (keyInfo.algorithm === "rsa") {
@@ -20096,11 +20229,12 @@ var decryptDataKey = (keyInfo, encryptedDataKey) => {
     type: "pkcs8",
     format: "der"
   });
-  const rawSeed = Buffer.from(privDer.subarray(privDer.length - 32));
+  let rawSeed;
   try {
+    rawSeed = extractEd25519PrivateSeed(privDer);
     return eciesDecrypt(rawSeed, encryptedDataKey);
   } finally {
-    rawSeed.fill(0);
+    rawSeed?.fill(0);
     privDer.fill(0);
   }
 };
@@ -20614,21 +20748,155 @@ var import_node_path = __toESM(require("node:path"));
 
 // cli/src/helpers/getEnvironmentByPath.ts
 var import_promises = __toESM(require("node:fs/promises"));
-var getEnvironmentByPath = async (filePath) => {
-  let environmentInput;
+
+// cli/src/helpers/parseEnvironmentDocument.ts
+class InvalidJsonEnvelope extends Error {
+}
+var hasDuplicateJsonMembers = (source) => {
+  let offset = 0;
+  let hasDuplicates = false;
+  const skipWhitespace = () => {
+    while (offset < source.length && /\s/.test(source[offset]))
+      offset += 1;
+  };
+  const parseString = () => {
+    const start = offset;
+    offset += 1;
+    while (offset < source.length) {
+      if (source[offset] === "\\") {
+        offset += 2;
+        continue;
+      }
+      if (source[offset] === '"') {
+        offset += 1;
+        return JSON.parse(source.slice(start, offset));
+      }
+      offset += 1;
+    }
+    throw new InvalidJsonEnvelope;
+  };
+  const parsePrimitive = () => {
+    const start = offset;
+    while (offset < source.length && !/[\s,\]}]/.test(source[offset])) {
+      offset += 1;
+    }
+    if (offset === start)
+      throw new InvalidJsonEnvelope;
+  };
+  const parseValue = (depth) => {
+    if (depth > ENVIRONMENT_DIFF_LIMITS.maxJsonDepth) {
+      throw new InvalidJsonEnvelope;
+    }
+    skipWhitespace();
+    const token = source[offset];
+    if (token === '"') {
+      parseString();
+      return;
+    }
+    if (token === "{") {
+      offset += 1;
+      skipWhitespace();
+      const members = new Set;
+      if (source[offset] === "}") {
+        offset += 1;
+        return;
+      }
+      while (offset < source.length) {
+        skipWhitespace();
+        if (source[offset] !== '"')
+          throw new InvalidJsonEnvelope;
+        const member = parseString();
+        if (members.has(member))
+          hasDuplicates = true;
+        members.add(member);
+        skipWhitespace();
+        if (source[offset] !== ":")
+          throw new InvalidJsonEnvelope;
+        offset += 1;
+        parseValue(depth + 1);
+        skipWhitespace();
+        if (source[offset] === "}") {
+          offset += 1;
+          return;
+        }
+        if (source[offset] !== ",")
+          throw new InvalidJsonEnvelope;
+        offset += 1;
+      }
+      throw new InvalidJsonEnvelope;
+    }
+    if (token === "[") {
+      offset += 1;
+      skipWhitespace();
+      if (source[offset] === "]") {
+        offset += 1;
+        return;
+      }
+      while (offset < source.length) {
+        parseValue(depth + 1);
+        skipWhitespace();
+        if (source[offset] === "]") {
+          offset += 1;
+          return;
+        }
+        if (source[offset] !== ",")
+          throw new InvalidJsonEnvelope;
+        offset += 1;
+      }
+      throw new InvalidJsonEnvelope;
+    }
+    parsePrimitive();
+  };
+  parseValue(0);
+  skipWhitespace();
+  if (offset !== source.length)
+    throw new InvalidJsonEnvelope;
+  return hasDuplicates;
+};
+var parseEnvironmentDocument = (source) => {
+  if (Buffer.byteLength(source, "utf-8") > ENVIRONMENT_DIFF_LIMITS.maxFileBytes || hasDuplicateJsonMembers(source)) {
+    throw new InvalidJsonEnvelope;
+  }
+  return environmentSchema.parse(JSON.parse(source));
+};
+
+// cli/src/helpers/getEnvironmentByPath.ts
+var readBoundedEnvironmentFile = async (handle) => {
+  const stat = await handle.stat();
+  if (!stat.isFile() || stat.size > ENVIRONMENT_DIFF_LIMITS.maxFileBytes) {
+    throw new Error("Encrypted environment exceeds the file-size limit.");
+  }
+  const input = Buffer.alloc(ENVIRONMENT_DIFF_LIMITS.maxFileBytes + 1);
+  let offset = 0;
   try {
-    environmentInput = await import_promises.default.readFile(filePath, "utf-8");
-  } catch (_error) {
+    while (offset < input.byteLength) {
+      const { bytesRead } = await handle.read(input, offset, input.byteLength - offset, null);
+      if (bytesRead === 0)
+        break;
+      offset += bytesRead;
+    }
+    if (offset > ENVIRONMENT_DIFF_LIMITS.maxFileBytes) {
+      throw new Error("Encrypted environment exceeds the file-size limit.");
+    }
+    return new TextDecoder("utf-8", { fatal: true }).decode(input.subarray(0, offset));
+  } finally {
+    input.fill(0);
+  }
+};
+var getEnvironmentByPath = async (filePath) => {
+  let handle;
+  try {
+    handle = await import_promises.default.open(filePath, "r");
+  } catch {
     throw new Error(`Environment file not found: ${filePath}`);
   }
-  let environmentJson;
   try {
-    const rawJson = JSON.parse(environmentInput);
-    environmentJson = environmentSchema.parse(rawJson);
-  } catch (_error) {
+    return parseEnvironmentDocument(await readBoundedEnvironmentFile(handle));
+  } catch {
     throw new Error("Failed to parse the environment file. Please ensure it is a valid JSON file.");
+  } finally {
+    await handle.close().catch(() => {});
   }
-  return environmentJson;
 };
 
 // cli/src/helpers/getEnvironmentByName.ts
@@ -20640,7 +20908,7 @@ var getEnvironmentByName = async (name, dir) => {
 // cli/src/helpers/getPrivateKeys.ts
 var import_node_crypto6 = __toESM(require("node:crypto"));
 var import_node_fs = require("node:fs");
-var import_promises3 = __toESM(require("node:fs/promises"));
+var import_promises4 = __toESM(require("node:fs/promises"));
 var import_node_os3 = __toESM(require("node:os"));
 var import_node_path3 = __toESM(require("node:path"));
 
@@ -20934,16 +21202,45 @@ function bigIntToBase64Url(n) {
 // cli/src/helpers/parsePassphraseProtectedPrivateKey.ts
 var import_node_child_process = require("node:child_process");
 var import_node_crypto5 = __toESM(require("node:crypto"));
-var import_promises2 = __toESM(require("node:fs/promises"));
+var import_promises3 = __toESM(require("node:fs/promises"));
 var import_node_os2 = __toESM(require("node:os"));
 var import_node_path2 = __toESM(require("node:path"));
+
+// cli/src/helpers/secureEraseFile.ts
+var import_promises2 = __toESM(require("node:fs/promises"));
+var secureEraseFile = async (filePath) => {
+  let handle;
+  const zeros = Buffer.alloc(64 * 1024);
+  try {
+    handle = await import_promises2.default.open(filePath, "r+");
+    const stat = await handle.stat();
+    if (!stat.isFile())
+      return;
+    let offset = 0;
+    while (offset < stat.size) {
+      const length = Math.min(zeros.byteLength, stat.size - offset);
+      const { bytesWritten } = await handle.write(zeros, 0, length, offset);
+      if (bytesWritten <= 0)
+        break;
+      offset += bytesWritten;
+    }
+    await handle.sync();
+  } catch {} finally {
+    zeros.fill(0);
+    await handle?.close().catch(() => {});
+  }
+};
+
+// cli/src/helpers/parsePassphraseProtectedPrivateKey.ts
 var defaultParsePassphraseProtectedPrivateKeyDeps = {
   createPrivateKey: import_node_crypto5.default.createPrivateKey,
   parseOpenSSHPrivateKey,
-  mkdtemp: import_promises2.default.mkdtemp,
-  writeFile: import_promises2.default.writeFile,
-  readFile: import_promises2.default.readFile,
-  rm: import_promises2.default.rm,
+  mkdtemp: import_promises3.default.mkdtemp,
+  chmod: import_promises3.default.chmod,
+  writeFile: import_promises3.default.writeFile,
+  readFile: import_promises3.default.readFile,
+  rm: import_promises3.default.rm,
+  secureEraseFile,
   tmpdir: import_node_os2.default.tmpdir,
   spawnSync: import_node_child_process.spawnSync
 };
@@ -20960,47 +21257,56 @@ var parsePassphraseProtectedPrivateKey = async (keyContent, passphrase, deps = d
   let tempDir;
   try {
     tempDir = await deps.mkdtemp(import_node_path2.default.join(deps.tmpdir(), "dotenc-passphrase-"));
+    await deps.chmod(tempDir, 448);
     const tempKeyPath = import_node_path2.default.join(tempDir, "key");
-    const passphraseFilePath = import_node_path2.default.join(tempDir, "pp");
     const askpassPath = import_node_path2.default.join(tempDir, "askpass.sh");
     await deps.writeFile(tempKeyPath, keyContent, {
       encoding: "utf-8",
       mode: 384
     });
-    await deps.writeFile(passphraseFilePath, passphrase, {
-      encoding: "utf-8",
-      mode: 384
-    });
-    const escapedPassphrasePath = passphraseFilePath.replace(/'/g, "'\\''");
     await deps.writeFile(askpassPath, `#!/bin/sh
-cat '${escapedPassphrasePath}'
-`, { encoding: "utf-8", mode: 448 });
+cat
+`, {
+      encoding: "utf-8",
+      mode: 448
+    });
     const childEnvironment = {
       DISPLAY: process.env.DISPLAY || ":0",
       PATH: process.env.PATH || "/usr/bin:/bin",
       SSH_ASKPASS: askpassPath,
-      SSH_ASKPASS_REQUIRE: "prefer"
+      SSH_ASKPASS_REQUIRE: "force"
     };
     for (const name of ["SystemRoot", "WINDIR", "PATHEXT"]) {
       if (process.env[name])
         childEnvironment[name] = process.env[name];
     }
-    const result = deps.spawnSync("ssh-keygen", ["-p", "-N", "", "-f", tempKeyPath, "-q"], {
-      stdio: "pipe",
-      encoding: "utf-8",
-      env: childEnvironment
-    });
-    if (result.error || result.status !== 0) {
-      return null;
+    const passphraseInput = Buffer.from(passphrase, "utf-8");
+    try {
+      const result = deps.spawnSync("ssh-keygen", ["-p", "-N", "", "-f", tempKeyPath, "-q"], {
+        stdio: ["pipe", "ignore", "ignore"],
+        input: passphraseInput,
+        env: childEnvironment
+      });
+      if (result.error || result.status !== 0) {
+        return null;
+      }
+    } finally {
+      passphraseInput.fill(0);
     }
-    const unlockedKeyContent = await deps.readFile(tempKeyPath, "utf-8");
+    const unlockedKeyContent = await deps.readFile(tempKeyPath);
     try {
       return deps.createPrivateKey(unlockedKeyContent);
     } catch {
       return deps.parseOpenSSHPrivateKey(unlockedKeyContent);
+    } finally {
+      unlockedKeyContent.fill(0);
     }
   } finally {
     if (tempDir) {
+      await Promise.all([
+        deps.secureEraseFile(import_node_path2.default.join(tempDir, "key")),
+        deps.secureEraseFile(import_node_path2.default.join(tempDir, "askpass.sh"))
+      ]);
       await deps.rm(tempDir, { recursive: true, force: true }).catch(() => {});
     }
   }
@@ -21216,14 +21522,14 @@ var getPrivateKeys = async (options = {}) => {
   if (!import_node_fs.existsSync(sshDir)) {
     return { keys: privateKeys, passphraseProtectedKeys, unsupportedKeys };
   }
-  const files = await import_promises3.default.readdir(sshDir);
+  const files = await import_promises4.default.readdir(sshDir);
   const knownFiles = SSH_KEY_FILES.filter((f) => files.includes(f));
   const otherFiles = files.filter((f) => !SSH_KEY_FILES.includes(f) && !f.endsWith(".pub") && !f.startsWith("known_hosts") && !f.startsWith("authorized_keys") && f !== "config");
   for (const fileName of [...knownFiles, ...otherFiles]) {
     const filePath = import_node_path3.default.join(sshDir, fileName);
     let stat;
     try {
-      stat = await import_promises3.default.stat(filePath);
+      stat = await import_promises4.default.stat(filePath);
     } catch {
       continue;
     }
@@ -21231,7 +21537,7 @@ var getPrivateKeys = async (options = {}) => {
       continue;
     let keyContent;
     try {
-      keyContent = await import_promises3.default.readFile(filePath, "utf-8");
+      keyContent = await import_promises4.default.readFile(filePath, "utf-8");
     } catch {
       continue;
     }
@@ -21313,7 +21619,7 @@ var import_node_child_process2 = require("node:child_process");
 var import_node_crypto9 = __toESM(require("node:crypto"));
 // cli/src/helpers/onePasswordLocatorCache.ts
 var import_node_crypto7 = require("node:crypto");
-var import_promises4 = __toESM(require("node:fs/promises"));
+var import_promises5 = __toESM(require("node:fs/promises"));
 var import_node_os4 = __toESM(require("node:os"));
 var import_node_path4 = __toESM(require("node:path"));
 var ONE_PASSWORD_ID_PATTERN = /^[A-Za-z0-9]{26}$/;
@@ -21351,7 +21657,7 @@ async function readOnePasswordLocator(fingerprint, options = {}) {
   const cacheDirectory = options.cacheDirectory ?? getOnePasswordLocatorCacheDirectory();
   const filePath = cacheEntryPath(fingerprint, cacheDirectory);
   try {
-    const handle = await import_promises4.default.open(filePath, "r");
+    const handle = await import_promises5.default.open(filePath, "r");
     try {
       const stat = await handle.stat();
       if (!stat.isFile() || stat.size > MAX_CACHE_ENTRY_BYTES)
@@ -21375,27 +21681,27 @@ async function writeOnePasswordLocator(fingerprint, locator, options = {}) {
   const directory = import_node_path4.default.dirname(filePath);
   const temporaryPath = import_node_path4.default.join(directory, `.${import_node_path4.default.basename(filePath)}.${process.pid}-${import_node_crypto7.randomUUID()}.tmp`);
   try {
-    await import_promises4.default.mkdir(cacheDirectory, { recursive: true, mode: 448 });
-    await import_promises4.default.chmod(cacheDirectory, 448);
-    await import_promises4.default.mkdir(directory, { recursive: true, mode: 448 });
-    await import_promises4.default.chmod(directory, 448);
-    await import_promises4.default.writeFile(temporaryPath, JSON.stringify({
+    await import_promises5.default.mkdir(cacheDirectory, { recursive: true, mode: 448 });
+    await import_promises5.default.chmod(cacheDirectory, 448);
+    await import_promises5.default.mkdir(directory, { recursive: true, mode: 448 });
+    await import_promises5.default.chmod(directory, 448);
+    await import_promises5.default.writeFile(temporaryPath, JSON.stringify({
       version: 1,
       fingerprint,
       locator: parsedLocator.data
     }), { flag: "wx", mode: 384 });
-    await import_promises4.default.rename(temporaryPath, filePath);
-    await import_promises4.default.chmod(filePath, 384);
+    await import_promises5.default.rename(temporaryPath, filePath);
+    await import_promises5.default.chmod(filePath, 384);
     return true;
   } catch {
     return false;
   } finally {
-    await import_promises4.default.rm(temporaryPath, { force: true }).catch(() => {});
+    await import_promises5.default.rm(temporaryPath, { force: true }).catch(() => {});
   }
 }
 async function removeOnePasswordLocator(fingerprint, options = {}) {
   const cacheDirectory = options.cacheDirectory ?? getOnePasswordLocatorCacheDirectory();
-  await import_promises4.default.rm(cacheEntryPath(fingerprint, cacheDirectory), { force: true }).catch(() => {});
+  await import_promises5.default.rm(cacheEntryPath(fingerprint, cacheDirectory), { force: true }).catch(() => {});
 }
 
 // cli/src/helpers/parseOpenSSHPublicKey.ts
@@ -21486,48 +21792,17 @@ function parseOpenSSHPublicKey(content) {
 }
 
 // cli/src/helpers/validatePublicKey.ts
-function getRsaModulusLength(key) {
-  const der = key.export({ type: "spki", format: "der" });
-  let i = 0;
-  i += 1;
-  i += der[i] & 128 ? (der[i] & 127) + 1 : 1;
-  i += 1;
-  let algLen = 0;
-  if (der[i] & 128) {
-    const n = der[i] & 127;
-    for (let j = 1;j <= n; j++)
-      algLen = algLen << 8 | der[i + j];
-    i += n + 1;
-  } else {
-    algLen = der[i];
-    i += 1;
-  }
-  i += algLen;
-  i += 1;
-  i += der[i] & 128 ? (der[i] & 127) + 1 : 1;
-  i += 1;
-  i += 1;
-  i += der[i] & 128 ? (der[i] & 127) + 1 : 1;
-  i += 1;
-  let modLen = 0;
-  if (der[i] & 128) {
-    const n = der[i] & 127;
-    for (let j = 1;j <= n; j++)
-      modLen = modLen << 8 | der[i + j];
-    i += n + 1;
-  } else {
-    modLen = der[i];
-    i += 1;
-  }
-  if (der[i] === 0)
-    modLen -= 1;
-  return modLen * 8;
-}
 function validatePublicKey(key) {
   const keyType = key.asymmetricKeyType;
   switch (keyType) {
     case "rsa": {
-      const modulusLength = getRsaModulusLength(key);
+      const modulusLength = key.asymmetricKeyDetails?.modulusLength;
+      if (typeof modulusLength !== "number" || !Number.isSafeInteger(modulusLength)) {
+        return {
+          valid: false,
+          reason: "Could not determine the RSA modulus length."
+        };
+      }
       if (modulusLength < 2048) {
         return {
           valid: false,
@@ -22294,7 +22569,7 @@ var hasExactKeys = (value, required2, optional2 = []) => {
   return required2.every((key) => Object.hasOwn(value, key)) && stringKeys.every((key) => allowed.has(key));
 };
 var compareText = (left, right) => left < right ? -1 : left > right ? 1 : 0;
-var containsControlCharacters = (value) => {
+var containsControlCharacters2 = (value) => {
   for (const character of value) {
     const codePoint = character.codePointAt(0) ?? 0;
     if (codePoint <= 31 || codePoint === 127)
@@ -22302,7 +22577,7 @@ var containsControlCharacters = (value) => {
   }
   return false;
 };
-var isBoundedText = (value, maximumBytes) => typeof value === "string" && value.length > 0 && Buffer.byteLength(value, "utf-8") <= maximumBytes && !containsControlCharacters(value);
+var isBoundedText = (value, maximumBytes) => typeof value === "string" && value.length > 0 && Buffer.byteLength(value, "utf-8") <= maximumBytes && !containsControlCharacters2(value);
 var isCanonicalBase64 = (value, maximumBytes) => {
   if (typeof value !== "string" || value.length === 0 || Buffer.byteLength(value, "utf-8") > maximumBytes || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value)) {
     return false;
@@ -22311,7 +22586,7 @@ var isCanonicalBase64 = (value, maximumBytes) => {
   return decoded.toString("base64") === value;
 };
 var parseEnvironmentPath = (filePath) => {
-  if (filePath.length === 0 || Buffer.byteLength(filePath, "utf-8") > ENVIRONMENT_DIFF_LIMITS.maxPathBytes || containsControlCharacters(filePath) || filePath.startsWith("/") || filePath.includes("\\")) {
+  if (filePath.length === 0 || Buffer.byteLength(filePath, "utf-8") > ENVIRONMENT_DIFF_LIMITS.maxPathBytes || containsControlCharacters2(filePath) || filePath.startsWith("/") || filePath.includes("\\")) {
     return null;
   }
   const segments = filePath.split("/");
@@ -22369,7 +22644,7 @@ var validateInput = (input) => {
   return { base, head };
 };
 
-class InvalidJsonEnvelope extends Error {
+class InvalidJsonEnvelope2 extends Error {
 }
 var scanJsonMembers = (source) => {
   let offset = 0;
@@ -22393,7 +22668,7 @@ var scanJsonMembers = (source) => {
       }
       offset += 1;
     }
-    throw new InvalidJsonEnvelope;
+    throw new InvalidJsonEnvelope2;
   };
   const parsePrimitive = () => {
     const start = offset;
@@ -22401,11 +22676,11 @@ var scanJsonMembers = (source) => {
       offset += 1;
     }
     if (offset === start)
-      throw new InvalidJsonEnvelope;
+      throw new InvalidJsonEnvelope2;
   };
   const parseValue = (depth, location) => {
     if (depth > ENVIRONMENT_DIFF_LIMITS.maxJsonDepth) {
-      throw new InvalidJsonEnvelope;
+      throw new InvalidJsonEnvelope2;
     }
     skipWhitespace();
     const token = source[offset];
@@ -22424,7 +22699,7 @@ var scanJsonMembers = (source) => {
       while (offset < source.length) {
         skipWhitespace();
         if (source[offset] !== '"')
-          throw new InvalidJsonEnvelope;
+          throw new InvalidJsonEnvelope2;
         const member = parseString();
         if (members.has(member)) {
           hasDuplicates = true;
@@ -22435,7 +22710,7 @@ var scanJsonMembers = (source) => {
         members.add(member);
         skipWhitespace();
         if (source[offset] !== ":")
-          throw new InvalidJsonEnvelope;
+          throw new InvalidJsonEnvelope2;
         offset += 1;
         const memberLocation = location === "recipients" || location === "root" && member === "keys" ? "recipients" : "other";
         parseValue(depth + 1, memberLocation);
@@ -22445,10 +22720,10 @@ var scanJsonMembers = (source) => {
           return;
         }
         if (source[offset] !== ",")
-          throw new InvalidJsonEnvelope;
+          throw new InvalidJsonEnvelope2;
         offset += 1;
       }
-      throw new InvalidJsonEnvelope;
+      throw new InvalidJsonEnvelope2;
     }
     if (token === "[") {
       offset += 1;
@@ -22465,17 +22740,17 @@ var scanJsonMembers = (source) => {
           return;
         }
         if (source[offset] !== ",")
-          throw new InvalidJsonEnvelope;
+          throw new InvalidJsonEnvelope2;
         offset += 1;
       }
-      throw new InvalidJsonEnvelope;
+      throw new InvalidJsonEnvelope2;
     }
     parsePrimitive();
   };
   parseValue(0, "root");
   skipWhitespace();
   if (offset !== source.length)
-    throw new InvalidJsonEnvelope;
+    throw new InvalidJsonEnvelope2;
   return { hasDuplicates, recipientMetadataAmbiguous };
 };
 var parseRecipientMetadata = (raw) => {
@@ -22601,7 +22876,7 @@ var parsePlaintextVariables = (plaintext) => {
   }
   const variables = new Map;
   for (const [name, value] of entries) {
-    if (Buffer.byteLength(name, "utf-8") > ENVIRONMENT_DIFF_LIMITS.maxVariableNameBytes || containsControlCharacters(name)) {
+    if (Buffer.byteLength(name, "utf-8") > ENVIRONMENT_DIFF_LIMITS.maxVariableNameBytes || containsControlCharacters2(name)) {
       throw new InvalidPlaintext;
     }
     variables.set(name, value);
@@ -22830,7 +23105,7 @@ var createEnvironmentDiffReport = async (input, options = {}) => {
 };
 
 // actions/diff/src/action-io.ts
-var import_promises5 = __toESM(require("node:fs/promises"));
+var import_promises6 = __toESM(require("node:fs/promises"));
 
 // actions/diff/src/safety.ts
 var import_node_buffer2 = require("node:buffer");
@@ -22886,14 +23161,14 @@ var defaultActionIo = {
     const outputPath = process.env.GITHUB_OUTPUT;
     if (!outputPath)
       throw new SafeActionError("missing_action_output");
-    await import_promises5.default.appendFile(outputPath, `${name}=${value}
+    await import_promises6.default.appendFile(outputPath, `${name}=${value}
 `, "utf8");
   },
   async writeSummary(markdown) {
     const summaryPath = process.env.GITHUB_STEP_SUMMARY;
     if (!summaryPath)
       throw new SafeActionError("missing_step_summary");
-    await import_promises5.default.appendFile(summaryPath, markdown, "utf8");
+    await import_promises6.default.appendFile(summaryPath, markdown, "utf8");
   },
   annotate(level, message) {
     const command = level === "error" ? "error" : "warning";
@@ -22902,7 +23177,7 @@ var defaultActionIo = {
 };
 
 // actions/diff/src/context.ts
-var import_promises6 = __toESM(require("node:fs/promises"));
+var import_promises7 = __toESM(require("node:fs/promises"));
 
 // actions/diff/src/limits.ts
 var ACTION_LIMITS = Object.freeze({
@@ -22966,11 +23241,11 @@ var readPullRequestEvent = async (eventPath, limits = ACTION_LIMITS) => {
     throw new SafeActionError("missing_event");
   let raw;
   try {
-    const stat = await import_promises6.default.stat(eventPath);
+    const stat = await import_promises7.default.stat(eventPath);
     if (!stat.isFile() || stat.size > limits.eventBytes) {
       throw new SafeActionError("invalid_event");
     }
-    raw = await import_promises6.default.readFile(eventPath, "utf8");
+    raw = await import_promises7.default.readFile(eventPath, "utf8");
   } catch (error51) {
     if (error51 instanceof SafeActionError)
       throw error51;
@@ -23354,7 +23629,7 @@ var hasAsciiControl2 = (value) => Array.from(value).some((character) => {
   const codePoint = character.codePointAt(0) ?? 0;
   return codePoint <= 31 || codePoint === 127;
 });
-var boundedText = (value, maxBytes) => typeof value === "string" && value.length > 0 && byteLength(value) <= maxBytes && !hasAsciiControl2(value);
+var boundedText2 = (value, maxBytes) => typeof value === "string" && value.length > 0 && byteLength(value) <= maxBytes && !hasAsciiControl2(value);
 var neutralizeFormatControls = (value) => Array.from(value).map((character) => {
   if (!/[\p{C}\p{Zl}\p{Zp}]/u.test(character))
     return character;
@@ -23377,7 +23652,7 @@ var canonicalVariableNames = (value) => {
     throw new SafeActionError("invalid_diff_report");
   }
   const names = value.map((name) => {
-    if (!boundedText(name, ENVIRONMENT_DIFF_LIMITS.maxVariableNameBytes)) {
+    if (!boundedText2(name, ENVIRONMENT_DIFF_LIMITS.maxVariableNameBytes)) {
       throw new SafeActionError("invalid_diff_report");
     }
     return neutralizeFormatControls(name);
@@ -23416,7 +23691,7 @@ var canonicalVariableDiff = (value) => {
   return { status: "available", added, changed, removed };
 };
 var canonicalRecipient = (value) => {
-  if (!isRecord(value) || !hasExactKeys2(value, ["name", "fingerprint"]) || !boundedText(value.name, ENVIRONMENT_DIFF_LIMITS.maxRecipientNameBytes) || !boundedText(value.fingerprint, ENVIRONMENT_DIFF_LIMITS.maxFingerprintBytes)) {
+  if (!isRecord(value) || !hasExactKeys2(value, ["name", "fingerprint"]) || !boundedText2(value.name, ENVIRONMENT_DIFF_LIMITS.maxRecipientNameBytes) || !boundedText2(value.fingerprint, ENVIRONMENT_DIFF_LIMITS.maxFingerprintBytes)) {
     throw new SafeActionError("invalid_diff_report");
   }
   return {
@@ -23439,7 +23714,7 @@ var canonicalRenames = (value) => {
     throw new SafeActionError("invalid_diff_report");
   }
   const renames = value.map((rename) => {
-    if (!isRecord(rename) || !hasExactKeys2(rename, ["fingerprint", "from", "to"]) || !boundedText(rename.fingerprint, ENVIRONMENT_DIFF_LIMITS.maxFingerprintBytes) || !boundedText(rename.from, ENVIRONMENT_DIFF_LIMITS.maxRecipientNameBytes) || !boundedText(rename.to, ENVIRONMENT_DIFF_LIMITS.maxRecipientNameBytes)) {
+    if (!isRecord(rename) || !hasExactKeys2(rename, ["fingerprint", "from", "to"]) || !boundedText2(rename.fingerprint, ENVIRONMENT_DIFF_LIMITS.maxFingerprintBytes) || !boundedText2(rename.from, ENVIRONMENT_DIFF_LIMITS.maxRecipientNameBytes) || !boundedText2(rename.to, ENVIRONMENT_DIFF_LIMITS.maxRecipientNameBytes)) {
       throw new SafeActionError("invalid_diff_report");
     }
     return {
@@ -23486,7 +23761,7 @@ var canonicalAccessDiff = (value) => {
   return { status: "available", grants, revocations, renames };
 };
 var canonicalEnvironment = (value) => {
-  if (!isRecord(value) || !hasExactKeys2(value, ["path", "name", "status", "variables", "access"]) || !boundedText(value.path, ENVIRONMENT_DIFF_LIMITS.maxPathBytes) || !boundedText(value.name, ENVIRONMENT_DIFF_LIMITS.maxEnvironmentNameBytes) || value.status !== "added" && value.status !== "deleted" && value.status !== "modified" || value.path.startsWith("/") || value.path.includes("\\") || value.path.split("/").some((segment) => !segment || segment === "." || segment === "..")) {
+  if (!isRecord(value) || !hasExactKeys2(value, ["path", "name", "status", "variables", "access"]) || !boundedText2(value.path, ENVIRONMENT_DIFF_LIMITS.maxPathBytes) || !boundedText2(value.name, ENVIRONMENT_DIFF_LIMITS.maxEnvironmentNameBytes) || value.status !== "added" && value.status !== "deleted" && value.status !== "modified" || value.path.startsWith("/") || value.path.includes("\\") || value.path.split("/").some((segment) => !segment || segment === "." || segment === "..")) {
     throw new SafeActionError("invalid_diff_report");
   }
   const filename = value.path.slice(value.path.lastIndexOf("/") + 1);

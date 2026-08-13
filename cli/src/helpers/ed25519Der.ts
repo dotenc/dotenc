@@ -133,6 +133,7 @@ export const extractEd25519PrivateSeed = (pkcs8: Buffer): Buffer => {
 
 	let sawAttributes = false
 	let sawPublicKey = false
+	const versionValue = pkcs8[version.contentStart]
 	for (const element of optional) {
 		if (element.tag === 0xa0 && !sawAttributes && !sawPublicKey) {
 			sawAttributes = true
@@ -141,7 +142,7 @@ export const extractEd25519PrivateSeed = (pkcs8: Buffer): Buffer => {
 		if (
 			element.tag === 0x81 &&
 			!sawPublicKey &&
-			pkcs8[version.contentStart] === 1 &&
+			versionValue === 1 &&
 			element.contentEnd - element.contentStart === 33 &&
 			pkcs8[element.contentStart] === 0
 		) {
@@ -150,7 +151,10 @@ export const extractEd25519PrivateSeed = (pkcs8: Buffer): Buffer => {
 		}
 		throw new Error("Invalid Ed25519 DER encoding.")
 	}
-	if (pkcs8[version.contentStart] === 0 && sawPublicKey) {
+	if (
+		(versionValue === 0 && sawPublicKey) ||
+		(versionValue === 1 && !sawPublicKey)
+	) {
 		throw new Error("Invalid Ed25519 DER encoding.")
 	}
 

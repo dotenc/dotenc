@@ -278,7 +278,7 @@ tools
 		new Option("--scope <scope>", "install scope").choices(["local", "global"]),
 	)
 	.addOption(
-		new Option("--force", "run npx skills in non-interactive mode (-y)"),
+		new Option("--force", "run bunx skills in non-interactive mode (-y)"),
 	)
 	.description("install the agent skill for this project")
 	.action(installAgentSkillCommand)

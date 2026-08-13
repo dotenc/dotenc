@@ -29,6 +29,7 @@ type InstallerOptions = {
 	failCommand?: string
 	hash?: string
 	os?: string
+	packagesProtocol?: "http" | "https"
 	sudoNoninteractive?: boolean
 	uid?: number
 }
@@ -166,6 +167,13 @@ done`
 		writeCommand(binDirectory, command, logInvocationBody(captureFiles))
 	}
 
+	const installerInput =
+		options.packagesProtocol === "http"
+			? installer.replace(
+					'PACKAGES_URL="https://packages.dotenc.org"',
+					'PACKAGES_URL="http://packages.dotenc.org"',
+				)
+			: installer
 	const child = spawnSync("/bin/sh", [], {
 		encoding: "utf8",
 		env: {
@@ -180,7 +188,7 @@ done`
 			PATH: binDirectory,
 			TMPDIR: root,
 		},
-		input: installer,
+		input: installerInput,
 	})
 
 	return {
@@ -287,6 +295,22 @@ describe("Linux native package selection", () => {
 })
 
 describe("bootstrap failure handling", () => {
+	test.each(["curl", "wget"] as const)(
+		"%s rejects a direct HTTP bootstrap URL before download",
+		(downloader) => {
+			const result = runInstaller({
+				commands: ["apt-get"],
+				downloader,
+				packagesProtocol: "http",
+			})
+
+			expect(result.status).not.toBe(0)
+			expect(result.stderr).toContain("Refusing non-HTTPS download URL")
+			expect(result.calls).not.toContain(`${downloader}\t`)
+			expect(result.calls).not.toContain("apt-get\t")
+		},
+	)
+
 	test("wget refuses redirects for immutable HTTPS bootstrap objects", () => {
 		const result = runInstaller({
 			commands: ["apt-get"],

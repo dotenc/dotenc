@@ -378,10 +378,10 @@ dotenc tools install-github-diffs \
 
 - `install-vscode-extension` adds extension recommendations for supported editors and can open the extension page.
 - `install-agent-skill` installs the dotenc agent skill through the pinned
-  `skills@1.5.22` runner. The `dotenc/skills` source itself is currently a
-  mutable repository reference; inspect it or install a known revision manually
-  when immutable source resolution is required.
-- `--force` maps to non-interactive mode (`-y`) for automation.
+  `skills@1.5.22` runner via Bun. The source is an immutable GitHub archive at
+  [`dotenc/skills@dc3245191988923fced07c63b31df8184a1d1853`](https://github.com/dotenc/skills/commit/dc3245191988923fced07c63b31df8184a1d1853).
+- Bun must be available on `PATH`; `--force` maps to non-interactive mode (`-y`)
+  for automation.
 - `install-github-diffs` creates a dedicated, least-privilege GitHub identity,
   grants it only to explicitly selected environments (or `--all`), uploads its
   private key without writing it to disk, and generates the immutable-SHA-pinned

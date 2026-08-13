@@ -83,6 +83,11 @@ download_file() {
 	source_url="$1"
 	target_path="$2"
 
+	case "$source_url" in
+		https://*) ;;
+		*) error "Refusing non-HTTPS download URL" ;;
+	esac
+
 	if command -v curl >/dev/null 2>&1; then
 		curl --fail --silent --show-error --location --proto '=https' \
 			--output "$target_path" "$source_url"

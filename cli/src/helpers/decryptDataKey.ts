@@ -35,11 +35,12 @@ export const decryptDataKey = (
 		type: "pkcs8",
 		format: "der",
 	}) as Buffer
-	const rawSeed = extractEd25519PrivateSeed(privDer)
+	let rawSeed: Buffer | undefined
 	try {
+		rawSeed = extractEd25519PrivateSeed(privDer)
 		return eciesDecrypt(rawSeed, encryptedDataKey)
 	} finally {
-		rawSeed.fill(0)
+		rawSeed?.fill(0)
 		privDer.fill(0)
 	}
 }

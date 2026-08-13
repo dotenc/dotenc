@@ -65,7 +65,7 @@ describe("getEnvironmentByPath", () => {
 		const filePath = path.join(tmpDir, "duplicate.enc")
 		writeFileSync(
 			filePath,
-			'{"keys":[],"keys":[],"encryptedContent":"ZW5jcnlwdGVk"}',
+			'{"keys":[{"name":"alice","fingerprint":"abc123","encryptedDataKey":"ZW5jcnlwdGVk","algorithm":"ed25519"}],"encryptedContent":"ZW5jcnlwdGVk","encryptedContent":"ZW5jcnlwdGVk"}',
 			"utf-8",
 		)
 

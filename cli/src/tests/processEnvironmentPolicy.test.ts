@@ -34,4 +34,18 @@ describe("process environment policy", () => {
 			unsafe: ["DYLD_LIBRARY_PATH"],
 		})
 	})
+
+	test("blocks BUN_OPTIONS unless that exact name is explicitly allowed", () => {
+		expect(
+			findBlockedDecryptedEnvironmentNames({ BUN_OPTIONS: "secret" }),
+		).toEqual({
+			reserved: [],
+			unsafe: ["BUN_OPTIONS"],
+		})
+		expect(
+			findBlockedDecryptedEnvironmentNames({ BUN_OPTIONS: "secret" }, [
+				"bun_options",
+			]),
+		).toEqual({ reserved: [], unsafe: [] })
+	})
 })

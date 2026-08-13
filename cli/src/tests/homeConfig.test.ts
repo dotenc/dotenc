@@ -3,8 +3,10 @@ import {
 	chmodSync,
 	mkdirSync,
 	mkdtempSync,
+	readFileSync,
 	rmSync,
 	statSync,
+	symlinkSync,
 	writeFileSync,
 } from "node:fs"
 import os from "node:os"
@@ -68,6 +70,24 @@ describe("homeConfig", () => {
 		expect(result.editor).toBe("code")
 	})
 
+	test("accepts an OS-reported home path that resolves through a symlink", async () => {
+		if (process.platform === "win32") return
+
+		const realHome = path.join(tmpHome, "real-home")
+		const linkedHome = path.join(tmpHome, "linked-home")
+		mkdirSync(realHome)
+		symlinkSync(realHome, linkedHome, "dir")
+		homeSpy.mockReturnValue(linkedHome)
+
+		await setHomeConfig({ editor: "vim" })
+
+		expect(
+			JSON.parse(
+				readFileSync(path.join(realHome, ".dotenc", "config.json"), "utf-8"),
+			),
+		).toEqual({ editor: "vim" })
+	})
+
 	test("rejects invalid config schema on set", async () => {
 		await expect(
 			setHomeConfig({ editor: 123 as unknown as string }),
@@ -79,5 +99,42 @@ describe("homeConfig", () => {
 		writeFileSync(configPath, JSON.stringify({ editor: 123 }), "utf-8")
 
 		await expect(getHomeConfig()).rejects.toThrow()
+	})
+
+	test("rejects a symlinked dotenc home directory", async () => {
+		if (process.platform === "win32") return
+
+		const configDir = path.join(tmpHome, ".dotenc")
+		const redirectedDir = path.join(tmpHome, "redirected")
+		const redirectedConfig = path.join(redirectedDir, "config.json")
+		rmSync(configDir, { recursive: true, force: true })
+		mkdirSync(redirectedDir)
+		writeFileSync(redirectedConfig, JSON.stringify({ editor: "victim" }))
+		symlinkSync(redirectedDir, configDir, "dir")
+
+		await expect(getHomeConfig()).rejects.toThrow(/symbolic link/)
+		await expect(setHomeConfig({ editor: "code" })).rejects.toThrow(
+			/symbolic link/,
+		)
+		expect(JSON.parse(readFileSync(redirectedConfig, "utf-8"))).toEqual({
+			editor: "victim",
+		})
+	})
+
+	test("rejects a symlinked config file without modifying its target", async () => {
+		if (process.platform === "win32") return
+
+		const configPath = path.join(tmpHome, ".dotenc", "config.json")
+		const redirectedConfig = path.join(tmpHome, "redirected-config.json")
+		writeFileSync(redirectedConfig, JSON.stringify({ editor: "victim" }))
+		symlinkSync(redirectedConfig, configPath, "file")
+
+		await expect(getHomeConfig()).rejects.toThrow(/symbolic link/)
+		await expect(setHomeConfig({ editor: "code" })).rejects.toThrow(
+			/symbolic link/,
+		)
+		expect(JSON.parse(readFileSync(redirectedConfig, "utf-8"))).toEqual({
+			editor: "victim",
+		})
 	})
 })

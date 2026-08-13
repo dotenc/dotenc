@@ -158,4 +158,16 @@ describe("Ed25519 data key encryption", () => {
 			),
 		).toThrow(/Raw public key bytes are required/)
 	})
+
+	test("zeroes exported private DER when structural extraction fails", () => {
+		const malformedDer = Buffer.from([0x30, 0x00, 0xaa, 0xbb])
+		const privateKey = {
+			export: () => malformedDer,
+		} as unknown as crypto.KeyObject
+
+		expect(() =>
+			decryptDataKey({ algorithm: "ed25519", privateKey }, Buffer.alloc(1)),
+		).toThrow(/Invalid Ed25519 DER encoding/)
+		expect(malformedDer).toEqual(Buffer.alloc(malformedDer.byteLength))
+	})
 })

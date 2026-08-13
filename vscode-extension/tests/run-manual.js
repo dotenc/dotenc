@@ -14,8 +14,8 @@ async function main() {
 
 	console.log("Opening VS Code with dotenc extension... close the window when done.\n")
 
+	const downloadedExecutable = await downloadAndUnzipVSCode()
 	try {
-		const downloadedExecutable = await downloadAndUnzipVSCode()
 		await runTests({
 			extensionDevelopmentPath,
 			extensionTestsPath,

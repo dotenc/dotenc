@@ -160,18 +160,19 @@ choice.
 
 ## Completion Record
 
-- Root lint passed across 251 files; CLI, VS Code extension, and diff-action
+- Root lint passed across 252 files; CLI, VS Code extension, and diff-action
   typechecks passed.
-- CLI build and JS entrypoint smokes passed at version 0.13.0. All 603 isolated
-  unit tests passed. CLI line coverage is 92.83%.
+- CLI build and JS entrypoint smokes passed at version 0.13.0. All 611 isolated
+  unit tests passed. CLI line coverage is 92.95%; changed-line coverage against
+  the PR base is 90.80%.
 - Docker E2E passed with 135 tests, one intentionally skipped parent-TTY test,
   and no failures. The suite includes a real `BASH_ENV` payload that is blocked
   before spawn and executes only under an exact explicit override.
 - All 23 VS Code unit tests and both host integration tests passed. Extension
   line coverage is 95.20%, and package-content inspection passed.
-- Website build and all 23 website/installer tests passed, including the
-  no-redirect `wget` bootstrap case.
-- Combined line coverage is 92.90%. `git diff --check` and a changed-content
+- Website build and all 25 website/installer tests passed, including direct
+  HTTP rejection for both downloaders and the no-redirect `wget` bootstrap case.
+- Combined line coverage is 93.01%. `git diff --check` and a changed-content
   scan for private-key/token fixtures passed.
 
 ## Explicit Deferrals and Limitations
@@ -183,10 +184,10 @@ signed envelope format, signer rotation, and rollback protection be designed.
 Adding a signature and verification key solely inside mutable repository state
 would not provide that guarantee.
 
-- The skill installer pins its third-party runner to `skills@1.5.22`, but the
-  separately maintained `dotenc/skills` source remains repository-name based.
-  Immutable source resolution remains a follow-up when the supported installer
-  path can consume a commit SHA reliably.
+- The skill installer now invokes the exact `skills@1.5.22` runner through Bun
+  and consumes the separately maintained `dotenc/skills` source through a
+  full-commit GitHub archive URL. Updating either input remains an explicit
+  release-maintenance task.
 - Windows-only `shell: true` compatibility remains for fixed-argv npm/skill
   launcher paths. No decrypted or repository-controlled string is assembled
   into those commands; replacing the compatibility path requires Windows-host
