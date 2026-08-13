@@ -596,9 +596,7 @@ resolution, or secret storage work differently from a generic shell pipeline.
 
 dotenc keeps key management minimal by design. Your SSH keys are your identity - dotenc just uses them.
 
-> Existing **filesystem private keys** are read in place from `~/.ssh/` and are
-> never moved. The explicit passwordless and 1Password local-copy options below
-> can create a new key file after confirmation.
+> Existing **filesystem private keys** stay in `~/.ssh/` and are read in place.
 > **Public keys** are stored in your project's `.dotenc/` folder, derived from the corresponding private keys.
 
 ### 1Password SSH keys (experimental)
