@@ -20,7 +20,12 @@ const findEnvironmentsRecursive = mock(async (_dir: string) => [
 const getEnvironmentByPath = mock(async (_filePath: string) => ({
 	keys: [{ name: "bob" }, { name: "alice" }],
 }))
-const decryptEnvironmentData = mock(async () => "SECRET=1")
+const decryptEnvironmentData = mock(
+	async (_name?: string, _env?: unknown, _context?: unknown) => "SECRET=1",
+)
+const disposeDecryptionContext = mock(() => {})
+const decryptionContext = { dispose: disposeDecryptionContext }
+const createDecryptEnvironmentDataContext = mock(() => decryptionContext)
 const encryptEnvironment = mock(
 	async (_name: string, _content: string, _options?: object) => {},
 )
@@ -39,6 +44,7 @@ mock.module("../helpers/findEnvironmentsRecursive", () => ({
 }))
 mock.module("../helpers/getEnvironmentByPath", () => ({ getEnvironmentByPath }))
 mock.module("../helpers/decryptEnvironment", () => ({
+	createDecryptEnvironmentDataContext,
 	decryptEnvironmentData,
 	decryptEnvironment: decryptEnvironmentData,
 }))
@@ -59,6 +65,8 @@ describe("authPurgeCommand", () => {
 		findEnvironmentsRecursive.mockClear()
 		getEnvironmentByPath.mockClear()
 		decryptEnvironmentData.mockClear()
+		createDecryptEnvironmentDataContext.mockClear()
+		disposeDecryptionContext.mockClear()
 		encryptEnvironment.mockClear()
 		resolveProjectRoot.mockClear()
 		validateKeyName.mockClear()
@@ -135,6 +143,9 @@ describe("authPurgeCommand", () => {
 		await authPurgeCommand("bob", true)
 
 		expect(decryptEnvironmentData).toHaveBeenCalledTimes(2)
+		expect(decryptEnvironmentData.mock.calls[0][2]).toBe(decryptionContext)
+		expect(decryptEnvironmentData.mock.calls[1][2]).toBe(decryptionContext)
+		expect(disposeDecryptionContext).toHaveBeenCalledTimes(1)
 		expect(encryptEnvironment).toHaveBeenCalledTimes(2)
 		expect(fsUnlink).toHaveBeenCalledWith(path.join(ROOT, ".dotenc", "bob.pub"))
 		logSpy.mockRestore()

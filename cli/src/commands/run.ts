@@ -3,7 +3,11 @@ import { existsSync } from "node:fs"
 import path from "node:path"
 import chalk from "chalk"
 import { buildAncestorChain } from "../helpers/buildAncestorChain"
-import { decryptEnvironmentData } from "../helpers/decryptEnvironment"
+import {
+	createDecryptEnvironmentDataContext,
+	type DecryptEnvironmentDataContext,
+	decryptEnvironmentData,
+} from "../helpers/decryptEnvironment"
 import { getEnvironmentByPath } from "../helpers/getEnvironmentByPath"
 import { parseEnv } from "../helpers/parseEnv"
 import { resolveProjectRoot } from "../helpers/resolveProjectRoot"
@@ -13,6 +17,7 @@ type Options = {
 	env?: string
 	strict?: boolean
 	localOnly?: boolean
+	decryptionContext?: DecryptEnvironmentDataContext
 }
 
 export const runCommand = async (
@@ -60,48 +65,61 @@ export const runCommand = async (
 	}
 
 	let failureCount = 0
-	const decryptedEnvs = await Promise.all(
-		environments.map(async (envName) => {
-			let merged: Record<string, string> = {}
-			let foundAtAnyLevel = false
+	const ownsDecryptionContext = options.decryptionContext === undefined
+	const decryptionContext =
+		options.decryptionContext ?? createDecryptEnvironmentDataContext()
+	const decryptedEnvs = await (async () => {
+		try {
+			return await Promise.all(
+				environments.map(async (envName) => {
+					let merged: Record<string, string> = {}
+					let foundAtAnyLevel = false
 
-			for (const dir of dirs) {
-				const filePath = path.join(dir, `.env.${envName}.enc`)
-				if (!existsSync(filePath)) {
-					continue
-				}
+					for (const dir of dirs) {
+						const filePath = path.join(dir, `.env.${envName}.enc`)
+						if (!existsSync(filePath)) {
+							continue
+						}
 
-				foundAtAnyLevel = true
+						foundAtAnyLevel = true
 
-				let content: string
-				try {
-					const envJson = await getEnvironmentByPath(filePath)
-					content = await decryptEnvironmentData(envName, envJson)
-				} catch (error: unknown) {
-					console.error(
-						error instanceof Error
-							? error.message
-							: `Unknown error occurred while decrypting the environment ${envName} at ${dir}.`,
-					)
-					failureCount++
-					return {}
-				}
+						let content: string
+						try {
+							const envJson = await getEnvironmentByPath(filePath)
+							content = await decryptEnvironmentData(
+								envName,
+								envJson,
+								decryptionContext,
+							)
+						} catch (error: unknown) {
+							console.error(
+								error instanceof Error
+									? error.message
+									: `Unknown error occurred while decrypting the environment ${envName} at ${dir}.`,
+							)
+							failureCount++
+							return {}
+						}
 
-				const vars = parseEnv(content)
-				merged = { ...merged, ...vars }
-			}
+						const vars = parseEnv(content)
+						merged = { ...merged, ...vars }
+					}
 
-			if (!foundAtAnyLevel) {
-				console.error(
-					`${chalk.yellow("Warning:")} environment ${chalk.cyan(envName)} not found.`,
-				)
-				failureCount++
-				return {}
-			}
+					if (!foundAtAnyLevel) {
+						console.error(
+							`${chalk.yellow("Warning:")} environment ${chalk.cyan(envName)} not found.`,
+						)
+						failureCount++
+						return {}
+					}
 
-			return merged
-		}),
-	)
+					return merged
+				}),
+			)
+		} finally {
+			if (ownsDecryptionContext) decryptionContext.dispose()
+		}
+	})()
 
 	if (failureCount === environments.length) {
 		console.error(`${chalk.red("Error:")} All environments failed to load.`)

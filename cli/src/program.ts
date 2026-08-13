@@ -46,7 +46,10 @@ program
 	.command("init")
 	.addOption(new Option("-n, --name <name>", "your username for the project"))
 	.addOption(
-		new Option("-k, --private-key <name>", "the SSH key to use for dotenc"),
+		new Option(
+			"-k, --private-key <name-or-selector>",
+			"the local or 1Password SSH key to use for dotenc",
+		),
 	)
 	.description("initialize a dotenc project or configure an existing clone")
 	.action(initCommand)
@@ -223,8 +226,8 @@ key
 	)
 	.addOption(
 		new Option(
-			"--from-private-key <name>",
-			"add a public key from an SSH key in ~/.ssh by name",
+			"--from-private-key <name-or-selector>",
+			"add a public key from a local or 1Password SSH key",
 		),
 	)
 	.addOption(

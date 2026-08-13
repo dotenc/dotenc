@@ -18,10 +18,12 @@ import {
 import { decryptData } from "./crypto"
 import { decryptDataKey } from "./decryptDataKey"
 import {
+	createDecryptEnvironmentDataContext,
 	decryptEnvironmentData,
 	environmentDataKeysEqual,
 } from "./decryptEnvironment"
 import { getPrivateKeys } from "./getPrivateKeys"
+import { discoverOnePasswordKeyCandidates } from "./onePasswordKeyProvider"
 import { parseEnv } from "./parseEnv"
 
 export type {
@@ -649,29 +651,27 @@ const createDefaultCrypto = (
 ): {
 	decryptEnvironment: EnvironmentDiffDecryptor
 	dataKeysEqual: EnvironmentDiffDataKeyComparator
+	dispose: () => void
 } => {
-	let privateKeysPromise: ReturnType<typeof getPrivateKeys> | undefined
-	const loadPrivateKeys = () => {
-		privateKeysPromise ??= getPrivateKeys({
-			environmentOnly: privateKeySource === "environment",
-			environmentKeyErrorMode: "collect",
-			logError: () => {},
-		})
-		return privateKeysPromise
-	}
+	const decryptionContext = createDecryptEnvironmentDataContext({
+		getPrivateKeys: () =>
+			getPrivateKeys({
+				environmentOnly: privateKeySource === "environment",
+				environmentKeyErrorMode: "collect",
+				logError: () => {},
+			}),
+		discoverOnePasswordKeyCandidates:
+			privateKeySource === "all" ? discoverOnePasswordKeyCandidates : undefined,
+		decryptDataKey,
+		decryptData,
+	})
 
 	return {
 		decryptEnvironment: (environmentName, environment) =>
-			decryptEnvironmentData(environmentName, environment, {
-				getPrivateKeys: loadPrivateKeys,
-				decryptDataKey,
-				decryptData,
-			}),
+			decryptEnvironmentData(environmentName, environment, decryptionContext),
 		dataKeysEqual: (base, head) =>
-			environmentDataKeysEqual(base, head, {
-				getPrivateKeys: loadPrivateKeys,
-				decryptDataKey,
-			}),
+			environmentDataKeysEqual(base, head, decryptionContext),
+		dispose: decryptionContext.dispose,
 	}
 }
 
@@ -961,47 +961,56 @@ export const createEnvironmentDiffReport = async (
 	const dataKeysEqual = options.dataKeysEqual ?? defaultCrypto?.dataKeysEqual
 	const environments: EnvironmentDiff[] = []
 
-	for (const filePath of paths) {
-		const baseFile = baseByPath.get(filePath)
-		const headFile = headByPath.get(filePath)
-		if (baseFile && headFile && baseFile.content === headFile.content) continue
+	try {
+		for (const filePath of paths) {
+			const baseFile = baseByPath.get(filePath)
+			const headFile = headByPath.get(filePath)
+			if (baseFile && headFile && baseFile.content === headFile.content)
+				continue
 
-		const environmentName = (headFile ?? baseFile)?.name
-		if (!environmentName) continue
-		const status = !baseFile ? "added" : !headFile ? "deleted" : "modified"
-		const baseParsed = baseFile ? parseEnvironment(baseFile.content) : undefined
-		const headParsed = headFile ? parseEnvironment(headFile.content) : undefined
-		const [baseVariables, headVariables] = await Promise.all([
-			readVariables(baseParsed, environmentName, decryptEnvironment),
-			readVariables(headParsed, environmentName, decryptEnvironment),
-		])
-		const variables = createVariableDiff(baseVariables, headVariables)
-		const access = createAccessDiff(baseParsed, headParsed)
+			const environmentName = (headFile ?? baseFile)?.name
+			if (!environmentName) continue
+			const status = !baseFile ? "added" : !headFile ? "deleted" : "modified"
+			const baseParsed = baseFile
+				? parseEnvironment(baseFile.content)
+				: undefined
+			const headParsed = headFile
+				? parseEnvironment(headFile.content)
+				: undefined
+			const [baseVariables, headVariables] = await Promise.all([
+				readVariables(baseParsed, environmentName, decryptEnvironment),
+				readVariables(headParsed, environmentName, decryptEnvironment),
+			])
+			const variables = createVariableDiff(baseVariables, headVariables)
+			const access = createAccessDiff(baseParsed, headParsed)
 
-		if (
-			status === "modified" &&
-			variables.status === "available" &&
-			access.status === "available" &&
-			!hasVariableChanges(variables) &&
-			!hasAccessChanges(access)
-		) {
-			const verifiedDataKeyOnlyChange = await isVerifiedDataKeyOnlyChange(
-				baseParsed,
-				headParsed,
-				baseVariables,
-				headVariables,
-				dataKeysEqual,
-			)
-			if (!verifiedDataKeyOnlyChange) continue
+			if (
+				status === "modified" &&
+				variables.status === "available" &&
+				access.status === "available" &&
+				!hasVariableChanges(variables) &&
+				!hasAccessChanges(access)
+			) {
+				const verifiedDataKeyOnlyChange = await isVerifiedDataKeyOnlyChange(
+					baseParsed,
+					headParsed,
+					baseVariables,
+					headVariables,
+					dataKeysEqual,
+				)
+				if (!verifiedDataKeyOnlyChange) continue
+			}
+
+			environments.push({
+				path: filePath,
+				name: environmentName,
+				status,
+				variables,
+				access,
+			})
 		}
-
-		environments.push({
-			path: filePath,
-			name: environmentName,
-			status,
-			variables,
-			access,
-		})
+	} finally {
+		defaultCrypto?.dispose()
 	}
 
 	return {

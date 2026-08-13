@@ -80,6 +80,13 @@ Provider docs should recommend `DOTENC_PRIVATE_KEY_BASE64`. These are bootstrap
 input formats only. dotenc should avoid printing which path or decoded value was
 used beyond high-level diagnostics.
 
+Shipped local key-source integration:
+
+- [1Password SSH key connector](./ONEPASSWORD_CONNECTOR.md) — discover existing
+  SSH Key items through the installed `op` CLI, keep multiple accounts
+  unambiguous through stable account IDs, and retrieve only a matching private
+  key when a local dotenc command needs to decrypt an environment.
+
 ### Artifact doctor
 
 Planned command:

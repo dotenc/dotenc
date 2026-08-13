@@ -596,8 +596,53 @@ resolution, or secret storage work differently from a generic shell pipeline.
 
 dotenc keeps key management minimal by design. Your SSH keys are your identity - dotenc just uses them.
 
-> **Private keys** stay in `~/.ssh/` where they belong. They are never copied or moved.
+> Existing **filesystem private keys** stay in `~/.ssh/` and are read in place.
 > **Public keys** are stored in your project's `.dotenc/` folder, derived from the corresponding private keys.
+
+### 1Password SSH keys (experimental)
+
+When the 1Password CLI 2.x (`op`) is installed and authenticated, dotenc can use
+SSH Key items without additional configuration. `dotenc init` and interactive
+`dotenc key add` show local keys immediately. Choose **Use a key from
+1Password (experimental)** under **Actions** to load public key metadata; a
+temporary loading group is then replaced by account groups backed by stable
+account IDs, so accounts and duplicate item titles remain unambiguous. For
+scripts, `--private-key` and `--from-private-key` accept a qualified
+`1password:<account-id>:<vault-id>:<item-id>` selector and load its provider
+metadata directly.
+
+After a 1Password key is selected or successfully used, dotenc stores a
+disposable machine-local locator under `~/.cache/dotenc` (or the platform cache
+directory). It contains only the public-key fingerprint and opaque account,
+vault, and item IDs—never key material, names, account URLs, or project paths.
+Later commands can go directly to one fingerprint-verified `op read` instead of
+rescanning every account and SSH item. Invalid or mismatched entries are
+evicted; transient CLI, timeout, and authorization failures preserve the
+locator and fail the current operation without starting a full provider scan.
+
+After an interactive 1Password selection, dotenc also offers to save an
+unencrypted private-key copy in `~/.ssh`. The default remains locator-only. If
+you explicitly opt in, dotenc fingerprint-verifies the retrieved key, chooses a
+non-conflicting `id_<algorithm>_1password_<fingerprint>` filename, and writes it
+with mode `0600`. This avoids future 1Password authorization and provider
+latency, but expands private-key exposure from 1Password-managed memory access
+to a persistent local file.
+
+Local keys keep priority during decryption. If none matches an environment,
+local commands such as `run`, `dev`, environment edit/decrypt, and access
+rotation can ask `op` for one fingerprint-matched private key. 1Password may
+show its native authorization dialog at that point. After `op read` returns,
+the key remains only in the dotenc process: it is not written to disk, persisted
+in project files, or forwarded to a wrapped command or its environment.
+`dotenc whoami` likewise consults 1Password only when no project identity
+matches a local key.
+
+Git `textconv` may use an already cached locator and show the same authorization
+dialog, but it never performs full 1Password discovery. Without a valid cached
+locator it immediately preserves the encrypted diff content.
+
+See [1Password SSH key connector](../docs/ONEPASSWORD_CONNECTOR.md) for the full
+behavior and security boundaries.
 
 ## Supported Key Types
 
@@ -617,15 +662,18 @@ These types are widely supported and provide strong security guarantees.
 ### Adding a public key
 
 ```bash
-dotenc key add [name] [--from-ssh <path>] [-f, --from-file <file>] [-s, --from-string <pem_string>]
+dotenc key add [name] [--from-private-key <name-or-selector>] [--from-ssh <path>] [-f, --from-file <file>] [-s, --from-string <pem_string>]
 ```
 
 Adds a public key into the project (`.dotenc/<name>.pub`).
 
 - `--from-ssh <path>` — Derive the public key from an SSH key file (private or public). Supports both Ed25519 and RSA keys.
+- `--from-private-key <name-or-selector>` — Choose a discovered private-key
+  candidate by name or qualified selector.
 - `-f, --from-file <file>` — Read a public (or private) key from a PEM file.
 - `-s, --from-string <pem_string>` — Use a PEM string directly.
-- No arguments — Interactive mode: choose from your SSH keys or paste a PEM public key.
+- No arguments — Interactive mode: choose a discovered SSH key, create a local
+  key, or paste a PEM public key.
 - Key names may contain letters, numbers, dots (`.`), hyphens (`-`), and underscores (`_`).
 
 ### Listing public keys

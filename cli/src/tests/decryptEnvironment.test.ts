@@ -1,6 +1,7 @@
 import { describe, expect, mock, test } from "bun:test"
 import crypto from "node:crypto"
 import {
+	createDecryptEnvironmentDataContext,
 	decryptEnvironment,
 	decryptEnvironmentData,
 	environmentDataKeysEqual,
@@ -31,27 +32,248 @@ function makePrivateKeyEntry(
 	}
 }
 
-function makeEnvironment(fingerprint: string, name = "alice"): Environment {
+function makeEnvironment(
+	fingerprints: string | string[],
+	name = "alice",
+): Environment {
+	const normalizedFingerprints = Array.isArray(fingerprints)
+		? fingerprints
+		: [fingerprints]
 	return {
-		keys: [
-			{
-				name,
-				fingerprint,
-				encryptedDataKey: Buffer.from("encrypted-data-key").toString("base64"),
-				algorithm: "ed25519",
-			},
-		],
+		keys: normalizedFingerprints.map((fingerprint, index) => ({
+			name: index === 0 ? name : `${name}-${index + 1}`,
+			fingerprint,
+			encryptedDataKey: Buffer.from("encrypted-data-key").toString("base64"),
+			algorithm: "ed25519",
+		})),
 		encryptedContent: Buffer.from("encrypted-content").toString("base64"),
 	}
 }
 
 describe("decryptEnvironmentData", () => {
+	test("does not discover 1Password when a local key matches", async () => {
+		const discover = mock(async () => ({
+			status: "available" as const,
+			keys: [],
+			unsupportedKeys: [],
+			unavailableAccounts: [],
+		}))
+		const deps: DecryptEnvironmentDataDeps = {
+			getPrivateKeys: async () => ({
+				keys: [makePrivateKeyEntry("fp-match")],
+				passphraseProtectedKeys: [],
+			}),
+			discoverOnePasswordKeyCandidates: discover,
+			decryptDataKey: (() => Buffer.alloc(32)) as never,
+			decryptData: (async () => "OK") as never,
+		}
+
+		expect(
+			await decryptEnvironmentData(
+				"test-env",
+				makeEnvironment("fp-match"),
+				deps,
+			),
+		).toBe("OK")
+		expect(discover).not.toHaveBeenCalled()
+	})
+
+	test("uses a cached 1Password locator before full discovery", async () => {
+		const privateKey = makePrivateKeyEntry(
+			"fp-provider",
+			"1Password / cached SSH key",
+		)
+		const loadCachedOnePasswordPrivateKey = mock(async () => ({
+			status: "loaded" as const,
+			privateKey,
+		}))
+		const discoverOnePasswordKeyCandidates = mock(async () => ({
+			status: "available" as const,
+			keys: [],
+			unsupportedKeys: [],
+			unavailableAccounts: [],
+		}))
+		const deps: DecryptEnvironmentDataDeps = {
+			getPrivateKeys: async () => ({ keys: [], passphraseProtectedKeys: [] }),
+			loadCachedOnePasswordPrivateKey,
+			discoverOnePasswordKeyCandidates,
+			decryptDataKey: (() => Buffer.alloc(32)) as never,
+			decryptData: (async () => "OK") as never,
+		}
+
+		expect(
+			await decryptEnvironmentData(
+				"test-env",
+				makeEnvironment("fp-provider"),
+				deps,
+			),
+		).toBe("OK")
+		expect(loadCachedOnePasswordPrivateKey).toHaveBeenCalledWith([
+			"fp-provider",
+		])
+		expect(discoverOnePasswordKeyCandidates).not.toHaveBeenCalled()
+	})
+
+	test("reuses one cached 1Password key across different recipient sets", async () => {
+		const privateKey = makePrivateKeyEntry(
+			"fp-provider",
+			"1Password / cached SSH key",
+		)
+		const loadCachedOnePasswordPrivateKey = mock(async () => ({
+			status: "loaded" as const,
+			privateKey,
+		}))
+		const context = createDecryptEnvironmentDataContext({
+			getPrivateKeys: async () => ({ keys: [], passphraseProtectedKeys: [] }),
+			loadCachedOnePasswordPrivateKey,
+			decryptDataKey: (() => Buffer.alloc(32)) as never,
+			decryptData: (async () => "OK") as never,
+		})
+
+		try {
+			expect(
+				await Promise.all([
+					decryptEnvironmentData(
+						"development",
+						makeEnvironment(["fp-provider", "fp-teammate"]),
+						context,
+					),
+					decryptEnvironmentData(
+						"alice",
+						makeEnvironment("fp-provider"),
+						context,
+					),
+				]),
+			).toEqual(["OK", "OK"])
+			expect(loadCachedOnePasswordPrivateKey).toHaveBeenCalledTimes(1)
+		} finally {
+			context.dispose()
+		}
+	})
+
+	test("loads only one matching 1Password private key after local keys miss", async () => {
+		const privateKey = makePrivateKeyEntry("fp-provider", "1Password / key")
+		const loadPrivateKey = mock(async () => privateKey)
+		const otherLoader = mock(async () => makePrivateKeyEntry("fp-other"))
+		const publicKey = crypto.createPublicKey(privateKey.privateKey)
+		const deps: DecryptEnvironmentDataDeps = {
+			getPrivateKeys: async () => ({ keys: [], passphraseProtectedKeys: [] }),
+			discoverOnePasswordKeyCandidates: async () => ({
+				status: "available",
+				keys: [
+					{
+						source: "1password",
+						selector: "1password:a:v:i",
+						name: "key",
+						hint: "ed25519",
+						group: { id: "a", label: "a" },
+						publicKey,
+						fingerprint: "fp-provider",
+						algorithm: "ed25519",
+						loadPrivateKey,
+					},
+					{
+						source: "1password",
+						selector: "1password:b:v:i",
+						name: "other",
+						hint: "ed25519",
+						group: { id: "b", label: "b" },
+						publicKey,
+						fingerprint: "fp-other",
+						algorithm: "ed25519",
+						loadPrivateKey: otherLoader,
+					},
+				],
+				unsupportedKeys: [],
+				unavailableAccounts: [],
+			}),
+			decryptDataKey: (() => Buffer.alloc(32)) as never,
+			decryptData: (async () => "OK") as never,
+		}
+
+		expect(
+			await decryptEnvironmentData(
+				"test-env",
+				makeEnvironment("fp-provider"),
+				deps,
+			),
+		).toBe("OK")
+		expect(loadPrivateKey).toHaveBeenCalledTimes(1)
+		expect(otherLoader).not.toHaveBeenCalled()
+	})
+
+	test("shares discovery and private-key loading across a decryption batch", async () => {
+		const privateKey = makePrivateKeyEntry("fp-provider", "1Password / key")
+		const loadPrivateKey = mock(async () => privateKey)
+		const getPrivateKeys = mock(async () => ({
+			keys: [],
+			passphraseProtectedKeys: [],
+		}))
+		const discoverOnePasswordKeyCandidates = mock(async () => ({
+			status: "available" as const,
+			keys: [
+				{
+					source: "1password" as const,
+					selector: "1password:a:v:i",
+					name: "key",
+					hint: "ed25519",
+					group: { id: "a", label: "Account A" },
+					publicKey: crypto.createPublicKey(privateKey.privateKey),
+					fingerprint: "fp-provider",
+					algorithm: "ed25519" as const,
+					loadPrivateKey,
+				},
+			],
+			unsupportedKeys: [],
+			unavailableAccounts: [],
+		}))
+		const context = createDecryptEnvironmentDataContext({
+			getPrivateKeys,
+			discoverOnePasswordKeyCandidates,
+			decryptDataKey: (() => Buffer.alloc(32, 7)) as never,
+			decryptData: (async () => "OK") as never,
+		})
+
+		try {
+			expect(
+				await Promise.all([
+					decryptEnvironmentData(
+						"development",
+						makeEnvironment("fp-provider"),
+						context,
+					),
+					decryptEnvironmentData(
+						"alice",
+						makeEnvironment("fp-provider"),
+						context,
+					),
+				]),
+			).toEqual(["OK", "OK"])
+			expect(getPrivateKeys).toHaveBeenCalledTimes(1)
+			expect(discoverOnePasswordKeyCandidates).toHaveBeenCalledTimes(1)
+			expect(loadPrivateKey).toHaveBeenCalledTimes(1)
+		} finally {
+			context.dispose()
+		}
+	})
+
 	test("throws passphrase-protected error when no usable private keys exist", async () => {
+		const loadCachedOnePasswordPrivateKey = mock(async () => ({
+			status: "miss" as const,
+		}))
+		const discoverOnePasswordKeyCandidates = mock(async () => ({
+			status: "available" as const,
+			keys: [],
+			unsupportedKeys: [],
+			unavailableAccounts: [],
+		}))
 		const deps: DecryptEnvironmentDataDeps = {
 			getPrivateKeys: async () => ({
 				keys: [],
 				passphraseProtectedKeys: ["id_ed25519"],
 			}),
+			loadCachedOnePasswordPrivateKey,
+			discoverOnePasswordKeyCandidates,
 			decryptDataKey: (() => Buffer.alloc(32)) as never,
 			decryptData: (async () => "") as never,
 		}
@@ -59,6 +281,75 @@ describe("decryptEnvironmentData", () => {
 		await expect(
 			decryptEnvironmentData("test-env", makeEnvironment("fp-1"), deps),
 		).rejects.toThrow("passphrase-protected")
+		expect(loadCachedOnePasswordPrivateKey).toHaveBeenCalledTimes(1)
+		expect(discoverOnePasswordKeyCandidates).not.toHaveBeenCalled()
+	})
+
+	test("does not discover after a transient cached 1Password failure", async () => {
+		const transientError = new Error("cached provider unavailable")
+		const discoverOnePasswordKeyCandidates = mock(async () => ({
+			status: "available" as const,
+			keys: [],
+			unsupportedKeys: [],
+			unavailableAccounts: [],
+		}))
+		const deps: DecryptEnvironmentDataDeps = {
+			getPrivateKeys: async () => ({ keys: [], passphraseProtectedKeys: [] }),
+			loadCachedOnePasswordPrivateKey: async () => ({
+				status: "transient-failure",
+				error: transientError as never,
+			}),
+			discoverOnePasswordKeyCandidates,
+			decryptDataKey: (() => Buffer.alloc(32)) as never,
+			decryptData: (async () => "") as never,
+		}
+
+		await expect(
+			decryptEnvironmentData("test-env", makeEnvironment("fp-1"), deps),
+		).rejects.toBe(transientError)
+		expect(discoverOnePasswordKeyCandidates).not.toHaveBeenCalled()
+	})
+
+	test("reuses a transient cached failure across a decryption context", async () => {
+		const transientError = new Error("cached provider unavailable")
+		const loadCachedOnePasswordPrivateKey = mock(async () => ({
+			status: "transient-failure" as const,
+			error: transientError as never,
+		}))
+		const discoverOnePasswordKeyCandidates = mock(async () => ({
+			status: "available" as const,
+			keys: [],
+			unsupportedKeys: [],
+			unavailableAccounts: [],
+		}))
+		const context = createDecryptEnvironmentDataContext({
+			getPrivateKeys: async () => ({ keys: [], passphraseProtectedKeys: [] }),
+			loadCachedOnePasswordPrivateKey,
+			discoverOnePasswordKeyCandidates,
+			decryptDataKey: (() => Buffer.alloc(32)) as never,
+			decryptData: (async () => "") as never,
+		})
+
+		try {
+			await expect(
+				decryptEnvironmentData(
+					"development",
+					makeEnvironment("fp-development"),
+					context,
+				),
+			).rejects.toBe(transientError)
+			await expect(
+				decryptEnvironmentData(
+					"personal",
+					makeEnvironment("fp-personal"),
+					context,
+				),
+			).rejects.toBe(transientError)
+			expect(loadCachedOnePasswordPrivateKey).toHaveBeenCalledTimes(1)
+			expect(discoverOnePasswordKeyCandidates).not.toHaveBeenCalled()
+		} finally {
+			context.dispose()
+		}
 	})
 
 	test("throws when no private keys are found", async () => {
@@ -74,6 +365,67 @@ describe("decryptEnvironmentData", () => {
 		await expect(
 			decryptEnvironmentData("test-env", makeEnvironment("fp-1"), deps),
 		).rejects.toThrow("No private keys found")
+	})
+
+	test("preserves no-key guidance when 1Password is not installed", async () => {
+		const deps: DecryptEnvironmentDataDeps = {
+			getPrivateKeys: async () => ({ keys: [], passphraseProtectedKeys: [] }),
+			discoverOnePasswordKeyCandidates: async () => ({
+				status: "not-installed",
+				keys: [],
+				unsupportedKeys: [],
+				unavailableAccounts: [],
+			}),
+			decryptDataKey: (() => Buffer.alloc(32)) as never,
+			decryptData: (async () => "") as never,
+		}
+
+		await expect(
+			decryptEnvironmentData("test-env", makeEnvironment("fp-1"), deps),
+		).rejects.toThrow("No private keys found")
+	})
+
+	test("preserves no-key guidance when 1Password discovery finds no supported keys", async () => {
+		const deps: DecryptEnvironmentDataDeps = {
+			getPrivateKeys: async () => ({ keys: [], passphraseProtectedKeys: [] }),
+			discoverOnePasswordKeyCandidates: async () => ({
+				status: "available",
+				keys: [],
+				unsupportedKeys: [],
+				unavailableAccounts: [
+					{
+						label: "1Password - personal.example [AAAA...AAAA]",
+						reason: "authorization-or-access-failed",
+					},
+				],
+			}),
+			decryptDataKey: (() => Buffer.alloc(32)) as never,
+			decryptData: (async () => "") as never,
+		}
+
+		await expect(
+			decryptEnvironmentData("test-env", makeEnvironment("fp-1"), deps),
+		).rejects.toThrow(
+			"No private keys found. Please ensure you have SSH keys in ~/.ssh/ or set DOTENC_PRIVATE_KEY_BASE64. 1Password access was unavailable for: 1Password - personal.example [AAAA...AAAA].",
+		)
+	})
+
+	test("reports an unsupported installed 1Password CLI version", async () => {
+		const deps: DecryptEnvironmentDataDeps = {
+			getPrivateKeys: async () => ({ keys: [], passphraseProtectedKeys: [] }),
+			discoverOnePasswordKeyCandidates: async () => ({
+				status: "unsupported-version",
+				keys: [],
+				unsupportedKeys: [],
+				unavailableAccounts: [],
+			}),
+			decryptDataKey: (() => Buffer.alloc(32)) as never,
+			decryptData: (async () => "") as never,
+		}
+
+		await expect(
+			decryptEnvironmentData("test-env", makeEnvironment("fp-1"), deps),
+		).rejects.toThrow("requires op 2.x")
 	})
 
 	test("throws access denied when no key fingerprint matches", async () => {
@@ -161,6 +513,48 @@ describe("decryptEnvironmentData", () => {
 })
 
 describe("environmentDataKeysEqual", () => {
+	test("reuses provider discovery and private-key loading for both unwraps", async () => {
+		const privateKey = makePrivateKeyEntry("fp-provider", "1Password / key")
+		const loadPrivateKey = mock(async () => privateKey)
+		const discoverOnePasswordKeyCandidates = mock(async () => ({
+			status: "available" as const,
+			keys: [
+				{
+					source: "1password" as const,
+					selector: "1password:a:v:i",
+					name: "key",
+					hint: "ed25519",
+					group: { id: "a", label: "Account A" },
+					publicKey: crypto.createPublicKey(privateKey.privateKey),
+					fingerprint: "fp-provider",
+					algorithm: "ed25519" as const,
+					loadPrivateKey,
+				},
+			],
+			unsupportedKeys: [],
+			unavailableAccounts: [],
+		}))
+		const getPrivateKeys = mock(async () => ({
+			keys: [],
+			passphraseProtectedKeys: [],
+		}))
+
+		expect(
+			await environmentDataKeysEqual(
+				makeEnvironment("fp-provider"),
+				makeEnvironment("fp-provider"),
+				{
+					getPrivateKeys,
+					discoverOnePasswordKeyCandidates,
+					decryptDataKey: (() => Buffer.alloc(32, 1)) as never,
+				},
+			),
+		).toBe(true)
+		expect(getPrivateKeys).toHaveBeenCalledTimes(1)
+		expect(discoverOnePasswordKeyCandidates).toHaveBeenCalledTimes(1)
+		expect(loadPrivateKey).toHaveBeenCalledTimes(1)
+	})
+
 	test("returns true for equal unwrapped keys and zeroes both buffers", async () => {
 		const privateKey = makePrivateKeyEntry("fp-match")
 		const baseDataKey = Buffer.alloc(32, 1)
@@ -240,11 +634,12 @@ describe("environmentDataKeysEqual", () => {
 describe("decryptEnvironment", () => {
 	test("logs guidance when access is denied", async () => {
 		const logError = mock((_message: string) => {})
+		const getPrivateKeys = mock(async () => ({
+			keys: [makePrivateKeyEntry("fp-private", "id_my_key")],
+			passphraseProtectedKeys: [],
+		}))
 		const deps: DecryptEnvironmentDeps = {
-			getPrivateKeys: async () => ({
-				keys: [makePrivateKeyEntry("fp-private", "id_my_key")],
-				passphraseProtectedKeys: [],
-			}),
+			getPrivateKeys,
 			getEnvironmentByName: async () =>
 				makeEnvironment("fp-environment", "alice"),
 			decryptDataKey: (() => Buffer.alloc(32)) as never,
@@ -261,6 +656,59 @@ describe("decryptEnvironment", () => {
 		expect(message).toContain("You do not have access to this environment")
 		expect(message).toContain("id_my_key")
 		expect(message).toContain("alice")
+		expect(message).toContain(
+			"\nThese are your available private keys:\n- id_my_key\n",
+		)
+		expect(message).toContain(
+			"\nPlease ask the owners of any of the following keys to grant you access:\n- alice\n",
+		)
+		expect(getPrivateKeys).toHaveBeenCalledTimes(1)
+	})
+
+	test("lists safe 1Password labels in access-denied guidance", async () => {
+		const logError = mock((_message: string) => {})
+		const loadPrivateKey = mock(async () => makePrivateKeyEntry("fp-provider"))
+		const deps: DecryptEnvironmentDeps = {
+			getPrivateKeys: async () => ({
+				keys: [],
+				passphraseProtectedKeys: [],
+			}),
+			discoverOnePasswordKeyCandidates: async () => ({
+				status: "available",
+				keys: [
+					{
+						source: "1password",
+						selector: "1password:account:vault:item",
+						name: "MacBook Pro",
+						hint: "ed25519 - Private",
+						group: {
+							id: "1password:account",
+							label: "1Password - example [ABCD...WXYZ]",
+						},
+						publicKey: {} as never,
+						fingerprint: "fp-provider",
+						algorithm: "ed25519",
+						loadPrivateKey,
+					},
+				],
+				unsupportedKeys: [],
+				unavailableAccounts: [],
+			}),
+			getEnvironmentByName: async () =>
+				makeEnvironment("fp-environment", "alice"),
+			decryptDataKey: (() => Buffer.alloc(32)) as never,
+			decryptData: (async () => "") as never,
+			logError,
+		}
+
+		await expect(decryptEnvironment("staging", deps)).rejects.toThrow(
+			"Access denied to the environment.",
+		)
+
+		const message = String(logError.mock.calls[0][0])
+		expect(message).toContain("1Password - example [ABCD...WXYZ] / MacBook Pro")
+		expect(message).not.toContain("1password:account:vault:item")
+		expect(loadPrivateKey).not.toHaveBeenCalled()
 	})
 
 	test("logs a specific error when data key decryption fails", async () => {

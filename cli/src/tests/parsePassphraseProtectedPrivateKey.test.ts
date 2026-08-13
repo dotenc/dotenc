@@ -74,7 +74,7 @@ describe("parsePassphraseProtectedPrivateKey", () => {
 				createPrivateKey: mock((_input: unknown) => {
 					throw new Error("no direct parse")
 				}) as never,
-				parseOpenSSHPrivateKey: mock((_input: string) => null),
+				parseOpenSSHPrivateKey: mock((_input: string | Buffer) => null),
 				mkdtemp: mock(async () => "/tmp/dotenc-passphrase-fail") as never,
 				writeFile: mock(async () => undefined) as never,
 				readFile: mock(async () => "ignored") as never,

@@ -5,6 +5,7 @@ import { findEnvironmentsRecursive } from "../helpers/findEnvironmentsRecursive"
 import { getEnvironmentByPath } from "../helpers/getEnvironmentByPath"
 import { getPrivateKeys } from "../helpers/getPrivateKeys"
 import { getPublicKeys } from "../helpers/getPublicKeys"
+import { discoverOnePasswordKeyCandidates } from "../helpers/onePasswordKeyProvider"
 import { resolveProjectRoot } from "../helpers/resolveProjectRoot"
 
 export const whoamiCommand = async () => {
@@ -20,9 +21,27 @@ export const whoamiCommand = async () => {
 	const publicKeys = await getPublicKeys(dotencDir)
 
 	const privateFingerprints = new Set(privateKeys.map((k) => k.fingerprint))
+	const locallyMatchingPublicKeys = publicKeys.filter((publicKey) =>
+		privateFingerprints.has(publicKey.fingerprint),
+	)
 
-	const matchingPublicKeys = publicKeys.filter((pub) =>
-		privateFingerprints.has(pub.fingerprint),
+	const unmatchedPublicKeys = publicKeys.filter(
+		(publicKey) => !privateFingerprints.has(publicKey.fingerprint),
+	)
+	const onePasswordCandidates =
+		locallyMatchingPublicKeys.length === 0 && unmatchedPublicKeys.length > 0
+			? (await discoverOnePasswordKeyCandidates()).keys
+			: []
+	const onePasswordByFingerprint = new Map(
+		onePasswordCandidates.map((candidate) => [
+			candidate.fingerprint,
+			candidate,
+		]),
+	)
+	const matchingPublicKeys = publicKeys.filter(
+		(publicKey) =>
+			privateFingerprints.has(publicKey.fingerprint) ||
+			onePasswordByFingerprint.has(publicKey.fingerprint),
 	)
 
 	if (matchingPublicKeys.length === 0) {
@@ -48,9 +67,17 @@ export const whoamiCommand = async () => {
 		const matchingPrivateKey = privateKeys.find(
 			(pk) => pk.fingerprint === matchingPublicKey.fingerprint,
 		)
+		const matchingOnePasswordKey = onePasswordByFingerprint.get(
+			matchingPublicKey.fingerprint,
+		)
+		const activeKeyName = matchingPrivateKey
+			? matchingPrivateKey.name
+			: matchingOnePasswordKey
+				? `${matchingOnePasswordKey.group.label} / ${matchingOnePasswordKey.name}`
+				: "unknown"
 
 		console.log(`Name: ${matchingPublicKey.name}`)
-		console.log(`Active SSH key: ${matchingPrivateKey?.name ?? "unknown"}`)
+		console.log(`Active SSH key: ${activeKeyName}`)
 		console.log(`Fingerprint: ${matchingPublicKey.fingerprint}`)
 
 		const authorizedEnvironments: string[] = []

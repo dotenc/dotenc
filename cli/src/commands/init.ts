@@ -1,4 +1,3 @@
-import crypto from "node:crypto"
 import { existsSync } from "node:fs"
 import fs from "node:fs/promises"
 import os from "node:os"
@@ -7,7 +6,7 @@ import chalk from "chalk"
 import pkg from "../../package.json"
 import { resolveProjectRoot } from "../helpers/resolveProjectRoot"
 import { setupGitDiff } from "../helpers/setupGitDiff"
-import { choosePrivateKeyPrompt } from "../prompts/choosePrivateKey"
+import { chooseKeyCandidatePrompt } from "../prompts/chooseKeyCandidate"
 import { inputNamePrompt } from "../prompts/inputName"
 import { createCommand } from "./env/create"
 import { keyAddCommand } from "./key/add"
@@ -58,16 +57,19 @@ export const initCommand = async (options: Options) => {
 
 	const username =
 		options.name ||
-		(await inputNamePrompt("What's your name?", os.userInfo().username))
+		(await inputNamePrompt(
+			"Choose a username (defaults to your system username)",
+			os.userInfo().username,
+		))
 
 	if (!username) {
 		console.error(`${chalk.red("Error:")} no name provided.`)
 		process.exit(1)
 	}
 
-	let keyEntry: Awaited<ReturnType<typeof choosePrivateKeyPrompt>>
+	let keyEntry: Awaited<ReturnType<typeof chooseKeyCandidatePrompt>>
 	try {
-		keyEntry = await choosePrivateKeyPrompt(
+		keyEntry = await chooseKeyCandidatePrompt(
 			"Which SSH key would you like to use?",
 			{
 				nonInteractiveHint: "--private-key <name>",
@@ -81,7 +83,7 @@ export const initCommand = async (options: Options) => {
 
 	console.log(`Adding key: ${chalk.cyan(username)} (${keyEntry.algorithm})`)
 
-	const publicKey = crypto.createPublicKey(keyEntry.privateKey)
+	const publicKey = keyEntry.publicKey
 	const publicKeyPem = publicKey
 		.export({ type: "spki", format: "pem" })
 		.toString()

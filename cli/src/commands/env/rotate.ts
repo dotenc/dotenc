@@ -1,7 +1,10 @@
 import { existsSync } from "node:fs"
 import path from "node:path"
 import chalk from "chalk"
-import { decryptEnvironmentData } from "../../helpers/decryptEnvironment"
+import {
+	createDecryptEnvironmentDataContext,
+	decryptEnvironmentData,
+} from "../../helpers/decryptEnvironment"
 import { encryptEnvironment } from "../../helpers/encryptEnvironment"
 import { findEnvironmentsRecursive } from "../../helpers/findEnvironmentsRecursive"
 import { getEnvironmentByPath } from "../../helpers/getEnvironmentByPath"
@@ -46,21 +49,30 @@ export const rotateCommand = async (
 			}
 		}
 
-		for (const envFile of envFiles) {
-			try {
-				const envJson = await getEnvironmentByPath(envFile.filePath)
-				const content = await decryptEnvironmentData(envFile.name, envJson)
-				await encryptEnvironment(envFile.name, content, {
-					baseDir: envFile.dir,
-				})
-				const label = path.relative(projectRoot, envFile.dir) || "."
-				console.log(`${chalk.green("✓")} ${envFile.name} (${label})`)
-			} catch (error) {
-				const label = path.relative(projectRoot, envFile.dir) || "."
-				console.error(
-					`${chalk.red("✗")} ${envFile.name} (${label}): ${error instanceof Error ? error.message : "unknown error"}`,
-				)
+		const decryptionContext = createDecryptEnvironmentDataContext()
+		try {
+			for (const envFile of envFiles) {
+				try {
+					const envJson = await getEnvironmentByPath(envFile.filePath)
+					const content = await decryptEnvironmentData(
+						envFile.name,
+						envJson,
+						decryptionContext,
+					)
+					await encryptEnvironment(envFile.name, content, {
+						baseDir: envFile.dir,
+					})
+					const label = path.relative(projectRoot, envFile.dir) || "."
+					console.log(`${chalk.green("✓")} ${envFile.name} (${label})`)
+				} catch (error) {
+					const label = path.relative(projectRoot, envFile.dir) || "."
+					console.error(
+						`${chalk.red("✗")} ${envFile.name} (${label}): ${error instanceof Error ? error.message : "unknown error"}`,
+					)
+				}
 			}
+		} finally {
+			decryptionContext.dispose()
 		}
 		return
 	}

@@ -4,6 +4,7 @@ import * as realFs from "node:fs"
 import * as realFsPromises from "node:fs/promises"
 import realOs from "node:os"
 import path from "node:path"
+import type { KeyCandidate } from "../helpers/keyCandidate"
 
 const CWD = "/workspace"
 const HOME = "/home/tester"
@@ -48,16 +49,34 @@ const isPassphraseProtectedMock = mock((_content: string) => false)
 const parseOpenSSHPrivateKeyMock = mock(
 	(_content: string) => null as crypto.KeyObject | null,
 )
-const choosePrivateKeyPromptMock = mock(async (_message: string) => {
-	const { privateKey } = crypto.generateKeyPairSync("ed25519")
+function makeKeyCandidate(
+	name = "id_ed25519",
+	source: KeyCandidate["source"] = "filesystem",
+): KeyCandidate {
+	const { privateKey, publicKey } = crypto.generateKeyPairSync("ed25519")
 	return {
-		name: "id_ed25519",
-		privateKey,
+		source,
+		selector: source === "1password" ? "1password:account:vault:item" : name,
+		name,
+		hint: "ed25519",
+		group:
+			source === "1password"
+				? { id: "1password:account", label: "1Password - example" }
+				: { id: "filesystem", label: "Local - ~/.ssh" },
+		publicKey,
 		fingerprint: "fingerprint",
-		algorithm: "ed25519" as const,
-		rawPublicKey: Buffer.alloc(32),
+		algorithm: "ed25519",
+		loadPrivateKey: async () => ({
+			name,
+			privateKey,
+			fingerprint: "fingerprint",
+			algorithm: "ed25519",
+		}),
 	}
-})
+}
+const chooseKeyCandidatePromptMock = mock(
+	async (_message: string): Promise<KeyCandidate> => makeKeyCandidate(),
+)
 const inputKeyPromptMock = mock(async (_message: string) => "")
 const inputNamePromptMock = mock(async (_message: string) => "alice")
 const promptSelectMock = mock(async () => "paste" as "choose" | "paste")
@@ -88,8 +107,8 @@ mock.module("../helpers/isPassphraseProtected", () => ({
 mock.module("../helpers/parseOpenSSHKey", () => ({
 	parseOpenSSHPrivateKey: parseOpenSSHPrivateKeyMock,
 }))
-mock.module("../prompts/choosePrivateKey", () => ({
-	choosePrivateKeyPrompt: choosePrivateKeyPromptMock,
+mock.module("../prompts/chooseKeyCandidate", () => ({
+	chooseKeyCandidatePrompt: chooseKeyCandidatePromptMock,
 }))
 mock.module("../prompts/inputKey", () => ({
 	inputKeyPrompt: inputKeyPromptMock,
@@ -138,16 +157,9 @@ beforeEach(() => {
 	}))
 	isPassphraseProtectedMock.mockImplementation(() => false)
 	parseOpenSSHPrivateKeyMock.mockImplementation(() => null)
-	choosePrivateKeyPromptMock.mockImplementation(async () => {
-		const { privateKey: pk } = crypto.generateKeyPairSync("ed25519")
-		return {
-			name: "id_ed25519",
-			privateKey: pk,
-			fingerprint: "fingerprint",
-			algorithm: "ed25519" as const,
-			rawPublicKey: Buffer.alloc(32),
-		}
-	})
+	chooseKeyCandidatePromptMock.mockImplementation(async () =>
+		makeKeyCandidate(),
+	)
 	inputKeyPromptMock.mockImplementation(async () => "")
 	inputNamePromptMock.mockImplementation(async () => "alice")
 	promptSelectMock.mockImplementation(async () => "paste")
@@ -552,6 +564,26 @@ describe("keyAddCommand", () => {
 		logSpy.mockRestore()
 	})
 
+	test("supports a discovered --from-private-key candidate", async () => {
+		const selected = makeKeyCandidate("GitHub")
+		chooseKeyCandidatePromptMock.mockImplementation(async () => selected)
+		const logSpy = spyOn(console, "log").mockImplementation(() => {})
+
+		await keyAddCommand("alice", {
+			fromPrivateKey: "1password:account:vault:item",
+		})
+
+		expect(chooseKeyCandidatePromptMock).toHaveBeenCalledWith(
+			"Which SSH key do you want to add?",
+			{
+				nonInteractiveHint: "--from-private-key <name>",
+				preferredKeyName: "1password:account:vault:item",
+			},
+		)
+		expect(writes.has(path.join(CWD, ".dotenc", "alice.pub"))).toBe(true)
+		logSpy.mockRestore()
+	})
+
 	test("interactive paste mode rejects empty input", async () => {
 		promptSelectMock.mockImplementation(async () => "paste")
 		inputKeyPromptMock.mockImplementation(async () => "")
@@ -568,7 +600,7 @@ describe("keyAddCommand", () => {
 
 	test("interactive choose mode handles prompt errors", async () => {
 		promptSelectMock.mockImplementation(async () => "choose")
-		choosePrivateKeyPromptMock.mockImplementation(async () => {
+		chooseKeyCandidatePromptMock.mockImplementation(async () => {
 			throw new Error("No private keys found")
 		})
 
@@ -583,17 +615,10 @@ describe("keyAddCommand", () => {
 	})
 
 	test("interactive choose mode uses selected key name when CLI name is missing", async () => {
-		const { privateKey } = crypto.generateKeyPairSync("ed25519")
-
 		promptSelectMock.mockImplementation(async () => "choose")
-		choosePrivateKeyPromptMock.mockImplementation(async () => ({
-			name: "selected_name",
-			privateKey,
-			fingerprint: "fingerprint",
-			algorithm: "ed25519" as const,
-			rawSeed: Buffer.alloc(32),
-			rawPublicKey: Buffer.alloc(32),
-		}))
+		chooseKeyCandidatePromptMock.mockImplementation(async () =>
+			makeKeyCandidate("selected_name"),
+		)
 
 		const logSpy = spyOn(console, "log").mockImplementation(() => {})
 		await keyAddCommand(undefined, undefined)
@@ -601,6 +626,24 @@ describe("keyAddCommand", () => {
 		expect(writes.has(path.join(CWD, ".dotenc", "selected_name.pub"))).toBe(
 			true,
 		)
+		logSpy.mockRestore()
+	})
+
+	test("prompts for a project key name when a 1Password title is selected", async () => {
+		promptSelectMock.mockImplementation(async () => "choose")
+		chooseKeyCandidatePromptMock.mockImplementation(async () =>
+			makeKeyCandidate("MacBook Pro", "1password"),
+		)
+		inputNamePromptMock.mockImplementation(async () => "macbook-pro")
+
+		const logSpy = spyOn(console, "log").mockImplementation(() => {})
+		await keyAddCommand(undefined, undefined)
+
+		expect(inputNamePromptMock).toHaveBeenCalledWith(
+			"What name do you want to give to the new public key?",
+			"MacBook Pro",
+		)
+		expect(writes.has(path.join(CWD, ".dotenc", "macbook-pro.pub"))).toBe(true)
 		logSpy.mockRestore()
 	})
 

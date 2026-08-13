@@ -13,7 +13,12 @@ const makeEnvFile = (name: string, dir = ROOT): EnvFile => ({
 
 const chooseEnvironmentPrompt = mock(async (_msg: string) => "production")
 const confirmPrompt = mock(async (_msg: string) => true)
-const decryptEnvironmentData = mock(async () => "A=1")
+const decryptEnvironmentData = mock(
+	async (_name?: string, _env?: unknown, _context?: unknown) => "A=1",
+)
+const disposeDecryptionContext = mock(() => {})
+const decryptionContext = { dispose: disposeDecryptionContext }
+const createDecryptEnvironmentDataContext = mock(() => decryptionContext)
 const encryptEnvironment = mock(
 	async (_name: string, _content: string, _options?: object) => {},
 )
@@ -37,6 +42,7 @@ const existsSync = mock((_p: string) => true)
 mock.module("../prompts/chooseEnvironment", () => ({ chooseEnvironmentPrompt }))
 mock.module("../prompts/confirm", () => ({ confirmPrompt }))
 mock.module("../helpers/decryptEnvironment", () => ({
+	createDecryptEnvironmentDataContext,
 	decryptEnvironmentData,
 	decryptEnvironment: decryptEnvironmentData,
 }))
@@ -58,6 +64,8 @@ describe("rotateCommand (single)", () => {
 		chooseEnvironmentPrompt.mockClear()
 		confirmPrompt.mockClear()
 		decryptEnvironmentData.mockClear()
+		createDecryptEnvironmentDataContext.mockClear()
+		disposeDecryptionContext.mockClear()
 		encryptEnvironment.mockClear()
 		findEnvironmentsRecursive.mockClear()
 		getEnvironmentByPath.mockClear()
@@ -213,6 +221,8 @@ describe("rotateCommand --all", () => {
 		chooseEnvironmentPrompt.mockClear()
 		confirmPrompt.mockClear()
 		decryptEnvironmentData.mockClear()
+		createDecryptEnvironmentDataContext.mockClear()
+		disposeDecryptionContext.mockClear()
 		encryptEnvironment.mockClear()
 		findEnvironmentsRecursive.mockClear()
 		getEnvironmentByPath.mockClear()
@@ -255,6 +265,9 @@ describe("rotateCommand --all", () => {
 		await rotateCommand("", true, true)
 
 		expect(decryptEnvironmentData).toHaveBeenCalledTimes(2)
+		expect(decryptEnvironmentData.mock.calls[0][2]).toBe(decryptionContext)
+		expect(decryptEnvironmentData.mock.calls[1][2]).toBe(decryptionContext)
+		expect(disposeDecryptionContext).toHaveBeenCalledTimes(1)
 		expect(encryptEnvironment).toHaveBeenCalledTimes(2)
 		logSpy.mockRestore()
 		cwdSpy.mockRestore()

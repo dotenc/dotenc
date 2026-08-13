@@ -9,6 +9,7 @@ import {
 } from "bun:test"
 import * as realFs from "node:fs"
 import path from "node:path"
+import type { DecryptEnvironmentDataContext } from "../helpers/decryptEnvironment"
 
 const ROOT = "/workspace"
 const SUBDIR = path.join(ROOT, "packages", "web")
@@ -18,8 +19,11 @@ const spawnMock = mock((..._args: unknown[]) => {
 })
 const existsSyncMock = mock((_p: unknown) => false)
 const decryptEnvironmentData = mock(
-	async (_name?: string, _env?: unknown) => "KEY=value",
+	async (_name?: string, _env?: unknown, _context?: unknown) => "KEY=value",
 )
+const disposeDecryptionContext = mock(() => {})
+const decryptionContext = { dispose: disposeDecryptionContext }
+const createDecryptEnvironmentDataContext = mock(() => decryptionContext)
 const getEnvironmentByPath = mock(async (_fp: string) => ({
 	version: 2 as const,
 	keys: [] as { name: string }[],
@@ -37,7 +41,10 @@ const resolveProjectRoot = mock(() => ROOT)
 
 mock.module("node:child_process", () => ({ spawn: spawnMock }))
 mock.module("node:fs", () => ({ ...realFs, existsSync: existsSyncMock }))
-mock.module("../helpers/decryptEnvironment", () => ({ decryptEnvironmentData }))
+mock.module("../helpers/decryptEnvironment", () => ({
+	createDecryptEnvironmentDataContext,
+	decryptEnvironmentData,
+}))
 mock.module("../helpers/getEnvironmentByPath", () => ({ getEnvironmentByPath }))
 mock.module("../helpers/parseEnv", () => ({ parseEnv }))
 mock.module("../helpers/validateEnvironmentName", () => ({
@@ -55,6 +62,8 @@ beforeEach(() => {
 	spawnMock.mockClear()
 	existsSyncMock.mockClear()
 	decryptEnvironmentData.mockClear()
+	createDecryptEnvironmentDataContext.mockClear()
+	disposeDecryptionContext.mockClear()
 	getEnvironmentByPath.mockClear()
 	parseEnv.mockClear()
 	validateEnvironmentName.mockClear()
@@ -186,6 +195,7 @@ describe("runCommand", () => {
 		})
 		parseEnv.mockImplementation(() => ({ PERSONAL_SECRET: "personal456" }))
 		spawnMock.mockImplementation(() => {
+			expect(disposeDecryptionContext).toHaveBeenCalledTimes(1)
 			const child = {
 				on: (_event: string, _cb: (code: number | null) => void) => child,
 			}
@@ -204,8 +214,38 @@ describe("runCommand", () => {
 			),
 		).toBe(true)
 		expect(spawnMock).toHaveBeenCalledTimes(1)
+		expect(createDecryptEnvironmentDataContext).toHaveBeenCalledTimes(1)
+		expect(decryptEnvironmentData.mock.calls).toHaveLength(2)
+		expect(decryptEnvironmentData.mock.calls[0][2]).toBe(decryptionContext)
+		expect(decryptEnvironmentData.mock.calls[1][2]).toBe(decryptionContext)
+		expect(disposeDecryptionContext).toHaveBeenCalledTimes(1)
 		errSpy.mockRestore()
 		exitSpy.mockRestore()
+	})
+
+	test("does not dispose a caller-owned decryption context", async () => {
+		const externalDispose = mock(() => {})
+		const externalContext = {
+			...decryptionContext,
+			dispose: externalDispose,
+		} as unknown as DecryptEnvironmentDataContext
+		const filePath = path.join(ROOT, ".env.staging.enc")
+		existsSyncMock.mockImplementation((p) => p === filePath)
+		spawnMock.mockImplementation(() => {
+			const child = {
+				on: (_event: string, _cb: (code: number | null) => void) => child,
+			}
+			return child as never
+		})
+
+		await runCommand("echo", ["ok"], {
+			env: "staging",
+			decryptionContext: externalContext,
+		})
+
+		expect(createDecryptEnvironmentDataContext).not.toHaveBeenCalled()
+		expect(decryptEnvironmentData.mock.calls[0][2]).toBe(externalContext)
+		expect(externalDispose).not.toHaveBeenCalled()
 	})
 
 	test("exits when strict mode is enabled and any environment fails", async () => {
