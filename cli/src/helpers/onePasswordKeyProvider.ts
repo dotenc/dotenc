@@ -79,6 +79,11 @@ export type OnePasswordDiscoveryResult = {
 	unavailableAccounts: UnavailableOnePasswordAccount[]
 }
 
+export type CachedOnePasswordPrivateKeyResult =
+	| { status: "miss" }
+	| { status: "loaded"; privateKey: PrivateKeyEntry }
+	| { status: "transient-failure"; error: OnePasswordProviderError }
+
 export class OnePasswordProviderError extends Error {
 	constructor(
 		message: string,
@@ -101,6 +106,14 @@ function clearChunks(chunks: Buffer[]) {
 	for (const chunk of chunks) chunk.fill(0)
 }
 
+function opEnvironment(): NodeJS.ProcessEnv {
+	const env = { ...process.env }
+	for (const name of Object.keys(env)) {
+		if (name.startsWith("DOTENC_PRIVATE_KEY")) delete env[name]
+	}
+	return env
+}
+
 export const runOpCommand: RunOpCommand = (
 	args,
 	options = {},
@@ -115,6 +128,7 @@ export const runOpCommand: RunOpCommand = (
 		let timer: ReturnType<typeof setTimeout>
 
 		const child = spawn("op", args, {
+			env: opEnvironment(),
 			stdio: ["ignore", "pipe", "pipe"],
 			windowsHide: true,
 		})
@@ -542,7 +556,7 @@ const defaultCachedKeyDeps: LoadCachedOnePasswordPrivateKeyDeps = {
 export async function loadCachedOnePasswordPrivateKey(
 	fingerprints: string[],
 	deps: LoadCachedOnePasswordPrivateKeyDeps = defaultCachedKeyDeps,
-): Promise<PrivateKeyEntry | undefined> {
+): Promise<CachedOnePasswordPrivateKeyResult> {
 	const cached = (
 		await Promise.all(
 			[...new Set(fingerprints)].map(async (fingerprint) => {
@@ -560,14 +574,17 @@ export async function loadCachedOnePasswordPrivateKey(
 
 	for (const { fingerprint, locator } of cached) {
 		try {
-			return (
-				await loadPrivateKeyFromLocator(
-					fingerprint,
-					locator,
-					"cached SSH key",
-					deps.runOpCommand,
-				)
-			).entry
+			return {
+				status: "loaded",
+				privateKey: (
+					await loadPrivateKeyFromLocator(
+						fingerprint,
+						locator,
+						"cached SSH key",
+						deps.runOpCommand,
+					)
+				).entry,
+			}
 		} catch (error) {
 			if (
 				error instanceof OnePasswordProviderError &&
@@ -575,11 +592,23 @@ export async function loadCachedOnePasswordPrivateKey(
 					error.code === "fingerprint-mismatch")
 			) {
 				await deps.removeLocator(fingerprint)
+				continue
+			}
+			return {
+				status: "transient-failure",
+				error:
+					error instanceof OnePasswordProviderError
+						? error
+						: new OnePasswordProviderError(
+								"1Password CLI could not complete the cached key lookup.",
+								"command-failed",
+								{ cause: error },
+							),
 			}
 		}
 	}
 
-	return undefined
+	return { status: "miss" }
 }
 
 function emptyResult(

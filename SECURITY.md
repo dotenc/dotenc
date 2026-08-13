@@ -104,7 +104,9 @@ flows create a new `~/.ssh` file only after explicit user confirmation.
 CLI exposes configured accounts, dotenc can discover SSH Key items through
 their public metadata. Interactive `dotenc init` and `dotenc key add` defer that
 discovery until the user explicitly chooses the 1Password action; local key
-selection in those pickers does not invoke `op`. Accounts are addressed by
+selection in those pickers does not invoke `op`. When decryption finds only
+passphrase-protected local keys and no cached provider match, dotenc reports the
+passphrase guidance before provider discovery. Accounts are addressed by
 complete `account_uuid`; vaults and items are addressed by stable IDs. Those
 commands read only the ID-addressed `public_key` field during discovery; they do
 not request a full item or private field during discovery or ordinary selection.
@@ -144,7 +146,10 @@ Structured output is schema-checked, bounded, and subject to a timeout;
 arbitrary stdout and stderr are not included in diagnostics. Buffered private
 key output, including chunks delivered after a timeout or output-limit failure,
 is overwritten before release. OpenSSH parsing also clears decoded key buffers
-and temporary DER copies.
+and temporary DER copies. The `op` child receives a sanitized copy of the
+process environment with every `DOTENC_PRIVATE_KEY*` bootstrap variable
+removed, while retaining the ordinary user and 1Password environment needed by
+the installed CLI.
 
 Account, vault, and item IDs are local metadata and are never persisted in
 project files. The locator cache stores only `fingerprint -> accountId, vaultId,
@@ -155,7 +160,8 @@ name, account URL, project path, negative result, or authorization decision is
 cached. The cache is treated as untrusted and disposable: every retrieved
 private key is fingerprint-verified, and invalid or mismatched locators are
 evicted. Transient CLI, timeout, and authorization failures preserve the
-locator so a later process can retry without a full provider scan.
+locator and fail closed for the current operation without a full provider scan,
+so a later process can retry the direct lookup.
 
 **In-memory zeroing:** After the private key is used to decrypt the data key, the raw key bytes are explicitly overwritten with zeros before being released:
 

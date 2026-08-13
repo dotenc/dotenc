@@ -362,7 +362,9 @@ describe("loadCachedOnePasswordPrivateKey", () => {
 				removeLocator,
 			})
 
-			expect(result?.fingerprint).toBe(fingerprint)
+			expect(result.status).toBe("loaded")
+			if (result.status !== "loaded") throw new Error("expected cached key")
+			expect(result.privateKey.fingerprint).toBe(fingerprint)
 			expect(calls).toEqual([
 				[
 					"read",
@@ -398,7 +400,7 @@ describe("loadCachedOnePasswordPrivateKey", () => {
 					}),
 					removeLocator,
 				}),
-			).toBeUndefined()
+			).toEqual({ status: "miss" })
 			expect(removeLocator).toHaveBeenCalledWith(fingerprint)
 		} finally {
 			fs.rmSync(expected.directory, { recursive: true, force: true })
@@ -424,7 +426,10 @@ describe("loadCachedOnePasswordPrivateKey", () => {
 			removeLocator,
 		})
 
-		expect(result).toBeUndefined()
+		expect(result).toMatchObject({
+			status: "transient-failure",
+			error: { code },
+		})
 		expect(removeLocator).not.toHaveBeenCalled()
 	})
 })
@@ -464,6 +469,47 @@ describe("loadOnePasswordKeyCandidateBySelector", () => {
 })
 
 describe("runOpCommand", () => {
+	test("does not forward dotenc bootstrap private keys to op", async () => {
+		const directory = fs.mkdtempSync(
+			path.join(os.tmpdir(), "dotenc-op-process-"),
+		)
+		const opPath = path.join(directory, "op")
+		fs.writeFileSync(
+			opPath,
+			`#!/bin/sh
+if env | grep -q '^DOTENC_PRIVATE_KEY'; then exit 23; fi
+if [ "$DOTENC_PROVIDER_TEST" != "preserved" ]; then exit 24; fi
+printf 'ok'
+`,
+		)
+		fs.chmodSync(opPath, 0o755)
+		const changedEnvironmentNames = [
+			"PATH",
+			"DOTENC_PRIVATE_KEY",
+			"DOTENC_PRIVATE_KEY_BASE64",
+			"DOTENC_PRIVATE_KEY_PASSPHRASE",
+			"DOTENC_PROVIDER_TEST",
+		] as const
+		const originalEnvironment = new Map(
+			changedEnvironmentNames.map((name) => [name, process.env[name]]),
+		)
+		process.env.PATH = `${directory}:${process.env.PATH ?? ""}`
+		process.env.DOTENC_PRIVATE_KEY = "synthetic-private-key"
+		process.env.DOTENC_PRIVATE_KEY_BASE64 = "synthetic-base64-key"
+		process.env.DOTENC_PRIVATE_KEY_PASSPHRASE = "synthetic-passphrase"
+		process.env.DOTENC_PROVIDER_TEST = "preserved"
+
+		try {
+			expect((await runOpCommand(["test"])).toString("utf8")).toBe("ok")
+		} finally {
+			for (const [name, value] of originalEnvironment) {
+				if (value === undefined) delete process.env[name]
+				else process.env[name] = value
+			}
+			fs.rmSync(directory, { recursive: true, force: true })
+		}
+	})
+
 	test("enforces output limits without exposing provider output", async () => {
 		const directory = fs.mkdtempSync(
 			path.join(os.tmpdir(), "dotenc-op-process-"),

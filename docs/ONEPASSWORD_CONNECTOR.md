@@ -314,8 +314,9 @@ Commands that need to decrypt an environment should resolve keys in this order:
 5. When a cached locator exists, retrieve that item directly and require its
    recalculated fingerprint to match the environment recipient.
 6. If the cache misses or the locator is evicted after an invalid or mismatched
-   read, discover 1Password public candidates once. Preserve the locator after
-   transient CLI, timeout, or authorization failures.
+   read, discover 1Password public candidates once. Preserve the locator and
+   stop the current operation after a transient CLI, timeout, or authorization
+   failure; do not follow a dismissed direct read with full discovery.
 7. Find a 1Password candidate whose canonical fingerprint matches an
    authorized recipient.
 8. Retrieve only that item's private key.
@@ -324,7 +325,11 @@ Commands that need to decrypt an environment should resolve keys in this order:
 10. Cache the verified fingerprint-to-locator mapping and use the existing
     data-key decryption path.
 11. Release references to the retrieved private material as soon as the
-   operation completes.
+    operation completes.
+
+If local discovery finds only passphrase-protected keys and the locator cache
+misses, return the existing passphrase guidance before full provider discovery.
+Users with no local key material still retain the normal 1Password fallback.
 
 Private key retrieval should use an ID-addressed secret reference and the
 OpenSSH output format supported by the CLI, equivalent to:
@@ -358,6 +363,9 @@ Identity-only flows may discover public metadata for project identities that
 do not match a local private key. Plain `dev` keeps a local match provider-free;
 an explicit `dev --identity` may broaden discovery so a 1Password-only project
 identity remains selectable without retrieving private material early.
+`whoami` also remains provider-free when at least one project identity matches
+a local key, even if the repository contains unmatched teammate keys. It uses
+public-only discovery only when no local project identity matches.
 
 ## Security boundaries
 
@@ -425,7 +433,10 @@ provider structure and should be handled as private local metadata:
   cache miss;
 - treat the cache as untrusted metadata: recalculate the retrieved private
   key's fingerprint before use, evict invalid or mismatched locators, and
-  preserve locators across transient CLI, timeout, or authorization failures.
+  preserve locators and fail closed without discovery across transient CLI,
+  timeout, or authorization failures;
+- remove every `DOTENC_PRIVATE_KEY*` bootstrap variable from the environment
+  passed to the trusted `op` child process.
 
 On Unix-like systems the default root is `~/.cache/dotenc`, overridden by an
 absolute `XDG_CACHE_HOME`. Windows uses `%LOCALAPPDATA%\dotenc\Cache`. Each
@@ -440,12 +451,13 @@ cannot overwrite unrelated mappings.
 | No configured accounts | Preserve current behavior; mention 1Password only when explaining why no key was available. |
 | Account authorization is required | Allow the native 1Password dialog to appear. |
 | Authorization is declined | Report the affected account as unavailable; do not call it empty. |
-| A cached read has a transient CLI, timeout, or authorization failure | Preserve the locator and fail closed for the current operation. |
+| A cached read has a transient CLI, timeout, or authorization failure | Preserve the locator and fail closed for the current operation without full discovery. |
 | One of several accounts fails | Keep successful categories available and explicitly report the unavailable account. |
 | No supported SSH Key items | Omit that account's empty key category; when no local key exists, preserve the no-private-keys guidance. |
+| Only passphrase-protected local keys are available and the locator cache misses | Return passphrase guidance before full provider discovery. |
 | Duplicate account or item labels | Keep entries distinct through complete ID-backed values and disambiguating hints. |
 | Cached private-key data is invalid or mismatched | Evict the locator; normal decryptions rediscover once, while `textconv` returns encrypted content without scanning. |
-| Cached item is moved or removed, or the CLI/authorization is unavailable | Preserve the ambiguous locator failure; normal decryptions may discover for the current operation, while `textconv` returns encrypted content without scanning. |
+| Cached item is moved or removed, or the CLI/authorization is unavailable | Preserve the ambiguous locator failure and fail closed without scanning; a later explicit selection can rebuild the locator. |
 | Confirmed local-copy write fails | Remove any partially created file, preserve existing files, warn safely, and continue with locator-only behavior. |
 | Public/private fingerprint mismatch | Reject the key and fail closed before data-key decryption. |
 | No candidate matches an environment | Return access denied only when at least one supported local or provider key was found; otherwise preserve the no-private-keys guidance. |

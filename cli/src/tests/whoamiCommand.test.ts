@@ -196,7 +196,7 @@ describe("whoamiCommand", () => {
 		cwdSpy.mockRestore()
 	})
 
-	test("prints both local and 1Password-only project identities", async () => {
+	test("keeps local identity output provider-free when teammates are unmatched", async () => {
 		const cwdSpy = spyOn(process, "cwd").mockReturnValue(ROOT)
 		const logSpy = spyOn(console, "log").mockImplementation(() => {})
 		const logErrorSpy = spyOn(console, "error").mockImplementation(() => {})
@@ -239,9 +239,9 @@ describe("whoamiCommand", () => {
 		const logged = logSpy.mock.calls.map((call) => String(call[0])).join("\n")
 		expect(logged).toContain("Name: alice")
 		expect(logged).toContain("Active SSH key: id_ed25519")
-		expect(logged).toContain("Name: deploy")
-		expect(logged).toContain("1Password - example.1password.com")
-		expect(discoverOnePasswordKeyCandidates).toHaveBeenCalledTimes(1)
+		expect(logged).not.toContain("Name: deploy")
+		expect(logged).not.toContain("1Password - example.1password.com")
+		expect(discoverOnePasswordKeyCandidates).not.toHaveBeenCalled()
 		expect(loadPrivateKey).not.toHaveBeenCalled()
 		logSpy.mockRestore()
 		logErrorSpy.mockRestore()

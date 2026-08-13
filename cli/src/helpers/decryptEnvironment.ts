@@ -8,6 +8,7 @@ import { getEnvironmentByName } from "./getEnvironmentByName"
 import { getPrivateKeys, type PrivateKeyEntry } from "./getPrivateKeys"
 import type { KeyCandidate } from "./keyCandidate"
 import {
+	type CachedOnePasswordPrivateKeyResult,
 	discoverOnePasswordKeyCandidates,
 	loadCachedOnePasswordPrivateKey,
 } from "./onePasswordKeyProvider"
@@ -49,6 +50,12 @@ export const createDecryptionKeyContext = (
 		| ReturnType<typeof discoverOnePasswordKeyCandidates>
 		| undefined
 	const providerPrivateKeys = new Map<string, PrivateKeyEntry>()
+	let cachedProviderTransientFailure:
+		| Extract<
+				CachedOnePasswordPrivateKeyResult,
+				{ status: "transient-failure" }
+		  >
+		| undefined
 	let providerPrivateKeyLoadTail: Promise<void> = Promise.resolve()
 	let disposed = false
 	const discoverOnePassword = deps.discoverOnePasswordKeyCandidates
@@ -81,14 +88,24 @@ export const createDecryptionKeyContext = (
 		loadCachedOnePasswordPrivateKey: deps.loadCachedOnePasswordPrivateKey
 			? (fingerprints) =>
 					serializeProviderPrivateKeyLoad(async () => {
-						const loaded = loadedProviderPrivateKey(fingerprints)
-						if (loaded) return loaded
-						const privateKey =
-							await deps.loadCachedOnePasswordPrivateKey?.(fingerprints)
-						if (privateKey) {
-							providerPrivateKeys.set(privateKey.fingerprint, privateKey)
+						if (cachedProviderTransientFailure) {
+							return cachedProviderTransientFailure
 						}
-						return privateKey
+						const loaded = loadedProviderPrivateKey(fingerprints)
+						if (loaded) {
+							return { status: "loaded", privateKey: loaded } as const
+						}
+						const result =
+							await deps.loadCachedOnePasswordPrivateKey?.(fingerprints)
+						if (result?.status === "loaded") {
+							providerPrivateKeys.set(
+								result.privateKey.fingerprint,
+								result.privateKey,
+							)
+						} else if (result?.status === "transient-failure") {
+							cachedProviderTransientFailure = result
+						}
+						return result ?? { status: "miss" }
 					})
 			: undefined,
 		discoverOnePasswordKeyCandidates: discoverOnePassword
@@ -110,6 +127,7 @@ export const createDecryptionKeyContext = (
 			disposed = true
 			privateKeysPromise = undefined
 			discoveryPromise = undefined
+			cachedProviderTransientFailure = undefined
 			providerPrivateKeys.clear()
 		},
 	}
@@ -159,6 +177,9 @@ const unwrapEnvironmentDataKey = async (
 		| undefined
 	let providerKeyNames: string[] = []
 	let unavailableProviderAccountLabels: string[] = []
+	let cachedProviderResult: CachedOnePasswordPrivateKeyResult = {
+		status: "miss",
+	}
 
 	for (const privateKeyEntry of availablePrivateKeys) {
 		grantedKey = environment.keys.find((key) => {
@@ -172,14 +193,26 @@ const unwrapEnvironmentDataKey = async (
 	}
 
 	if (!grantedKey && deps.loadCachedOnePasswordPrivateKey) {
-		selectedPrivateKey = await deps.loadCachedOnePasswordPrivateKey(
+		cachedProviderResult = await deps.loadCachedOnePasswordPrivateKey(
 			environment.keys.map((key) => key.fingerprint),
 		)
-		if (selectedPrivateKey) {
+		if (cachedProviderResult.status === "loaded") {
+			selectedPrivateKey = cachedProviderResult.privateKey
 			grantedKey = environment.keys.find(
 				(key) => key.fingerprint === selectedPrivateKey?.fingerprint,
 			)
+		} else if (cachedProviderResult.status === "transient-failure") {
+			throw cachedProviderResult.error
 		}
+	}
+
+	if (
+		!grantedKey &&
+		cachedProviderResult.status === "miss" &&
+		availablePrivateKeys.length === 0 &&
+		passphraseProtectedKeys.length > 0
+	) {
+		throw new Error(passphraseProtectedKeyError(passphraseProtectedKeys))
 	}
 
 	if (!grantedKey && deps.discoverOnePasswordKeyCandidates) {
@@ -210,12 +243,6 @@ const unwrapEnvironmentDataKey = async (
 	}
 
 	if (!grantedKey || !selectedPrivateKey) {
-		if (
-			availablePrivateKeys.length === 0 &&
-			passphraseProtectedKeys.length > 0
-		) {
-			throw new Error(passphraseProtectedKeyError(passphraseProtectedKeys))
-		}
 		if (providerStatus === "unsupported-version") {
 			throw new Error(
 				"The installed 1Password CLI version is unsupported. dotenc requires op 2.x.",
@@ -331,11 +358,16 @@ export const decryptEnvironment = async (
 					? error.availablePrivateKeyNames
 					: ["(none)"]
 			deps.logError(
-				`You do not have access to this environment.\n
-		      These are your available private keys:\n
-		      ${availablePrivateKeys.map((name) => `- ${chalk.green(name)}`).join("\n")}\n
-      Please ask the owners of any of the following keys to grant you access:\n
-      ${environmentJson.keys.map((key) => `- ${chalk.green(key.name)}`).join("\n")}\n`,
+				[
+					"You do not have access to this environment.",
+					"",
+					"These are your available private keys:",
+					...availablePrivateKeys.map((name) => `- ${chalk.green(name)}`),
+					"",
+					"Please ask the owners of any of the following keys to grant you access:",
+					...environmentJson.keys.map((key) => `- ${chalk.green(key.name)}`),
+					"",
+				].join("\n"),
 			)
 		}
 

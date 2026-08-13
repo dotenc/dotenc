@@ -21,12 +21,15 @@ export const whoamiCommand = async () => {
 	const publicKeys = await getPublicKeys(dotencDir)
 
 	const privateFingerprints = new Set(privateKeys.map((k) => k.fingerprint))
+	const locallyMatchingPublicKeys = publicKeys.filter((publicKey) =>
+		privateFingerprints.has(publicKey.fingerprint),
+	)
 
 	const unmatchedPublicKeys = publicKeys.filter(
 		(publicKey) => !privateFingerprints.has(publicKey.fingerprint),
 	)
 	const onePasswordCandidates =
-		unmatchedPublicKeys.length > 0
+		locallyMatchingPublicKeys.length === 0 && unmatchedPublicKeys.length > 0
 			? (await discoverOnePasswordKeyCandidates()).keys
 			: []
 	const onePasswordByFingerprint = new Map(

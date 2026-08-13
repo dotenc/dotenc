@@ -21593,6 +21593,14 @@ function clearChunks(chunks) {
   for (const chunk of chunks)
     chunk.fill(0);
 }
+function opEnvironment() {
+  const env2 = { ...process.env };
+  for (const name of Object.keys(env2)) {
+    if (name.startsWith("DOTENC_PRIVATE_KEY"))
+      delete env2[name];
+  }
+  return env2;
+}
 var runOpCommand = (args, options = {}) => new Promise((resolve, reject) => {
   const maxOutputBytes = options.maxOutputBytes ?? OP_METADATA_MAX_BYTES;
   const timeoutMs = options.timeoutMs ?? OP_TIMEOUT_MS;
@@ -21602,6 +21610,7 @@ var runOpCommand = (args, options = {}) => new Promise((resolve, reject) => {
   let settled = false;
   let timer;
   const child = import_node_child_process2.spawn("op", args, {
+    env: opEnvironment(),
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true
   });
@@ -21848,14 +21857,22 @@ async function loadCachedOnePasswordPrivateKey(fingerprints, deps = defaultCache
   });
   for (const { fingerprint, locator } of cached2) {
     try {
-      return (await loadPrivateKeyFromLocator(fingerprint, locator, "cached SSH key", deps.runOpCommand)).entry;
+      return {
+        status: "loaded",
+        privateKey: (await loadPrivateKeyFromLocator(fingerprint, locator, "cached SSH key", deps.runOpCommand)).entry
+      };
     } catch (error51) {
       if (error51 instanceof OnePasswordProviderError && (error51.code === "invalid-private-key" || error51.code === "fingerprint-mismatch")) {
         await deps.removeLocator(fingerprint);
+        continue;
       }
+      return {
+        status: "transient-failure",
+        error: error51 instanceof OnePasswordProviderError ? error51 : new OnePasswordProviderError("1Password CLI could not complete the cached key lookup.", "command-failed", { cause: error51 })
+      };
     }
   }
-  return;
+  return { status: "miss" };
 }
 function emptyResult(status) {
   return { status, keys: [], unsupportedKeys: [], unavailableAccounts: [] };
@@ -22026,6 +22043,7 @@ var createDecryptionKeyContext = (deps = {
   let privateKeysPromise;
   let discoveryPromise;
   const providerPrivateKeys = new Map;
+  let cachedProviderTransientFailure;
   let providerPrivateKeyLoadTail = Promise.resolve();
   let disposed = false;
   const discoverOnePassword = deps.discoverOnePasswordKeyCandidates;
@@ -22053,14 +22071,20 @@ var createDecryptionKeyContext = (deps = {
       return privateKeysPromise;
     },
     loadCachedOnePasswordPrivateKey: deps.loadCachedOnePasswordPrivateKey ? (fingerprints) => serializeProviderPrivateKeyLoad(async () => {
-      const loaded = loadedProviderPrivateKey(fingerprints);
-      if (loaded)
-        return loaded;
-      const privateKey = await deps.loadCachedOnePasswordPrivateKey?.(fingerprints);
-      if (privateKey) {
-        providerPrivateKeys.set(privateKey.fingerprint, privateKey);
+      if (cachedProviderTransientFailure) {
+        return cachedProviderTransientFailure;
       }
-      return privateKey;
+      const loaded = loadedProviderPrivateKey(fingerprints);
+      if (loaded) {
+        return { status: "loaded", privateKey: loaded };
+      }
+      const result = await deps.loadCachedOnePasswordPrivateKey?.(fingerprints);
+      if (result?.status === "loaded") {
+        providerPrivateKeys.set(result.privateKey.fingerprint, result.privateKey);
+      } else if (result?.status === "transient-failure") {
+        cachedProviderTransientFailure = result;
+      }
+      return result ?? { status: "miss" };
     }) : undefined,
     discoverOnePasswordKeyCandidates: discoverOnePassword ? () => {
       discoveryPromise ??= discoverOnePassword();
@@ -22080,6 +22104,7 @@ var createDecryptionKeyContext = (deps = {
       disposed = true;
       privateKeysPromise = undefined;
       discoveryPromise = undefined;
+      cachedProviderTransientFailure = undefined;
       providerPrivateKeys.clear();
     }
   };
@@ -22107,6 +22132,9 @@ var unwrapEnvironmentDataKey = async (environment, deps) => {
   let providerStatus;
   let providerKeyNames = [];
   let unavailableProviderAccountLabels = [];
+  let cachedProviderResult = {
+    status: "miss"
+  };
   for (const privateKeyEntry2 of availablePrivateKeys) {
     grantedKey = environment.keys.find((key) => {
       return key.fingerprint === privateKeyEntry2.fingerprint;
@@ -22117,10 +22145,16 @@ var unwrapEnvironmentDataKey = async (environment, deps) => {
     }
   }
   if (!grantedKey && deps.loadCachedOnePasswordPrivateKey) {
-    selectedPrivateKey = await deps.loadCachedOnePasswordPrivateKey(environment.keys.map((key) => key.fingerprint));
-    if (selectedPrivateKey) {
+    cachedProviderResult = await deps.loadCachedOnePasswordPrivateKey(environment.keys.map((key) => key.fingerprint));
+    if (cachedProviderResult.status === "loaded") {
+      selectedPrivateKey = cachedProviderResult.privateKey;
       grantedKey = environment.keys.find((key) => key.fingerprint === selectedPrivateKey?.fingerprint);
+    } else if (cachedProviderResult.status === "transient-failure") {
+      throw cachedProviderResult.error;
     }
+  }
+  if (!grantedKey && cachedProviderResult.status === "miss" && availablePrivateKeys.length === 0 && passphraseProtectedKeys.length > 0) {
+    throw new Error(passphraseProtectedKeyError(passphraseProtectedKeys));
   }
   if (!grantedKey && deps.discoverOnePasswordKeyCandidates) {
     const discovery = await deps.discoverOnePasswordKeyCandidates();
@@ -22135,9 +22169,6 @@ var unwrapEnvironmentDataKey = async (environment, deps) => {
     }
   }
   if (!grantedKey || !selectedPrivateKey) {
-    if (availablePrivateKeys.length === 0 && passphraseProtectedKeys.length > 0) {
-      throw new Error(passphraseProtectedKeyError(passphraseProtectedKeys));
-    }
     if (providerStatus === "unsupported-version") {
       throw new Error("The installed 1Password CLI version is unsupported. dotenc requires op 2.x.");
     }

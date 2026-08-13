@@ -618,7 +618,7 @@ vault, and item IDs—never key material, names, account URLs, or project paths.
 Later commands can go directly to one fingerprint-verified `op read` instead of
 rescanning every account and SSH item. Invalid or mismatched entries are
 evicted; transient CLI, timeout, and authorization failures preserve the
-locator for a later process.
+locator and fail the current operation without starting a full provider scan.
 
 After an interactive 1Password selection, dotenc also offers to save an
 unencrypted private-key copy in `~/.ssh`. The default remains locator-only. If
@@ -634,6 +634,8 @@ rotation can ask `op` for one fingerprint-matched private key. 1Password may
 show its native authorization dialog at that point. After `op read` returns,
 the key remains only in the dotenc process: it is not written to disk, persisted
 in project files, or forwarded to a wrapped command or its environment.
+`dotenc whoami` likewise consults 1Password only when no project identity
+matches a local key.
 
 Git `textconv` may use an already cached locator and show the same authorization
 dialog, but it never performs full 1Password discovery. Without a valid cached
