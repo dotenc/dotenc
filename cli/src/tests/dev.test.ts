@@ -1,34 +1,28 @@
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
 
-const getCurrentKeyName = mock(async (_deps?: unknown, _options?: unknown) => [
-	"alice",
-])
-const runCommandMock = mock(async () => {})
-const promptSelectMock = mock(async () => "alice")
+const runCommandMock = mock(
+	async (
+		_command: string,
+		_args: string[],
+		_options: Record<string, unknown>,
+	) => {},
+)
+const promptSelectMock = mock(async () => "bob")
 const isInteractiveMock = mock(() => true)
-const getPrivateKeys = mock(async () => ({
-	keys: [],
-	passphraseProtectedKeys: [],
-}))
-const getPublicKeys = mock(async () => [])
-const discoverOnePasswordKeyCandidates = mock(async () => ({
-	status: "available" as const,
-	keys: [],
-	unsupportedKeys: [],
-	unavailableAccounts: [],
+const discoverPersonalProfilesMock = mock(async (_options?: unknown) => ({
+	discovered: ["personal.alice"],
+	accessible: ["personal.alice"],
 }))
 const dispose = mock(() => {})
-const decryptionContext = {
-	getPrivateKeys,
-	discoverOnePasswordKeyCandidates,
-	dispose,
-}
+const decryptionContext = { dispose }
 const createDecryptEnvironmentDataContext = mock(() => decryptionContext)
 
-mock.module("../helpers/getCurrentKeyName", () => ({ getCurrentKeyName }))
-mock.module("../helpers/getPublicKeys", () => ({ getPublicKeys }))
 mock.module("../helpers/decryptEnvironment", () => ({
 	createDecryptEnvironmentDataContext,
+}))
+mock.module("../helpers/discoverPersonalProfiles", () => ({
+	discoverPersonalProfiles: discoverPersonalProfilesMock,
+	toPersonalEnvironmentName: (profile: string) => `personal.${profile}`,
 }))
 mock.module("../commands/run", () => ({ runCommand: runCommandMock }))
 mock.module("../ui/prompts", () => ({ promptSelect: promptSelectMock }))
@@ -37,129 +31,179 @@ mock.module("../ui/tty", () => ({ isInteractive: isInteractiveMock }))
 const { devCommand } = await import("../commands/dev")
 
 beforeEach(() => {
-	getCurrentKeyName.mockClear()
 	runCommandMock.mockClear()
 	promptSelectMock.mockClear()
 	isInteractiveMock.mockClear()
+	discoverPersonalProfilesMock.mockClear()
 	createDecryptEnvironmentDataContext.mockClear()
 	dispose.mockClear()
-	getCurrentKeyName.mockImplementation(async () => ["alice"])
-	runCommandMock.mockImplementation(async () => {})
-	promptSelectMock.mockImplementation(async () => "alice")
+	runCommandMock.mockImplementation(
+		async (
+			_command: string,
+			_args: string[],
+			_options: Record<string, unknown>,
+		) => {},
+	)
+	promptSelectMock.mockImplementation(async () => "bob")
 	isInteractiveMock.mockImplementation(() => true)
+	discoverPersonalProfilesMock.mockImplementation(async () => ({
+		discovered: ["personal.alice"],
+		accessible: ["personal.alice"],
+	}))
 })
 
 describe("devCommand", () => {
-	test("delegates to runCommand with development,<keyName>", async () => {
+	test("auto-selects the only accessible personal profile", async () => {
 		await devCommand("node", ["app.js"], {})
 
-		expect(runCommandMock).toHaveBeenCalledTimes(1)
-		expect(runCommandMock).toHaveBeenCalledWith("node", ["app.js"], {
-			env: "development,alice",
+		expect(discoverPersonalProfilesMock).toHaveBeenCalledWith({
+			invocationDir: process.cwd(),
 			localOnly: undefined,
 			decryptionContext,
 		})
-		expect(getCurrentKeyName).toHaveBeenCalledWith(
-			{
-				getPrivateKeys,
-				getPublicKeys,
-				discoverOnePasswordKeyCandidates,
-			},
-			{ requestedIdentity: undefined },
-		)
+		expect(runCommandMock).toHaveBeenCalledWith("node", ["app.js"], {
+			env: "development,personal.alice",
+			localOnly: undefined,
+			strict: undefined,
+			allowProcessEnv: undefined,
+			requiredEnvs: ["development"],
+			decryptionContext,
+		})
 		expect(promptSelectMock).not.toHaveBeenCalled()
 		expect(dispose).toHaveBeenCalledTimes(1)
 	})
 
-	test("prints error when no identity is found", async () => {
-		getCurrentKeyName.mockImplementation(async () => [])
+	test("runs development only when no personal profiles exist", async () => {
+		discoverPersonalProfilesMock.mockImplementation(async () => ({
+			discovered: [],
+			accessible: [],
+		}))
 
+		await devCommand("node", ["app.js"], {})
+
+		expect(runCommandMock.mock.calls[0][2]).toMatchObject({
+			env: "development",
+			requiredEnvs: ["development"],
+		})
+	})
+
+	test("warns and runs development only when profiles are inaccessible", async () => {
+		discoverPersonalProfilesMock.mockImplementation(async () => ({
+			discovered: ["personal.alice"],
+			accessible: [],
+		}))
+		const errSpy = spyOn(console, "error").mockImplementation(() => {})
+
+		await devCommand("node", ["app.js"], {})
+
+		expect(String(errSpy.mock.calls[0]?.[0])).toContain(
+			"no accessible personal profiles",
+		)
+		expect(runCommandMock.mock.calls[0][2]).toMatchObject({
+			env: "development",
+		})
+		errSpy.mockRestore()
+	})
+
+	test("strict mode fails when discovered profiles are inaccessible", async () => {
+		discoverPersonalProfilesMock.mockImplementation(async () => ({
+			discovered: ["personal.alice"],
+			accessible: [],
+		}))
 		const errSpy = spyOn(console, "error").mockImplementation(() => {})
 		const exitSpy = spyOn(process, "exit").mockImplementation((code): never => {
-			throw new Error(`process.exit(${code})`)
+			throw new Error(`exit(${code})`)
 		})
 
-		await expect(devCommand("node", ["app.js"], {})).rejects.toThrow(
-			"process.exit(1)",
-		)
-
+		await expect(
+			devCommand("node", ["app.js"], { strict: true }),
+		).rejects.toThrow("exit(1)")
 		expect(runCommandMock).not.toHaveBeenCalled()
 		expect(dispose).toHaveBeenCalledTimes(1)
-		expect(exitSpy).toHaveBeenCalledWith(1)
-		expect(errSpy).toHaveBeenCalledTimes(1)
-		const [errorMessage] = errSpy.mock.calls[0] as [string]
-		expect(errorMessage).toContain("could not resolve your identity")
-		expect(errorMessage).toContain("ask a project member")
 		errSpy.mockRestore()
 		exitSpy.mockRestore()
 	})
 
-	test("prompts user to select identity when multiple keys match", async () => {
-		getCurrentKeyName.mockImplementation(async () => ["alice", "alice-deploy"])
-		promptSelectMock.mockImplementation(async () => "alice-deploy")
+	test("prompts when multiple personal profiles are accessible", async () => {
+		discoverPersonalProfilesMock.mockImplementation(async () => ({
+			discovered: ["personal.alice", "personal.bob"],
+			accessible: ["personal.alice", "personal.bob"],
+		}))
 
 		await devCommand("node", ["app.js"], {})
 
-		expect(promptSelectMock).toHaveBeenCalledTimes(1)
 		expect(promptSelectMock).toHaveBeenCalledWith(
-			"Multiple identities found. Which one do you want to use?",
+			"Multiple personal profiles are accessible. Which one do you want to use?",
 			{
 				options: [
 					{ label: "alice", value: "alice" },
-					{ label: "alice-deploy", value: "alice-deploy" },
+					{ label: "bob", value: "bob" },
 				],
 			},
 		)
-		expect(runCommandMock).toHaveBeenCalledTimes(1)
-		expect(runCommandMock).toHaveBeenCalledWith("node", ["app.js"], {
-			env: "development,alice-deploy",
-			localOnly: undefined,
-			decryptionContext,
+		expect(runCommandMock.mock.calls[0][2]).toMatchObject({
+			env: "development,personal.bob",
 		})
 	})
 
-	test("fails in non-interactive mode when multiple identities exist and none is specified", async () => {
-		getCurrentKeyName.mockImplementation(async () => ["alice", "alice-deploy"])
+	test("requires --profile for multiple profiles without a TTY", async () => {
+		discoverPersonalProfilesMock.mockImplementation(async () => ({
+			discovered: ["personal.alice", "personal.bob"],
+			accessible: ["personal.alice", "personal.bob"],
+		}))
 		isInteractiveMock.mockImplementation(() => false)
-
 		const errSpy = spyOn(console, "error").mockImplementation(() => {})
 		const exitSpy = spyOn(process, "exit").mockImplementation((code): never => {
-			throw new Error(`process.exit(${code})`)
+			throw new Error(`exit(${code})`)
 		})
 
-		await expect(devCommand("node", ["app.js"], {})).rejects.toThrow(
-			"process.exit(1)",
-		)
-
+		await expect(devCommand("node", ["app.js"], {})).rejects.toThrow("exit(1)")
 		expect(promptSelectMock).not.toHaveBeenCalled()
-		expect(errSpy).toHaveBeenCalledTimes(1)
+		expect(runCommandMock).not.toHaveBeenCalled()
+		expect(String(errSpy.mock.calls[0]?.[0])).toContain("--profile <name>")
 		errSpy.mockRestore()
 		exitSpy.mockRestore()
 	})
 
-	test("uses the explicit identity when provided", async () => {
-		getCurrentKeyName.mockImplementation(async () => ["alice", "alice-deploy"])
+	test("--profile always selects the personal namespace", async () => {
+		discoverPersonalProfilesMock.mockImplementation(async () => ({
+			discovered: ["personal.production", "personal.alice"],
+			accessible: ["personal.production", "personal.alice"],
+		}))
 
-		await devCommand("node", ["app.js"], { identity: "alice-deploy" })
+		await devCommand("node", ["app.js"], { profile: "production" })
 
 		expect(promptSelectMock).not.toHaveBeenCalled()
-		expect(getCurrentKeyName.mock.calls[0][1]).toEqual({
-			requestedIdentity: "alice-deploy",
-		})
-		expect(runCommandMock).toHaveBeenCalledWith("node", ["app.js"], {
-			env: "development,alice-deploy",
-			localOnly: undefined,
-			decryptionContext,
+		expect(runCommandMock.mock.calls[0][2]).toMatchObject({
+			env: "development,personal.production",
 		})
 	})
 
-	test("forwards localOnly option to runCommand", async () => {
-		await devCommand("node", ["app.js"], { localOnly: true })
+	test("a missing explicit profile soft-fails unless strict", async () => {
+		const errSpy = spyOn(console, "error").mockImplementation(() => {})
 
-		expect(runCommandMock).toHaveBeenCalledWith("node", ["app.js"], {
-			env: "development,alice",
+		await devCommand("node", ["app.js"], { profile: "bob" })
+
+		expect(String(errSpy.mock.calls[0]?.[0])).toContain(
+			"personal profile bob was not found",
+		)
+		expect(runCommandMock.mock.calls[0][2]).toMatchObject({
+			env: "development",
+		})
+		errSpy.mockRestore()
+	})
+
+	test("forwards local-only, strict, and process-env overrides", async () => {
+		await devCommand("node", ["app.js"], {
 			localOnly: true,
-			decryptionContext,
+			strict: true,
+			allowProcessEnv: ["NODE_OPTIONS"],
+		})
+
+		expect(runCommandMock.mock.calls[0][2]).toMatchObject({
+			localOnly: true,
+			strict: true,
+			allowProcessEnv: ["NODE_OPTIONS"],
 		})
 	})
 })

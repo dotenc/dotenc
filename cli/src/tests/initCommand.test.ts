@@ -256,7 +256,7 @@ describe("initCommand", () => {
 			"alice",
 			"API_KEY=abc123\n",
 		])
-		expect(createCommandMock.mock.calls[1]).toEqual(["alice", "alice"])
+		expect(createCommandMock.mock.calls[1]).toEqual(["personal.alice", "alice"])
 		expect(unlinkMock).toHaveBeenCalledWith(envPath)
 		expect(readFileMock).toHaveBeenCalledWith(envPath, "utf-8")
 		expect(warns).toHaveLength(0)
@@ -302,7 +302,7 @@ describe("initCommand", () => {
 		logSpy.mockRestore()
 	})
 
-	test("continues when git diff setup fails and skips personal environment for development user", async () => {
+	test("continues when git diff setup fails and creates a namespaced personal environment", async () => {
 		setupGitDiffMock.mockImplementation(() => {
 			throw new Error("not a git repository")
 		})
@@ -322,7 +322,11 @@ describe("initCommand", () => {
 
 		expect(warns).toHaveLength(1)
 		expect(warns[0]).toContain("could not set up git diff driver")
-		expect(createCommandMock).toHaveBeenCalledTimes(1)
+		expect(createCommandMock).toHaveBeenCalledTimes(2)
+		expect(createCommandMock.mock.calls[1]).toEqual([
+			"personal.development",
+			"development",
+		])
 		expect(createCommandMock.mock.calls[0]).toEqual([
 			"development",
 			"development",
@@ -330,7 +334,7 @@ describe("initCommand", () => {
 		])
 		expect(
 			logs.some((line) => line.includes("Edit your personal environment")),
-		).toBe(false)
+		).toBe(true)
 
 		cwdSpy.mockRestore()
 		logSpy.mockRestore()

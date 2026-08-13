@@ -10,6 +10,8 @@ import {
 } from "../helpers/decryptEnvironment"
 import { getEnvironmentByPath } from "../helpers/getEnvironmentByPath"
 import { parseEnv } from "../helpers/parseEnv"
+import { findBlockedDecryptedEnvironmentNames } from "../helpers/processEnvironmentPolicy"
+import { resolveExecutable } from "../helpers/resolveExecutable"
 import { resolveProjectRoot } from "../helpers/resolveProjectRoot"
 import { validateEnvironmentName } from "../helpers/validateEnvironmentName"
 
@@ -17,6 +19,8 @@ type Options = {
 	env?: string
 	strict?: boolean
 	localOnly?: boolean
+	allowProcessEnv?: string[]
+	requiredEnvs?: string[]
 	decryptionContext?: DecryptEnvironmentDataContext
 }
 
@@ -65,6 +69,7 @@ export const runCommand = async (
 	}
 
 	let failureCount = 0
+	const failedEnvironments = new Set<string>()
 	const ownsDecryptionContext = options.decryptionContext === undefined
 	const decryptionContext =
 		options.decryptionContext ?? createDecryptEnvironmentDataContext()
@@ -98,6 +103,7 @@ export const runCommand = async (
 									: `Unknown error occurred while decrypting the environment ${envName} at ${dir}.`,
 							)
 							failureCount++
+							failedEnvironments.add(envName)
 							return {}
 						}
 
@@ -110,6 +116,7 @@ export const runCommand = async (
 							`${chalk.yellow("Warning:")} environment ${chalk.cyan(envName)} not found.`,
 						)
 						failureCount++
+						failedEnvironments.add(envName)
 						return {}
 					}
 
@@ -123,6 +130,16 @@ export const runCommand = async (
 
 	if (failureCount === environments.length) {
 		console.error(`${chalk.red("Error:")} All environments failed to load.`)
+		process.exit(1)
+	}
+
+	const failedRequiredEnvironments = (options.requiredEnvs ?? []).filter(
+		(name) => failedEnvironments.has(name),
+	)
+	if (failedRequiredEnvironments.length > 0) {
+		console.error(
+			`${chalk.red("Error:")} required environment(s) failed to load: ${failedRequiredEnvironments.join(", ")}.`,
+		)
 		process.exit(1)
 	}
 
@@ -142,17 +159,54 @@ export const runCommand = async (
 	const decryptedEnv = decryptedEnvs.reduce((acc, env) => {
 		return { ...acc, ...env }
 	}, {})
+	const blocked = findBlockedDecryptedEnvironmentNames(
+		decryptedEnv,
+		options.allowProcessEnv,
+	)
+	if (blocked.reserved.length > 0 || blocked.unsafe.length > 0) {
+		if (blocked.reserved.length > 0) {
+			console.error(
+				`${chalk.red("Error:")} decrypted environments contain reserved process-control variable(s): ${blocked.reserved.join(", ")}. These names cannot be overridden.`,
+			)
+		}
+		if (blocked.unsafe.length > 0) {
+			console.error(
+				`${chalk.red("Error:")} decrypted environments contain unsafe process-control variable(s): ${blocked.unsafe.join(", ")}. Allow each intentional name with ${chalk.gray("--allow-process-env <name>")}.`,
+			)
+		}
+		process.exit(1)
+	}
 
-	const {
-		DOTENC_PRIVATE_KEY_BASE64: _privateKeyBase64,
-		DOTENC_PRIVATE_KEY: _privateKey,
-		...baseEnv
-	} = process.env
-	const mergedEnv = { ...baseEnv, ...decryptedEnv }
+	const mergedEnv = { ...process.env, ...decryptedEnv }
+	const strippedDotencNames = new Set([
+		"DOTENC_PRIVATE_KEY_BASE64",
+		"DOTENC_PRIVATE_KEY",
+		"DOTENC_PRIVATE_KEY_PASSPHRASE",
+		"DOTENC_ENV",
+	])
+	for (const name of Object.keys(mergedEnv)) {
+		if (strippedDotencNames.has(name.toUpperCase())) delete mergedEnv[name]
+	}
 
-	const child = spawn(command, args, {
+	const executable = resolveExecutable(command, process.env)
+	if (!executable) {
+		console.error(
+			`${chalk.red("Error:")} command ${chalk.cyan(command)} was not found on the original PATH.`,
+		)
+		process.exit(1)
+	}
+
+	const child = spawn(executable, args, {
 		env: mergedEnv,
 		stdio: "inherit",
+	})
+
+	child.on("error", (error) => {
+		const errorCode = (error as NodeJS.ErrnoException).code
+		console.error(
+			`${chalk.red("Error:")} failed to start command ${chalk.cyan(command)} (${errorCode ?? "unknown error"}).`,
+		)
+		process.exit(1)
 	})
 
 	child.on("exit", (code) => {

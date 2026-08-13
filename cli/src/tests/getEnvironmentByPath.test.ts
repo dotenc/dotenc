@@ -60,4 +60,52 @@ describe("getEnvironmentByPath", () => {
 			/Failed to parse the environment file/,
 		)
 	})
+
+	test("rejects duplicate JSON members before JSON.parse can overwrite them", async () => {
+		const filePath = path.join(tmpDir, "duplicate.enc")
+		writeFileSync(
+			filePath,
+			'{"keys":[],"keys":[],"encryptedContent":"ZW5jcnlwdGVk"}',
+			"utf-8",
+		)
+
+		await expect(getEnvironmentByPath(filePath)).rejects.toThrow(
+			/Failed to parse the environment file/,
+		)
+	})
+
+	test("rejects unsupported versions, extra fields, and non-canonical base64", async () => {
+		const base = {
+			keys: [
+				{
+					name: "alice",
+					fingerprint: "abc123",
+					encryptedDataKey: "ZW5jcnlwdGVk",
+					algorithm: "ed25519",
+				},
+			],
+			encryptedContent: "ZW5jcnlwdGVk",
+		}
+
+		for (const [name, value] of [
+			["version", { ...base, version: 3 }],
+			["extra", { ...base, unexpected: true }],
+			["base64", { ...base, encryptedContent: "Zg" }],
+		] as const) {
+			const filePath = path.join(tmpDir, `${name}.enc`)
+			writeFileSync(filePath, JSON.stringify(value), "utf-8")
+			await expect(getEnvironmentByPath(filePath)).rejects.toThrow(
+				/Failed to parse the environment file/,
+			)
+		}
+	})
+
+	test("rejects files larger than one MiB before parsing", async () => {
+		const filePath = path.join(tmpDir, "oversized.enc")
+		writeFileSync(filePath, "x".repeat(1024 * 1024 + 1), "utf-8")
+
+		await expect(getEnvironmentByPath(filePath)).rejects.toThrow(
+			/Failed to parse the environment file/,
+		)
+	})
 })

@@ -1,9 +1,12 @@
-import crypto from "node:crypto"
+import type crypto from "node:crypto"
 import { existsSync } from "node:fs"
 import fs from "node:fs/promises"
 import path from "node:path"
+import { extractEd25519PublicKey } from "./ed25519Der"
 import { getKeyFingerprint } from "./getKeyFingerprint"
+import { parseSpkiPublicKey } from "./parseSpkiPublicKey"
 import { resolveProjectRoot } from "./resolveProjectRoot"
+import { validatePublicKey } from "./validatePublicKey"
 
 export type PublicKeyEntry = {
 	name: string
@@ -24,7 +27,7 @@ function detectAlgorithm(
 
 function extractEd25519RawPublicKey(publicKey: crypto.KeyObject): Buffer {
 	const pubDer = publicKey.export({ type: "spki", format: "der" })
-	return Buffer.from(pubDer.subarray(pubDer.length - 32))
+	return extractEd25519PublicKey(Buffer.from(pubDer))
 }
 
 export const getPublicKeys = async (dotencDir?: string) => {
@@ -58,13 +61,10 @@ export const getPublicKeys = async (dotencDir?: string) => {
 		)
 		let publicKey: crypto.KeyObject
 		try {
-			publicKey = crypto.createPublicKey(keyInput)
-		} catch (error: unknown) {
+			publicKey = parseSpkiPublicKey(keyInput)
+		} catch {
 			console.error(
 				`Invalid public key format in ${fileName}. Please provide a valid PEM formatted public key.`,
-			)
-			console.error(
-				`Details: ${error instanceof Error ? error.message : error}`,
 			)
 			continue
 		}
@@ -74,6 +74,12 @@ export const getPublicKeys = async (dotencDir?: string) => {
 			console.error(
 				`Unsupported key type in ${fileName}: ${publicKey.asymmetricKeyType}. Only RSA and Ed25519 are supported.`,
 			)
+			continue
+		}
+
+		const validation = validatePublicKey(publicKey)
+		if (!validation.valid) {
+			console.error(`Invalid public key in ${fileName}: ${validation.reason}`)
 			continue
 		}
 

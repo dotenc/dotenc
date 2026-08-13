@@ -12,6 +12,10 @@ type Scope = "local" | "global"
 
 const SKILL_SOURCE = "dotenc/skills"
 const SKILL_NAME = "dotenc"
+// Pin the installer itself. The skill source remains the separately maintained
+// dotenc/skills repository until its installer supports commit-SHA checkouts
+// reliably across authenticated and rate-limited GitHub paths.
+const SKILLS_CLI_SPEC = "skills@1.5.22"
 const NON_INTERACTIVE_SCOPE_FALLBACK =
 	"Install scope prompt is unavailable in non-interactive mode."
 
@@ -51,7 +55,7 @@ export const installAgentSkillCommand = async (options: Options) => {
 		}
 	}
 
-	const args = ["skills", "add", SKILL_SOURCE, "--skill", SKILL_NAME]
+	const args = [SKILLS_CLI_SPEC, "add", SKILL_SOURCE, "--skill", SKILL_NAME]
 
 	if (scope === "global") {
 		args.push("-g")

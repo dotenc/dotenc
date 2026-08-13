@@ -16,6 +16,7 @@ This document describes the security model, cryptographic design, and operationa
 - [Input Validation and Injection Prevention](#input-validation-and-injection-prevention)
 - [Access Control Model](#access-control-model)
 - [Operational Flow](#operational-flow)
+- [VS Code Extension Trust Model](#vs-code-extension-trust-model)
 - [Installation Script Trust Model](#installation-script-trust-model)
 - [Linux Package Repository Trust Model](#linux-package-repository-trust-model)
 - [OCI Image Trust Model](#oci-image-trust-model)
@@ -29,16 +30,25 @@ This document describes the security model, cryptographic design, and operationa
 
 dotenc is designed to protect secrets at rest in a Git repository. Its security model assumes:
 
+**Trusted repository writers:** Anyone allowed to merge or otherwise write Git
+state is trusted to create, replace, and roll back dotenc envelopes and public
+keys. Git permissions, review policy, and history are the authorship and change
+integrity layer. dotenc does not add an envelope signature whose trust root is
+independent of the repository.
+
 **Protected against:**
 - An attacker who can read the repository (including all `.enc` files and public keys in `.dotenc/`) but does not have access to any authorized SSH private key
-- Accidental secret exposure through environment variable leakage to child processes
-- Tampering with encrypted files (authenticated encryption detects modification)
+- Forwarding dotenc bootstrap keys/passphrases or allowing decrypted
+  process-control variables to silently take over a wrapped command
+- Modification of a given AES-GCM ciphertext without its data key
 - Path traversal or command injection via user-supplied names and editor configuration
 
 **Not protected against:**
 - An attacker who has already obtained an authorized SSH private key
 - Secrets that were previously exposed before being stored in dotenc
 - Secrets known to a user before their access was revoked (see [Access Control Model](#access-control-model))
+- A trusted Git writer replacing an entire valid envelope, recipient list, or
+  public key, or replaying an older valid Git revision
 - A compromised machine where decryption takes place (memory forensics, malicious processes)
 - Passphrase-protected keys when no passphrase source is provided — dotenc does not prompt interactively for passphrases; see [Known Limitations](#known-limitations)
 
@@ -53,7 +63,7 @@ dotenc uses envelope encryption: each environment has a single randomly generate
 ```
 Environment secrets
         │
-        ▼ AES-256-GCM (data key + env name as AAD)
+        ▼ AES-256-GCM (data key + v2 env name as AAD)
         │
 Encrypted ciphertext (.env.*.enc)
 
@@ -73,14 +83,24 @@ This means:
 | Operation | Algorithm | Parameters |
 |-----------|-----------|------------|
 | Environment encryption | AES-256-GCM | 96-bit random IV, 128-bit auth tag |
-| Additional Authenticated Data | Environment name bound to ciphertext | Prevents ciphertext swap across environments |
+| Additional Authenticated Data | Version 2 environment name bound to ciphertext | Prevents ciphertext swap across environment names; legacy v1 has no AAD |
 | Data key encryption (Ed25519 keys) | ECIES (`eciesjs` v0.4+) | X25519 ECDH + AES-GCM |
 | Data key encryption (RSA keys) | RSA-OAEP | SHA-256 |
 | Supported public key types | Ed25519, RSA ≥ 2048-bit | ECDSA and DSA are rejected |
 
 **IV generation:** A fresh 12-byte random IV is generated for every encryption operation using Node.js `crypto.randomBytes()`. IVs are never reused.
 
-**Authentication:** AES-256-GCM provides authenticated encryption. Any modification to the ciphertext, auth tag, or IV is detected during decryption and results in an error. The environment name is included as Additional Authenticated Data (AAD), preventing a ciphertext from one environment from being replayed against another.
+**Ciphertext integrity:** AES-256-GCM detects modification of a ciphertext, auth
+tag, IV, or v2 environment-name AAD relative to that envelope's data key. This
+does not establish who authored a complete replacement envelope: a trusted Git
+writer who can replace the envelope and its wrapped data key remains inside the
+threat model's trust boundary.
+
+New writes use envelope version 2 and bind the logical environment name as
+Additional Authenticated Data (AAD), preventing the encrypted content from
+being renamed or replayed under a different environment name without
+re-encryption. Legacy envelopes with an absent version or `version: 1` remain
+readable without AAD for migration compatibility.
 
 ### Data Key Lifecycle
 
@@ -181,31 +201,30 @@ private keys as `DOTENC_PRIVATE_KEY_BASE64`, a base64-encoded private key file.
 compatibility. Passphrase-protected bootstrap keys use
 `DOTENC_PRIVATE_KEY_PASSPHRASE` with either format.
 
-**Child process isolation:** When running commands with `dotenc run` or
-`dotenc dev`, the `DOTENC_PRIVATE_KEY_BASE64` and `DOTENC_PRIVATE_KEY`
-environment variables are explicitly stripped from the child process
-environment before launch. After `op read` returns, dotenc keeps the retrieved
-1Password private key in its process. It is never passed to the wrapped command
-or included in its environment. Injected secrets are limited to the decrypted
-variables only:
+**Child process isolation:** `dotenc run` and `dotenc dev` construct the child
+environment only after decrypting and validating every selected overlay.
+Bootstrap material and dotenc controls are stripped from the final merged
+environment, including `DOTENC_PRIVATE_KEY_BASE64`, legacy
+`DOTENC_PRIVATE_KEY`, `DOTENC_PRIVATE_KEY_PASSPHRASE`, and `DOTENC_ENV`.
+Decrypted names beginning with `DOTENC_` are reserved and cannot reintroduce
+those values. After `op read` returns, the retrieved 1Password private key stays
+inside the dotenc process and is never forwarded to the wrapped command.
 
-```typescript
-// cli/src/commands/run.ts
-const {
-    DOTENC_PRIVATE_KEY_BASE64: _privateKeyBase64,
-    DOTENC_PRIVATE_KEY: _privateKey,
-    ...baseEnv
-} = process.env
-const mergedEnv = { ...baseEnv, ...decryptedEnv }
-spawn(command, args, { env: mergedEnv })
-```
+Variables that can alter executable resolution, runtime loaders, shell startup,
+or GitHub Actions control files are rejected before spawn. Only non-reserved
+loader/runtime names can be explicitly allowed one exact name at a time; dotenc
+and GitHub control names have no override. See [Input Validation and Injection
+Prevention](#input-validation-and-injection-prevention) for the list and
+override contract.
 
 ### Temporary File Security
 
-`dotenc env edit` decrypts the environment into a temporary file for editing. This file is handled securely:
+`dotenc env edit` decrypts the environment into a temporary file for editing. This file is handled as follows:
 
-- Created in a temporary directory with mode `0o600` (readable only by the current user)
-- **Overwritten with zeros** before deletion, preventing recovery from the filesystem:
+- The plaintext file is created with mode `0o600` inside an OS-created
+  temporary directory.
+- It is overwritten with zeros best-effort before deletion, reducing
+  straightforward filesystem recovery:
 
 ```typescript
 // cli/src/commands/env/edit.ts
@@ -213,7 +232,19 @@ const stat = await fs.stat(tempFilePath)
 await fs.writeFile(tempFilePath, Buffer.alloc(stat.size, 0))
 ```
 
-- Signal handlers for `SIGINT` and `SIGTERM` ensure secure erasure even if the process is interrupted mid-edit
+- Signal handlers for `SIGINT` and `SIGTERM` perform the same best-effort
+  overwrite before exit. Filesystem snapshots, copy-on-write storage, flash
+  wear leveling, abrupt process termination, and editor backups can still
+  retain plaintext; this is not a physical-erasure guarantee.
+
+The OpenSSH passphrase fallback creates a mode-`0o700` temporary directory, a
+mode-`0o600` private-key copy, and a mode-`0o700` fixed askpass helper. The
+passphrase is sent through a mutable stdin buffer rather than written to a
+passphrase file or process argument; the buffer and unlocked key bytes are
+overwritten after use. Temporary key/helper files are logically overwritten,
+synced, and removed best-effort. Filesystem snapshots, copy-on-write storage,
+and flash wear leveling can retain older blocks, so this is exposure reduction,
+not a physical-erasure guarantee.
 
 ### File Permissions
 
@@ -221,7 +252,9 @@ await fs.writeFile(tempFilePath, Buffer.alloc(stat.size, 0))
 |----------|------|-------|
 | SSH key directory (`~/.ssh/`) | `0o700` | Created if absent |
 | Confirmed local SSH private-key copies | `0o600` | Created exclusively; never overwrite an existing path |
-| Temporary plaintext files | `0o600` | Zeroed before deletion |
+| Home configuration directory (`~/.dotenc/`) | `0o700` | Enforced when configuration is read or written |
+| Home configuration (`~/.dotenc/config.json`) | `0o600` | Enforced when configuration is read or written |
+| Temporary plaintext files | `0o600` | Best-effort overwrite before deletion; no physical-erasure guarantee |
 | `.env.*.enc` files | Default umask | Encrypted; safe to be world-readable |
 | `.dotenc/*.pub` files | Default umask | Public keys; intentionally public |
 
@@ -231,16 +264,48 @@ await fs.writeFile(tempFilePath, Buffer.alloc(stat.size, 0))
 
 **Environment and key names** are validated with a strict whitelist — only alphanumeric characters, dots, hyphens, and underscores are accepted. The values `.` and `..` and Windows reserved names (`CON`, `NUL`, `COM1`, etc.) are explicitly rejected.
 
-**Public keys** are validated before use:
+**Public keys** stored in `.dotenc/*.pub` must be canonical, public-only SPKI
+PEM. Private-key PEM, trailing data, non-canonical DER, and unsupported key
+types are rejected. Keys are also validated before wrapping:
 - RSA keys shorter than 2048 bits are rejected
+- RSA modulus length must be available from the runtime key metadata
 - ECDSA and DSA keys are rejected (unsupported)
 - Ed25519 keys are accepted as preferred
 
-**Editor commands** (from `$EDITOR`, `$VISUAL`, or `dotenc config editor`) are checked against a shell metacharacter denylist (`$`, `` ` ``, `(`, `)`, `;`, `|`, `<`, `>`, `&`, `!`, newlines) before use. The editor is then executed via `spawnSync` with arguments as an array — not through a shell — so no shell interpolation occurs.
+Ed25519 SPKI and PKCS#8 values are parsed structurally. dotenc extracts the
+public point and private seed from their DER BIT/OCTET STRING fields instead of
+assuming that key bytes occupy the last 32 bytes of an encoding.
+
+**Encrypted envelopes** read by CLI environment commands use a shared strict
+bounded parser. The redacted diff action retains a separate bounded batch/report
+parser for its action input contract. Both reject files over 1 MiB, JSON nesting
+deeper than 16 levels, more than 256 recipients, unknown or duplicate fields,
+duplicate recipient names or fingerprints, control characters, non-canonical
+base64, unsupported versions, and oversized metadata or wrapped-key fields
+before decryption. Only legacy version 1/absent and version 2 envelopes are
+accepted.
+
+**Editor commands** (from `$EDITOR`, `$VISUAL`, or `dotenc config editor`) are checked against a shell metacharacter denylist (`$`, `` ` ``, `(`, `)`, `;`, `|`, `<`, `>`, `&`, `!`, newlines) before use. Explicit `dotenc config editor` values are also rejected at configuration time. The editor is executed via `spawnSync` with arguments as an array, not through a shell, so shell interpolation does not occur. The configured editor and its arguments are nevertheless trusted local input and may activate editor-native behavior.
 
 **Child command execution** (`dotenc run`, `dotenc dev`) uses `spawn()` with the command and arguments as separate values, never concatenated into a shell string.
 
 **Decrypted environment content** is parsed with Node's built-in `node:util.parseEnv` parser before variables are passed to child processes.
+
+**Process-control variables** from decrypted content are blocked by default.
+Case-insensitive exact matches include `PATH`, `PATHEXT`, `COMSPEC`,
+`NODE_OPTIONS`, `NODE_PATH`, `BASH_ENV`, `ENV`, `PYTHONPATH`, `PYTHONHOME`,
+`PERL5OPT`, `PERL5LIB`, `PERLLIB`, `RUBYOPT`, `RUBYLIB`,
+`JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS`, `_JAVA_OPTIONS`, and
+`PHP_INI_SCAN_DIR`; the `LD_*` and `DYLD_*` prefixes are also blocked. The
+GitHub Actions control names `GITHUB_ENV`, `GITHUB_OUTPUT`, `GITHUB_PATH`,
+`GITHUB_STATE`, and `GITHUB_STEP_SUMMARY`, plus every decrypted `DOTENC_*`
+name, are reserved and cannot be overridden. The CLI reports names only, never
+values. A caller with an exceptional trusted workflow may opt in one exact
+non-reserved name at a time with repeatable `--allow-process-env <name>` flags;
+no wildcard exemption is provided. An allowed variable is still taken from
+decrypted content only when present there. Bare commands are resolved against
+the original parent `PATH` before the child environment is assembled, so an
+allowed decrypted `PATH` cannot redirect dotenc's initial executable selection.
 
 **Website development requests** are resolved against the explicit `public/`
 and `src/` roots. URL-encoded pathnames are decoded once, malformed encodings
@@ -269,7 +334,19 @@ Access in dotenc is enforced cryptographically, not by policy:
 
 **Important limitation:** Revoking access prevents future decryption but does not invalidate knowledge of secrets already seen by the revoked user. For full offboarding, rotate the affected external secrets (API keys, database passwords, etc.) and optionally run `dotenc env rotate <environment>` to generate a new data key.
 
-All grant and revoke operations are reflected in Git-tracked files, providing a full audit trail in repository history.
+Grant and revoke operations change Git-tracked files. Once committed, they are
+reviewable in the repository history subject to that repository's writer,
+branch-protection, and history-retention policy.
+
+`dotenc auth purge <alias>` resolves the target `.pub` file to its canonical
+fingerprint and treats every project alias with that fingerprint as the same
+identity. Before changing anything, it validates every discovered envelope,
+rejects a revocation that would leave zero recipients, and proves every
+affected envelope decryptable. It then rewrites affected envelopes, rescans the
+entire project, and removes all matching public-key aliases only after the
+fingerprint is absent everywhere. An unreadable envelope, failed rewrite, or
+failed verification returns non-zero and retains the public key for a safe
+retry; a partial rewrite is possible but is never reported as successful.
 
 ---
 
@@ -281,9 +358,23 @@ When any dotenc command runs, it resolves the **project root** by walking ancest
 
 ### Initialization and Clone-Local Git Integration
 
-On first initialization, dotenc registers the selected public key and creates the encrypted development and personal environments. If a plaintext `.env` is migrated, it is removed only after the encrypted development environment has been created successfully. New environment files use exclusive, no-clobber writes, so a file that appears concurrently cannot be overwritten.
+On first initialization, dotenc registers the selected public key and creates
+the encrypted `development` and `personal.<name>` environments. If a plaintext
+`.env` is migrated, it is removed only after the encrypted development
+environment has been created successfully. New environment files use
+exclusive, no-clobber writes, so a file that appears concurrently cannot be
+overwritten.
 
-When `dotenc init` detects an existing project, it performs Git setup only: it configures `diff.dotenc.textconv` in that clone's local Git configuration and ensures the repository's `*.enc` diff attribute. It does not prompt for or modify identities, keys, encrypted environments, access rules, or a local plaintext `.env`. The Git subprocess result is checked before `.gitattributes` is changed, so a configuration failure aborts without reporting success or leaving a tracked attribute change.
+When `dotenc init` detects an existing project, it performs Git setup only: it
+configures `diff.dotenc.textconv=dotenc textconv` and
+`diff.dotenc.cachetextconv=false` in that clone's local Git configuration, and
+ensures the repository's `.env.*.enc diff=dotenc` attribute. The exact legacy
+`*.enc diff=dotenc` marker is migrated without changing other user-owned
+attributes. It does not prompt for or modify identities, keys, encrypted
+environments, access rules, or a local plaintext `.env`. The Git subprocess
+result is checked before `.gitattributes` is changed, so a configuration
+failure aborts without reporting success or leaving a tracked attribute
+change.
 
 The `textconv` Git diff driver checks environment-provided and filesystem keys,
 then may use a previously verified machine-local 1Password locator. It never
@@ -291,8 +382,11 @@ runs full account or item discovery. A warm locator can invoke one bounded
 `op read` and trigger 1Password's native authorization dialog; the returned key
 must match the environment fingerprint. On a cold, failed, stale, declined, or
 mismatched cache lookup, `textconv` emits the raw encrypted content for Git
-instead. Git textconv output caching remains disabled because persisting its
-plaintext output would violate dotenc's key and secret handling guarantees.
+instead. Git textconv output caching is explicitly disabled because persisting
+its plaintext output would violate dotenc's key and secret handling guarantees.
+The clone-local command uses the `dotenc` executable resolved from the
+developer machine's `PATH`; local executable resolution is therefore part of
+the trusted-machine boundary.
 
 ### Hierarchical Environment Loading
 
@@ -305,13 +399,67 @@ plaintext output would violate dotenc's key and secret handling guarantees.
 
 The `--local-only` flag narrows decryption scope to the current directory only, bypassing ancestor scanning entirely.
 
+### Personal Development Profiles
+
+`dotenc dev` always requires the `development` environment. It discovers only
+`.env.personal.<profile>.enc` files along the effective ancestor chain, groups
+same-named layers, and tests every layer with the existing fingerprint-based
+private-key decryption context. Public-key aliases are display metadata and
+never select a profile.
+
+One accessible profile is selected automatically. Several accessible profiles
+prompt in a TTY and require `--profile <name>` in non-interactive use; an
+explicit `--profile alice` means `personal.alice`. With no personal files,
+`dev` runs `development` alone. A requested missing/inaccessible profile, or a
+discovered set with no accessible profile, warns and continues with
+`development`; `--strict` makes the personal failure fatal. Failure to load the
+required `development` environment is always fatal.
+
+This namespace transition is deliberately not inferred from public-key names.
+A legacy `.env.alice.enc` must be decrypted and re-encrypted as
+`personal.alice`; renaming a version 2 file fails its environment-name AAD.
+
 ### Recursive Environment Discovery
 
 Batch operations (`env rotate --all`, `auth purge`) recursively walk the project tree to find all `.env.*.enc` files. The following directories are explicitly excluded from this walk to avoid processing build artifacts or dependency caches: `node_modules`, `.git`, `dist`, `build`, `.next`, `coverage`, `vendor`.
 
 ### AAD and Multi-Level Environments
 
-The **Additional Authenticated Data (AAD)** used during AES-256-GCM encryption is the environment name only — not the file path. This means same-named environments at different directory levels (e.g., a `staging` environment at the project root and one in `packages/web`) use the same AAD value. They are treated as independent encrypted files that happen to share a logical name, consistent with the hierarchical merge semantics described above.
+For version 2 envelopes, the **Additional Authenticated Data (AAD)** used during
+AES-256-GCM encryption is the environment name only, not the file path. This
+means same-named environments at different directory levels (for example, a
+`staging` environment at the project root and one in `packages/web`) use the
+same AAD value. They are treated as independent encrypted files that happen to
+share a logical name, consistent with the hierarchical merge semantics
+described above. Renaming a v2 file to a different environment name without
+decrypting and re-encrypting it fails authentication. Legacy version 1/absent
+envelopes do not have this binding.
+
+---
+
+## VS Code Extension Trust Model
+
+The extension declares untrusted workspaces unsupported and gates its tree,
+filesystem, decrypt, encrypt, rotate, delete, install, version, and update paths
+on VS Code Workspace Trust. It does not execute the dotenc CLI while a
+workspace is untrusted.
+
+`dotenc.executablePath` and `dotenc.autoViewDecrypted` are machine-scoped. The
+implementation reads only default or user/machine configuration and ignores
+workspace and folder overrides defensively. Automatic decrypted view remains
+enabled by default for developer experience, but only in a trusted workspace.
+The first actual dotenc CLI operation starts the update check lazily; ordinary
+extension startup does not spawn the CLI. Version, update, and install helpers
+run from the extension directory rather than a workspace-controlled current
+directory.
+
+Opening a decrypted view materializes plaintext in VS Code's editor memory.
+Unsaved dirty content can also be persisted by VS Code's hot-exit/backup
+machinery, depending on editor settings and shutdown behavior. dotenc's custom
+document scheme is not itself a claim that VS Code Local History stores the
+document. Treat the editor profile and its backup storage as part of the
+trusted machine, save or discard sensitive edits deliberately, and use
+`Open Encrypted Source` when plaintext display is unnecessary.
 
 ---
 
@@ -344,6 +492,9 @@ This is a standard pattern used by many developer tools (Homebrew, Rust, Node.js
 - **Interactive AUR delegation** — the script delegates `dotenc-bin` only to an
   already installed `yay` or `paru` helper with a controlling terminal. It does
   not build an AUR recipe as root or silently confirm the transaction.
+- **Downloader redirect containment** — `curl` permits only HTTPS transfers,
+  including redirects. The `wget` fallback is used only for immutable direct
+  bootstrap objects and refuses redirects entirely.
 
 The embedded hashes protect the first package-manager trust root if
 `packages.dotenc.org` alone is compromised. They cannot protect against a
@@ -357,6 +508,12 @@ curl -fsSL https://dotenc.org/install.sh -o install.sh
 # review install.sh
 sh install.sh
 ```
+
+`dotenc tools install-agent-skill` is a convenience installer. It pins the
+third-party runner to `skills@1.5.22`, but currently resolves the separately
+maintained `dotenc/skills` repository by its mutable repository name. Review
+that source or install a known revision manually when immutable supply-chain
+resolution is required.
 
 Alternatively, follow the [installation guide](docs/INSTALLATION.md) to install
 a native release package, configure APT or RPM manually, or use APK, AUR,
@@ -564,14 +721,18 @@ The reusable GitHub Actions exposed as `dotenc/*-action@v1` delegate to the
 implementation actions in `actions/`, which are thin wrappers around the dotenc
 CLI:
 
-- `actions/setup` installs `@dotenc/cli` through npm. Pin the action ref and
-  CLI version when workflows need fully reproducible installs.
+- `actions/setup` installs `@dotenc/cli` through npm. Its default is the exact
+  CLI package version shipped with this repository (`0.13.0`), not npm's
+  mutable `latest` tag. Pin the action ref to a commit when workflows also need
+  an immutable action implementation.
 - `actions/run` writes the requested command to a temporary script and executes
-  it through `dotenc run --strict` by default. The CLI still strips
-  `DOTENC_PRIVATE_KEY_BASE64` and `DOTENC_PRIVATE_KEY` before launching the
-  child command, and the action wrappers unset `DOTENC_PRIVATE_KEY_BASE64`,
-  `DOTENC_PRIVATE_KEY`, and `DOTENC_PRIVATE_KEY_PASSPHRASE` before running user
-  commands.
+  it through `dotenc run --strict` by default. The CLI strips
+  `DOTENC_PRIVATE_KEY_BASE64`, `DOTENC_PRIVATE_KEY`,
+  `DOTENC_PRIVATE_KEY_PASSPHRASE`, and `DOTENC_ENV` before launching the child
+  command, and the action wrappers also unset the three private-key bootstrap
+  variables before running user commands. Decrypted runtime-loader,
+  executable-resolution, and GitHub control-file variables are rejected before
+  spawn.
 - `actions/export` decrypts an environment through `dotenc run`, then writes
   only explicitly allowlisted variable names to `$GITHUB_ENV`. Values are
   registered with GitHub log masking before export.
@@ -709,6 +870,10 @@ provider-specific runbook for that provider's own runner.
   `--from-private-key` accept local key names, unambiguous 1Password item titles,
   or qualified `1password:<account>:<vault>:<item>` selectors.
 - **Revocation is not retroactive.** See [Access Control Model](#access-control-model).
+- **Envelope authenticity follows Git trust.** AES-GCM detects modification of
+  a ciphertext under its data key, but dotenc does not independently sign
+  complete envelopes or prevent a trusted repository writer from replacing or
+  rolling back valid repository state.
 - **No centralized policy engine.** Access control is enforced per-environment and per-repository, not across an organization.
 
 ---

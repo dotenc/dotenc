@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import {
@@ -37,7 +37,9 @@ describe("Dev Command", () => {
 
 	test("Edit Alice's personal env with personal secrets", () => {
 		const editor = createMockEditor("PERSONAL_SECRET=personal456")
-		runCli(home, workspace, ["env", "edit", "alice"], { EDITOR: editor })
+		runCli(home, workspace, ["env", "edit", "personal.alice"], {
+			EDITOR: editor,
+		})
 	}, TIMEOUT)
 
 	test("dev command merges development and personal environments", () => {
@@ -46,7 +48,61 @@ describe("Dev Command", () => {
 		expect(result.stdout).toContain("personal456")
 	}, TIMEOUT)
 
-	test("dev command requires --identity in non-interactive mode when multiple keys match", () => {
+	test("run blocks runtime-loader injection before spawn unless explicitly allowed", () => {
+		const markerPath = path.join(workspace, "runtime-loader-executed")
+		const preloadPath = path.join(workspace, "runtime-loader.sh")
+		writeFileSync(
+			preloadPath,
+			`printf '%s' executed > ${JSON.stringify(markerPath)}\n`,
+		)
+
+		const created = runCli(home, workspace, [
+			"env",
+			"create",
+			"runtime-policy",
+			"alice",
+		])
+		expect(created.exitCode).toBe(0)
+		const editor = createMockEditor(`BASH_ENV=${preloadPath}`)
+		const edited = runCli(
+			home,
+			workspace,
+			["env", "edit", "runtime-policy"],
+			{ EDITOR: editor },
+		)
+		expect(edited.exitCode).toBe(0)
+
+		const blocked = runCli(home, workspace, [
+			"run",
+			"-e",
+			"runtime-policy",
+			"--",
+			"bash",
+			"-c",
+			"printf '%s' child-started",
+		])
+		expect(blocked.exitCode).toBe(1)
+		expect(blocked.stderr).toContain("BASH_ENV")
+		expect(blocked.stdout).not.toContain("child-started")
+		expect(existsSync(markerPath)).toBe(false)
+
+		const allowed = runCli(home, workspace, [
+			"run",
+			"-e",
+			"runtime-policy",
+			"--allow-process-env",
+			"BASH_ENV",
+			"--",
+			"bash",
+			"-c",
+			"printf '%s' child-started",
+		])
+		expect(allowed.exitCode).toBe(0)
+		expect(allowed.stdout).toContain("child-started")
+		expect(existsSync(markerPath)).toBe(true)
+	}, TIMEOUT)
+
+	test("dev command requires --profile in non-interactive mode when multiple profiles match", () => {
 		// Add the same SSH key under a second name
 		runCli(home, workspace, [
 			"key",
@@ -56,21 +112,26 @@ describe("Dev Command", () => {
 			path.join(home, ".ssh", "id_ed25519"),
 		])
 		// Create personal environment for alice-deploy
-		runCli(home, workspace, ["env", "create", "alice-deploy", "alice-deploy"])
+		runCli(home, workspace, [
+			"env",
+			"create",
+			"personal.alice-deploy",
+			"alice-deploy",
+		])
 
-		const missingIdentity = runCli(home, workspace, [
+		const missingProfile = runCli(home, workspace, [
 			"dev",
 			"--",
 			"sh",
 			"-c",
 			"echo $SHARED_SECRET",
 		])
-		expect(missingIdentity.exitCode).toBe(1)
-		expect(missingIdentity.stderr).toContain("--identity")
+		expect(missingProfile.exitCode).toBe(1)
+		expect(missingProfile.stderr).toContain("--profile")
 
 		const result = runCli(home, workspace, [
 			"dev",
-			"--identity",
+			"--profile",
 			"alice",
 			"--",
 			"sh",

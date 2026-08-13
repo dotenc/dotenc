@@ -97,7 +97,7 @@ describe("Passphrase-protected key errors", () => {
 
 	test("DOTENC_PRIVATE_KEY shows passphrase error for protected key", () => {
 		const privateKey = readFileSync(path.join(passphraseHome, ".ssh", "id_ed25519"), "utf-8")
-		const result = runCli(aliceHome, workspace, ["run", "-e", "alice", "--", "echo", "test"], {
+		const result = runCli(aliceHome, workspace, ["run", "-e", "development", "--", "echo", "test"], {
 			DOTENC_PRIVATE_KEY: privateKey,
 		})
 		expect(result.stderr).toContain("passphrase-protected")
@@ -145,7 +145,7 @@ describe("Passphrase-protected key errors", () => {
 	}, TIMEOUT)
 
 	test("run shows passphrase error when only passphrase keys exist", () => {
-		const result = runCli(passphraseHome, workspace, ["run", "-e", "alice", "--", "echo", "test"])
+		const result = runCli(passphraseHome, workspace, ["run", "-e", "development", "--", "echo", "test"])
 		expect(result.stderr).toContain("passphrase-protected")
 		expect(result.stderr).toContain("DOTENC_PRIVATE_KEY_PASSPHRASE")
 	}, TIMEOUT)

@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import {
+	chmodSync,
+	mkdirSync,
+	mkdtempSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { getHomeConfig, setHomeConfig } from "../helpers/homeConfig"
@@ -28,6 +35,30 @@ describe("homeConfig", () => {
 		await setHomeConfig({ editor: "vim" })
 		const result = await getHomeConfig()
 		expect(result.editor).toBe("vim")
+		if (process.platform !== "win32") {
+			expect(statSync(path.join(tmpHome, ".dotenc")).mode & 0o777).toBe(0o700)
+			expect(
+				statSync(path.join(tmpHome, ".dotenc", "config.json")).mode & 0o777,
+			).toBe(0o600)
+		}
+	})
+
+	test("tightens permissions on an existing config before reading", async () => {
+		const configDir = path.join(tmpHome, ".dotenc")
+		const configPath = path.join(configDir, "config.json")
+		writeFileSync(configPath, JSON.stringify({ editor: "vim" }), "utf-8")
+		if (process.platform !== "win32") {
+			chmodSync(configDir, 0o777)
+			chmodSync(configPath, 0o666)
+		}
+
+		const result = await getHomeConfig()
+
+		expect(result.editor).toBe("vim")
+		if (process.platform !== "win32") {
+			expect(statSync(configDir).mode & 0o777).toBe(0o700)
+			expect(statSync(configPath).mode & 0o777).toBe(0o600)
+		}
 	})
 
 	test("setHomeConfig overwrites existing config", async () => {

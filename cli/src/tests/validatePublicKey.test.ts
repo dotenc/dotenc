@@ -31,6 +31,18 @@ describe("validatePublicKey", () => {
 		}
 	})
 
+	test("rejects RSA keys when modulus length cannot be determined", () => {
+		const fakeRsaKey = {
+			asymmetricKeyType: "rsa",
+			asymmetricKeyDetails: undefined,
+		} as unknown as crypto.KeyObject
+		const result = validatePublicKey(fakeRsaKey)
+		expect(result.valid).toBe(false)
+		if (!result.valid) {
+			expect(result.reason).toContain("Could not determine")
+		}
+	})
+
 	test("accepts Ed25519 key", () => {
 		const { publicKey } = crypto.generateKeyPairSync("ed25519")
 		const result = validatePublicKey(publicKey)

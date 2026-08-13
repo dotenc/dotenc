@@ -87,7 +87,9 @@ download_file() {
 		curl --fail --silent --show-error --location --proto '=https' \
 			--output "$target_path" "$source_url"
 	elif command -v wget >/dev/null 2>&1; then
-		wget -q -O "$target_path" "$source_url"
+		# The bootstrap URLs are immutable direct objects. Refuse redirects so a
+		# wget implementation cannot follow an HTTPS response to plaintext HTTP.
+		wget -q --max-redirect=0 -O "$target_path" "$source_url"
 	else
 		error "curl or wget is required. See $INSTALLATION_GUIDE"
 	fi

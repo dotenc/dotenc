@@ -27,6 +27,26 @@ describe("configCommand", () => {
 		expect(setHomeConfig).toHaveBeenCalledWith({ editor: "vim" })
 	})
 
+	test("rejects shell metacharacters when setting an editor", async () => {
+		getHomeConfig.mockImplementation(async () => ({}))
+		const logErrorSpy = spyOn(console, "error").mockImplementation(() => {})
+		const exitSpy = spyOn(process, "exit").mockImplementation((code): never => {
+			throw new Error(`exit(${code})`)
+		})
+
+		await expect(
+			configCommand("editor", "vim; run-payload", { remove: false }),
+		).rejects.toThrow("exit(1)")
+
+		expect(setHomeConfig).not.toHaveBeenCalled()
+		expect(logErrorSpy.mock.calls.flat().join(" ")).toContain(
+			"shell metacharacters",
+		)
+		expect(exitSpy).toHaveBeenCalledWith(1)
+		logErrorSpy.mockRestore()
+		exitSpy.mockRestore()
+	})
+
 	test("reads supported config key", async () => {
 		getHomeConfig.mockImplementation(async () => ({ editor: "nano" }))
 		const logSpy = spyOn(console, "log").mockImplementation(() => {})

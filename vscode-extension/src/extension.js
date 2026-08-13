@@ -1,3 +1,4 @@
+const path = require("node:path")
 const vscode = require("vscode")
 const { EnvironmentsProvider } = require("./EnvironmentsProvider")
 const { KeysProvider } = require("./KeysProvider")
@@ -20,10 +21,6 @@ const { formatDetectedVersion } = require("./helpers/formatDetectedVersion")
 const { getDotencExecutable } = require("./helpers/getDotencExecutable")
 const { getDotencInstallCommand } = require("./helpers/getDotencInstallCommand")
 const { getDotencTarget } = require("./helpers/getDotencTarget")
-const { getStartupCwd } = require("./helpers/getStartupCwd")
-const {
-	getWorkspaceUriForStartup,
-} = require("./helpers/getWorkspaceUriForStartup")
 const {
 	isAutoViewDecryptedEnabled,
 } = require("./helpers/isAutoViewDecryptedEnabled")
@@ -48,7 +45,37 @@ const { toDotencUri } = require("./helpers/toDotencUri")
 const { toErrorMessage } = require("./helpers/toErrorMessage")
 const { toFileUri } = require("./helpers/toFileUri")
 
+const EXTENSION_PROCESS_CWD = path.resolve(__dirname, "..")
+const UNTRUSTED_WORKSPACE_MESSAGE =
+	"Trust this workspace before using dotenc to decrypt, encrypt, or manage environments."
 const versionCompatibilityCache = new Map()
+let cliActivityHandler = () => {}
+
+function isWorkspaceTrusted() {
+	return vscode.workspace.isTrusted === true
+}
+
+function untrustedWorkspaceFailure() {
+	return {
+		code: "WORKSPACE_UNTRUSTED",
+		message: UNTRUSTED_WORKSPACE_MESSAGE,
+	}
+}
+
+function untrustedWorkspaceProcessResult() {
+	return {
+		code: 1,
+		stdout: "",
+		stderr: UNTRUSTED_WORKSPACE_MESSAGE,
+		error: new Error(UNTRUSTED_WORKSPACE_MESSAGE),
+	}
+}
+
+function assertWorkspaceTrusted() {
+	if (!isWorkspaceTrusted()) {
+		throw new Error(UNTRUSTED_WORKSPACE_MESSAGE)
+	}
+}
 
 class DotencFileSystemProvider {
 	constructor() {
@@ -57,22 +84,27 @@ class DotencFileSystemProvider {
 	}
 
 	watch() {
+		assertWorkspaceTrusted()
 		return new vscode.Disposable(() => {})
 	}
 
 	async stat(uri) {
+		assertWorkspaceTrusted()
 		return vscode.workspace.fs.stat(toFileUri(uri))
 	}
 
 	async readDirectory(uri) {
+		assertWorkspaceTrusted()
 		return vscode.workspace.fs.readDirectory(toFileUri(uri))
 	}
 
 	async createDirectory(uri) {
+		assertWorkspaceTrusted()
 		await vscode.workspace.fs.createDirectory(toFileUri(uri))
 	}
 
 	async readFile(uri) {
+		assertWorkspaceTrusted()
 		const target = getDotencTarget(uri)
 		const result = await decryptEnvironment(target)
 		if (!result.ok) {
@@ -83,6 +115,7 @@ class DotencFileSystemProvider {
 	}
 
 	async writeFile(uri, content) {
+		assertWorkspaceTrusted()
 		const target = getDotencTarget(uri)
 		const plaintext = Buffer.from(content).toString("utf-8")
 		const result = await encryptEnvironment(target, plaintext)
@@ -92,10 +125,12 @@ class DotencFileSystemProvider {
 	}
 
 	async delete(uri, options) {
+		assertWorkspaceTrusted()
 		await vscode.workspace.fs.delete(toFileUri(uri), options)
 	}
 
 	async rename(oldUri, newUri, options) {
+		assertWorkspaceTrusted()
 		await vscode.workspace.fs.rename(
 			toFileUri(oldUri),
 			toFileUri(newUri),
@@ -104,15 +139,21 @@ class DotencFileSystemProvider {
 	}
 }
 
-async function ensureDotencCompatibility(uri, cwd) {
+async function ensureDotencCompatibility(uri) {
+	if (!isWorkspaceTrusted()) {
+		return { ok: false, error: untrustedWorkspaceFailure() }
+	}
+
 	const executable = getDotencExecutable(uri)
-	const cacheKey = `${cwd}::${executable}`
+	const cacheKey = executable
 	const cached = versionCompatibilityCache.get(cacheKey)
 	if (cached) {
 		return cached
 	}
 
-	const versionResult = await runProcess(executable, cwd, ["--version"])
+	const versionResult = await runProcess(executable, EXTENSION_PROCESS_CWD, [
+		"--version",
+	])
 
 	if (versionResult.error && versionResult.error.code === "ENOENT") {
 		const failure = fallbackFailure(versionResult)
@@ -144,8 +185,14 @@ async function ensureDotencCompatibility(uri, cwd) {
 }
 
 async function runDotenc(uri, cwd, args, stdinInput) {
-	const compatibility = await ensureDotencCompatibility(uri, cwd)
+	if (!isWorkspaceTrusted()) {
+		return untrustedWorkspaceProcessResult()
+	}
+
+	const compatibility = await ensureDotencCompatibility(uri)
 	if (!compatibility.ok) {
+		// A user-initiated operation may legitimately need the install flow.
+		cliActivityHandler()
 		return {
 			code: 1,
 			stdout: "",
@@ -154,10 +201,27 @@ async function runDotenc(uri, cwd, args, stdinInput) {
 		}
 	}
 
-	return runProcess(getDotencExecutable(uri), cwd, args, stdinInput)
+	if (!isWorkspaceTrusted()) {
+		return untrustedWorkspaceProcessResult()
+	}
+
+	const result = await runProcess(
+		getDotencExecutable(uri),
+		cwd,
+		args,
+		stdinInput,
+	)
+	// Avoid racing an update against the operation that triggered the first CLI
+	// activity. The check remains lazy and starts only after that operation ends.
+	cliActivityHandler()
+	return result
 }
 
 async function decryptEnvironment(document) {
+	if (!isWorkspaceTrusted()) {
+		return { ok: false, error: untrustedWorkspaceFailure() }
+	}
+
 	const result = await runDotenc(
 		document.uri,
 		document.cwd,
@@ -186,6 +250,10 @@ async function decryptEnvironment(document) {
 }
 
 async function encryptEnvironment(document, plaintext) {
+	if (!isWorkspaceTrusted()) {
+		return { ok: false, error: untrustedWorkspaceFailure() }
+	}
+
 	const result = await runDotenc(
 		document.uri,
 		document.cwd,
@@ -213,15 +281,15 @@ async function encryptEnvironment(document, plaintext) {
 	return { ok: false, error: fallbackFailure(result) }
 }
 
-async function runCliUpdate(
-	workspaceUri,
-	outputChannel,
-	currentVersion,
-	latestVersion,
-) {
-	const executable = getDotencExecutable(workspaceUri)
-	const cwd = getStartupCwd(workspaceUri)
-	const updateResult = await runProcess(executable, cwd, ["update"])
+async function runCliUpdate(outputChannel, currentVersion, latestVersion) {
+	if (!isWorkspaceTrusted()) {
+		return
+	}
+
+	const executable = getDotencExecutable()
+	const updateResult = await runProcess(executable, EXTENSION_PROCESS_CWD, [
+		"update",
+	])
 	const output = stripAnsi(
 		`${updateResult.stdout}\n${updateResult.stderr}`.trim(),
 	)
@@ -266,12 +334,11 @@ async function runCliUpdate(
 	)
 }
 
-async function maybePromptCliInstall(
-	_workspaceUri,
-	outputChannel,
-	executable,
-	cwd,
-) {
+async function maybePromptCliInstall(outputChannel, executable) {
+	if (!isWorkspaceTrusted()) {
+		return false
+	}
+
 	if (executable !== "dotenc") {
 		return false
 	}
@@ -292,9 +359,13 @@ async function maybePromptCliInstall(
 		return false
 	}
 
+	if (!isWorkspaceTrusted()) {
+		return false
+	}
+
 	const downloadResult = await runProcess(
 		installCommand.download.executable,
-		cwd,
+		EXTENSION_PROCESS_CWD,
 		installCommand.download.args,
 	)
 	appendProcessLogs(
@@ -314,9 +385,13 @@ async function maybePromptCliInstall(
 		return false
 	}
 
+	if (!isWorkspaceTrusted()) {
+		return false
+	}
+
 	const installResult = await runProcess(
 		installCommand.install.executable,
-		cwd,
+		EXTENSION_PROCESS_CWD,
 		installCommand.install.args,
 		downloadResult.stdout,
 	)
@@ -337,7 +412,15 @@ async function maybePromptCliInstall(
 		return false
 	}
 
-	const postInstallVersion = await runProcess(executable, cwd, ["--version"])
+	if (!isWorkspaceTrusted()) {
+		return false
+	}
+
+	const postInstallVersion = await runProcess(
+		executable,
+		EXTENSION_PROCESS_CWD,
+		["--version"],
+	)
 	appendProcessLogs(
 		outputChannel,
 		`[dotenc] ${executable} --version (after install)`,
@@ -361,27 +444,28 @@ async function maybePromptCliInstall(
 }
 
 async function maybePromptCliUpdate(outputChannel) {
-	if (shouldSkipCliUpdateCheck()) {
+	if (!isWorkspaceTrusted() || shouldSkipCliUpdateCheck()) {
 		return
 	}
 
-	const workspaceUri = getWorkspaceUriForStartup()
-	const executable = getDotencExecutable(workspaceUri)
-	const cwd = getStartupCwd(workspaceUri)
-	let versionResult = await runProcess(executable, cwd, ["--version"])
+	const executable = getDotencExecutable()
+	let versionResult = await runProcess(executable, EXTENSION_PROCESS_CWD, [
+		"--version",
+	])
 
 	if (versionResult.error && versionResult.error.code === "ENOENT") {
-		const installed = await maybePromptCliInstall(
-			workspaceUri,
-			outputChannel,
-			executable,
-			cwd,
-		)
+		const installed = await maybePromptCliInstall(outputChannel, executable)
 		if (!installed) {
 			return
 		}
 
-		versionResult = await runProcess(executable, cwd, ["--version"])
+		if (!isWorkspaceTrusted()) {
+			return
+		}
+
+		versionResult = await runProcess(executable, EXTENSION_PROCESS_CWD, [
+			"--version",
+		])
 	}
 
 	if (versionResult.error || versionResult.code !== 0) {
@@ -392,6 +476,10 @@ async function maybePromptCliUpdate(outputChannel) {
 		stripAnsi(`${versionResult.stdout}\n${versionResult.stderr}`.trim()),
 	)
 	if (currentVersion === "unknown") {
+		return
+	}
+
+	if (!isWorkspaceTrusted()) {
 		return
 	}
 
@@ -409,14 +497,14 @@ async function maybePromptCliUpdate(outputChannel) {
 		return
 	}
 
-	await runCliUpdate(workspaceUri, outputChannel, currentVersion, latestVersion)
+	await runCliUpdate(outputChannel, currentVersion, latestVersion)
 }
 
 async function viewDecrypted(resource) {
-	const fileUri = resolveSourceUri(resource)
-	const dotencUri = toDotencUri(fileUri)
-
 	try {
+		assertWorkspaceTrusted()
+		const fileUri = resolveSourceUri(resource)
+		const dotencUri = toDotencUri(fileUri)
 		let document = await vscode.workspace.openTextDocument(dotencUri)
 		document = await ensureEnvironmentLanguage(document)
 		await vscode.window.showTextDocument(document)
@@ -429,6 +517,7 @@ async function viewDecrypted(resource) {
 }
 
 async function viewEncrypted(resource, suppressAutoRedirectOnce) {
+	assertWorkspaceTrusted()
 	const fileUri = resolveSourceUri(resource)
 	const key = fileUri.toString()
 	suppressAutoRedirectOnce.add(key)
@@ -445,15 +534,34 @@ async function viewEncrypted(resource, suppressAutoRedirectOnce) {
 }
 
 function activate(context) {
+	if (!isWorkspaceTrusted()) {
+		return
+	}
+
 	const fileSystemProvider = new DotencFileSystemProvider()
 	const outputChannel = vscode.window.createOutputChannel("dotenc")
 	const redirectInProgress = new Set()
 	const suppressAutoRedirectOnce = new Set()
 	const environmentsProvider = new EnvironmentsProvider()
 	const keysProvider = new KeysProvider()
+	let cliUpdateCheckStarted = false
+	cliActivityHandler = () => {
+		if (cliUpdateCheckStarted || !isWorkspaceTrusted()) {
+			return
+		}
+
+		cliUpdateCheckStarted = true
+		setTimeout(() => {
+			void maybePromptCliUpdate(outputChannel).catch((error) => {
+				outputChannel.appendLine(
+					`Failed to check for CLI updates: ${error instanceof Error ? error.message : String(error)}`,
+				)
+			})
+		}, 0)
+	}
 
 	const autoOpenCurrentEditorIfNeeded = async (editor) => {
-		if (!editor || !editor.document) {
+		if (!isWorkspaceTrusted() || !editor || !editor.document) {
 			return
 		}
 
@@ -504,12 +612,14 @@ function activate(context) {
 		vscode.commands.registerCommand(
 			"dotenc.rotateEnvironment",
 			async (item) => {
+				if (!isWorkspaceTrusted()) return
 				if (!item?.envDir || !item?.environmentName) return
-				const result = await runDotenc(
-					getWorkspaceUriForStartup(),
-					item.envDir,
-					["env", "rotate", item.environmentName, "--yes"],
-				)
+				const result = await runDotenc(item.fileUri, item.envDir, [
+					"env",
+					"rotate",
+					item.environmentName,
+					"--yes",
+				])
 				if (result.error || result.code !== 0) {
 					vscode.window.showErrorMessage(
 						`Rotate failed: ${result.stderr || result.error?.message}`,
@@ -522,6 +632,7 @@ function activate(context) {
 		vscode.commands.registerCommand(
 			"dotenc.deleteEnvironment",
 			async (item) => {
+				if (!isWorkspaceTrusted()) return
 				if (!item?.envDir || !item?.environmentName) return
 				const answer = await vscode.window.showWarningMessage(
 					`Delete environment "${item.environmentName}"?`,
@@ -529,11 +640,12 @@ function activate(context) {
 					"Delete",
 				)
 				if (answer !== "Delete") return
-				const result = await runDotenc(
-					getWorkspaceUriForStartup(),
-					item.envDir,
-					["env", "delete", item.environmentName, "--yes"],
-				)
+				const result = await runDotenc(item.fileUri, item.envDir, [
+					"env",
+					"delete",
+					item.environmentName,
+					"--yes",
+				])
 				if (result.error || result.code !== 0) {
 					vscode.window.showErrorMessage(
 						`Delete failed: ${result.stderr || result.error?.message}`,
@@ -557,14 +669,12 @@ function activate(context) {
 			treeDataProvider: keysProvider,
 			showCollapseAll: false,
 		}),
+		new vscode.Disposable(() => {
+			cliActivityHandler = () => {}
+		}),
 	)
 
 	void autoOpenCurrentEditorIfNeeded(vscode.window.activeTextEditor)
-	void maybePromptCliUpdate(outputChannel).catch((error) => {
-		outputChannel.appendLine(
-			`Failed to check for CLI updates: ${error instanceof Error ? error.message : String(error)}`,
-		)
-	})
 }
 
 function deactivate() {}

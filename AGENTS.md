@@ -114,4 +114,8 @@ Coverage:
 ## Release / Versioning Notes
 
 - npm CLI releases use `cli/package.json` version (`@dotenc/cli`), not the root `package.json` version.
+- When changing `cli/package.json` version, update the exact default in both
+  `actions/setup/action.yml` and
+  `actions/wrapper-repos/setup-action/action.yml`; the setup action must not
+  default to npm's mutable `latest` tag.
 - Validate both JS entrypoint (`dist/cli.js`) and compiled binary when changing CLI build/packaging behavior.

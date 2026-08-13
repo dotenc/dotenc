@@ -360,12 +360,14 @@ returns encrypted content to Git immediately after the bounded direct read
 fails; it does not fan out into account and item scans.
 
 Identity-only flows may discover public metadata for project identities that
-do not match a local private key. Plain `dev` keeps a local match provider-free;
-an explicit `dev --identity` may broaden discovery so a 1Password-only project
-identity remains selectable without retrieving private material early.
-`whoami` also remains provider-free when at least one project identity matches
-a local key, even if the repository contains unmatched teammate keys. It uses
-public-only discovery only when no local project identity matches.
+do not match a local private key. `dev` discovers `personal.*` environments by
+filename and tests access by recipient/private-key fingerprint; `--profile`
+selects one of those environment names and never uses a public-key alias as
+identity truth. A cached 1Password locator can prove access with one direct
+private-key read without broad public-metadata discovery. `whoami` remains
+provider-free when at least one project identity matches a local key, even if
+the repository contains unmatched teammate keys. It uses public-only discovery
+only when no local project identity matches.
 
 ## Security boundaries
 

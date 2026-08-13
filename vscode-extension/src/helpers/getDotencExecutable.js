@@ -1,3 +1,7 @@
+const {
+	getMachineScopedConfigurationValue,
+} = require("./getMachineScopedConfigurationValue")
+
 function normalizeExecutablePath(value) {
 	if (typeof value !== "string") {
 		return "dotenc"
@@ -7,13 +11,16 @@ function normalizeExecutablePath(value) {
 	return normalized.length > 0 ? normalized : "dotenc"
 }
 
-function getDotencExecutable(uri, getConfiguredPath) {
-	const configured =
-		typeof getConfiguredPath === "function"
-			? getConfiguredPath(uri)
-			: require("vscode")
-					.workspace.getConfiguration("dotenc", uri ?? null)
-					.get("executablePath", "dotenc")
+function getDotencExecutable(_uri, getConfiguration) {
+	const configuration =
+		typeof getConfiguration === "function"
+			? getConfiguration()
+			: require("vscode").workspace.getConfiguration("dotenc")
+	const configured = getMachineScopedConfigurationValue(
+		configuration,
+		"executablePath",
+		"dotenc",
+	)
 
 	return normalizeExecutablePath(configured)
 }

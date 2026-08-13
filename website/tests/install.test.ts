@@ -25,6 +25,7 @@ const APK_KEY_SHA256 =
 
 type InstallerOptions = {
 	commands: string[]
+	downloader?: "curl" | "wget"
 	failCommand?: string
 	hash?: string
 	os?: string
@@ -91,13 +92,14 @@ function runInstaller(options: InstallerOptions): InstallerResult {
 		"id",
 		`if [ "\${1:-}" = "-u" ]; then printf '%s\\n' "$DOTENC_TEST_UID"; else exit 2; fi\n`,
 	)
+	const downloader = options.downloader ?? "curl"
 	writeCommand(
 		binDirectory,
-		"curl",
+		downloader,
 		logInvocationBody(`target_path=""
 while [ "$#" -gt 0 ]; do
 	case "$1" in
-		--output | -o)
+		--output | -o | -O)
 			shift
 			target_path="\${1:-}"
 			;;
@@ -146,7 +148,7 @@ done`),
 	])
 	for (const command of genericCommands) {
 		if (
-			["curl", "dotenc", "grep", "id", "sha256sum", "sudo", "tee", "uname"].includes(
+			["curl", "wget", "dotenc", "grep", "id", "sha256sum", "sudo", "tee", "uname"].includes(
 				command,
 			)
 		)
@@ -285,6 +287,17 @@ describe("Linux native package selection", () => {
 })
 
 describe("bootstrap failure handling", () => {
+	test("wget refuses redirects for immutable HTTPS bootstrap objects", () => {
+		const result = runInstaller({
+			commands: ["apt-get"],
+			downloader: "wget",
+		})
+
+		expect(result.status).toBe(0)
+		expect(result.calls).toContain("wget\t-q\t--max-redirect=0\t-O")
+		expect(result.calls).toContain("https://packages.dotenc.org/keys/")
+	})
+
 	test.each([
 		["APT", "apt-get"],
 		["RPM", "dnf"],

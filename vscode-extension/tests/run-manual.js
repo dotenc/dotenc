@@ -1,5 +1,11 @@
 const path = require("node:path")
-const { runTests } = require("@vscode/test-electron")
+const {
+	downloadAndUnzipVSCode,
+	runTests,
+} = require("@vscode/test-electron")
+const {
+	resolveVSCodeExecutable,
+} = require("./resolve-vscode-executable")
 
 async function main() {
 	const extensionDevelopmentPath = path.resolve(__dirname, "..")
@@ -9,9 +15,11 @@ async function main() {
 	console.log("Opening VS Code with dotenc extension... close the window when done.\n")
 
 	try {
+		const downloadedExecutable = await downloadAndUnzipVSCode()
 		await runTests({
 			extensionDevelopmentPath,
 			extensionTestsPath,
+			vscodeExecutablePath: resolveVSCodeExecutable(downloadedExecutable),
 			launchArgs: [workspacePath, "--disable-extensions"],
 		})
 	} catch {

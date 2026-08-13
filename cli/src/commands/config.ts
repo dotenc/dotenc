@@ -1,4 +1,5 @@
 import chalk from "chalk"
+import { isEditorCommandFreeOfShellMetacharacters } from "../helpers/getDefaultEditor"
 import { getHomeConfig, setHomeConfig } from "../helpers/homeConfig"
 
 type Options = {
@@ -40,6 +41,15 @@ export const configCommand = async (
 	}
 
 	if (value !== undefined) {
+		if (
+			configKey === "editor" &&
+			!isEditorCommandFreeOfShellMetacharacters(value)
+		) {
+			console.error(
+				`${chalk.red("Error:")} editor commands must not contain shell metacharacters. A configured editor and its arguments are trusted to execute as the current user.`,
+			)
+			process.exit(1)
+		}
 		config[configKey] = value
 		await setHomeConfig(config)
 		return

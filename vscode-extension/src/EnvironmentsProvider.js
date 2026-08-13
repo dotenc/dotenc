@@ -61,6 +61,10 @@ class EnvironmentsProvider {
 	}
 
 	async getChildren(element) {
+		if (!vscode.workspace.isTrusted) {
+			return []
+		}
+
 		if (element instanceof EnvDirItem) {
 			return element._children
 		}

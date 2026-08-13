@@ -24,12 +24,12 @@
 ## Getting Started
 
 ```bash
-dotenc init            # pick your SSH key, choose a name
-dotenc env edit alice  # add your personal secrets
+dotenc init --name alice  # pick your SSH key and create personal.alice
+dotenc env edit personal.alice  # add your personal secrets
 dotenc dev npm start   # run with your encrypted env
 ```
 
-Encrypted `.env.alice.enc` committed.
+Encrypted `.env.personal.alice.enc` committed.
 No external services.
 Uses your existing SSH keys.
 Done.
@@ -98,7 +98,9 @@ Managing secrets and environment variables is critical for any modern applicatio
 - **Zero Key Management:** You already have SSH keys. dotenc uses them directly - no custom key generation, no extra files cluttering your home directory, no new workflows to learn.
 - **Better Developer Experience:** No more juggling environment variables in a web UI or struggling to keep them in sync across branches. Everything is managed alongside your code, with simple CLI commands and full Git integration.
 - **Seamless Collaboration:** Onboard or revoke team members with a single command. Grant or remove access per environment, and let Git handle the rest.
-- **Fully Auditable:** Every grant and revoke is tracked within your Git history, so you always know who had access and when changes were made.
+- **Reviewable in Git:** Grants and revocations change tracked files, so normal
+  repository review and history show access changes under your Git hosting and
+  branch-protection policy.
 - **PR-Safe Environment Changes:** Environment variable updates live in the same pull request as your feature code. No more "merge → broken build → patch env → rebuild" workflow.
 
 ## Security Model
@@ -108,6 +110,10 @@ Managing secrets and environment variables is critical for any modern applicatio
 - dotenc uses AES-256-GCM for authenticated encryption.
 - Your repository alone is not enough to decrypt secrets.
 - Access can be revoked at any time.
+
+AES-GCM detects changes to a ciphertext under its data key; it does not prove
+who authored a complete replacement envelope. Repository writers are trusted,
+with Git permissions, review, and history providing the authorship layer.
 
 For a detailed breakdown of the cryptographic design, key material handling, threat model, and vulnerability reporting, see [SECURITY.md](/SECURITY.md).
 
@@ -121,7 +127,10 @@ For a detailed breakdown of the cryptographic design, key material handling, thr
 6. Encrypted files (`.env.*.enc`) are committed to your repository;
 7. When running commands, variables are decrypted on-the-fly using your SSH private key.
 
-Your SSH private keys never leave `~/.ssh/`. dotenc reads them in place - nothing is copied, nothing is stored elsewhere.
+By default, filesystem SSH private keys stay in `~/.ssh/` and dotenc reads them
+in place. A persistent passwordless or 1Password-backed local copy is created
+only through the explicitly confirmed opt-in flows documented below; provider
+keys otherwise enter dotenc process memory only for the current operation.
 
 ### Project Structure
 
@@ -133,12 +142,16 @@ After setup, your project will look like:
 │   ├── alice.pub
 │   ├── bob.pub
 │   └── ...
-├── .env.alice.enc
+├── .env.personal.alice.enc
 ├── .env.production.enc
 └── .env.development.enc
 ```
 
-Encrypted files are committed to Git. Public keys are stored inside `.dotenc/`. Each developer gets a personal encrypted environment (e.g., `.env.alice.enc`).
+Encrypted files are committed to Git. Public keys are stored inside `.dotenc/`.
+Each developer can have a personal encrypted environment in the reserved
+`personal.<profile>` namespace (for example,
+`.env.personal.alice.enc`). Public-key filenames are display aliases only;
+profile access is matched by key fingerprint.
 
 ## Readable local Git diffs
 
@@ -151,6 +164,11 @@ Seamlessly. dotenc connects encrypted environment files to Git's native diff pip
 Only encrypted `.env.*.enc` files are stored and committed. The readable view exists only on the developer's machine, so local reviews stay clear without a manual decrypt-and-re-encrypt workflow—even though every edit rotates the data key and rewrites the ciphertext.
 
 `dotenc init` configures this automatically. Run it once in every clone. When it detects an existing dotenc project, it configures the clone-local Git driver without changing keys, environments, or access rules.
+
+The driver is limited to `.env.*.enc`, and clone-local textconv caching is
+disabled so Git does not persist decrypted output. The driver invokes `dotenc`
+from your machine's `PATH`, so local executable resolution remains part of the
+trusted developer-machine boundary.
 
 Optionally, you can also enable [redacted diffs in pull requests](#redacted-pull-request-diffs).
 
@@ -168,7 +186,8 @@ In a new project, this interactively guides you through the setup process:
 2. Prompting for your username (defaults to your system username);
 3. Letting you choose which SSH key to use;
 4. Deriving the public key and storing it in `.dotenc/` (e.g., `.dotenc/alice.pub`);
-5. Creating encrypted `development` and personal environments (e.g., `.env.development.enc`, `.env.alice.enc`).
+5. Creating encrypted `development` and personal environments (for example,
+   `.env.development.enc` and `.env.personal.alice.enc`).
 
 In an existing clone, `dotenc init` only enables the local Git diff integration. It does not prompt for an identity or recreate keys and environments, so it is safe to run after every clone.
 
@@ -182,8 +201,13 @@ If you don't have an SSH key yet, just run `ssh-keygen` first - you'll want one 
 dotenc env create [environment]
 ```
 
-This command creates a new encrypted environment file under the specified name (e.g., `.env.development.enc`). Your personal environment is created automatically during `init`.
+This command creates a new encrypted environment file under the specified name (e.g., `.env.development.enc`). Your `personal.<profile>` environment is created automatically during `init`.
 Environment names may contain letters, numbers, dots (`.`), hyphens (`-`), and underscores (`_`).
+
+New and rewritten environments use format version 2, which binds the logical
+environment name to the ciphertext. Existing version 1 envelopes remain
+readable, but renaming a version 2 file requires decrypting and re-encrypting it
+under the new name.
 
 In a monorepo, `cd` to the target directory first, then run `dotenc env create`.
 
@@ -211,10 +235,16 @@ dotenc config editor vim
 
 Currently supported `dotenc config` key: `editor`.
 You can include editor arguments, for example: `dotenc config editor "code --wait"`.
+The configured editor is trusted local input. Shell metacharacters are rejected
+and the command is launched without a shell, but editor-specific arguments can
+still enable editor-native behavior. dotenc enforces mode `0700` on
+`~/.dotenc/` and `0600` on its `config.json` when reading or writing it.
 
 ### Run commands on an environment
 
-For development, the `dev` command loads both the shared `development` environment and your personal environment automatically:
+For development, the `dev` command always loads the required shared
+`development` environment and, when available, one accessible
+`personal.<profile>` overlay:
 
 ```bash
 dotenc dev <command> [...args]
@@ -225,6 +255,44 @@ Example:
 ```bash
 dotenc dev node app.js
 ```
+
+Personal profiles are discovered only along the effective ancestor chain (or
+only in the current directory with `--local-only`). Access is tested by the
+recipient fingerprint against your available private keys; `.dotenc/*.pub`
+filenames are human-readable aliases and do not choose a profile.
+
+- One accessible profile is selected automatically.
+- Several accessible profiles prompt in an interactive terminal. In
+  non-interactive use, pass `--profile <name>`.
+- `--profile alice` means the `personal.alice` environment.
+- No personal environment is a healthy state: `dev` runs with `development`
+  only.
+- A requested missing/inaccessible profile, or discovered profiles with no
+  accessible candidate, warns and continues with `development` only. Add
+  `--strict` to make that personal-profile failure fatal.
+- `development` is always required, even without `--strict`.
+
+```bash
+dotenc dev --profile alice npm start
+dotenc dev --profile alice --strict npm start
+```
+
+The `personal.*` namespace is a breaking replacement for legacy personal
+environments named directly after a key alias. dotenc never guesses that an
+arbitrary legacy environment was personal. To migrate `.env.alice.enc`:
+
+```bash
+dotenc env create personal.alice
+dotenc env edit alice
+dotenc env edit personal.alice  # copy the values, then save to re-encrypt
+dotenc dev --profile alice npm test
+dotenc env delete alice         # only after reviewing the encrypted change
+```
+
+Do not rename the file: version 2 ciphertext is authenticated with the
+environment name and must be decrypted and re-encrypted for migration. If the
+old environment was deleted accidentally, restore it from Git before copying;
+creating `personal.alice` starts empty and cannot recover old values.
 
 For explicit environment control, use `run`:
 
@@ -253,6 +321,24 @@ If you want `run` to fail when any selected environment cannot be loaded, use st
 ```bash
 dotenc run --strict -e base,production node app.js
 ```
+
+Before spawning the command, dotenc rejects decrypted variables that can alter
+executable resolution, runtime loaders, shell startup, or GitHub Actions
+control files. It prints variable names only, never values. All decrypted
+`DOTENC_*` names and the GitHub control-file names are reserved and cannot be
+overridden. For an exceptional trusted workflow, allow one non-reserved process
+variable at a time with a repeatable flag:
+
+```bash
+dotenc run -e test --allow-process-env NODE_OPTIONS node app.js
+dotenc dev --allow-process-env NODE_OPTIONS npm start
+```
+
+The exemption is exact and has no wildcard form. Bare commands are resolved
+against the original parent `PATH` before decrypted values are merged, so an
+allowed decrypted `PATH` cannot redirect the initial executable. The child
+never receives `DOTENC_PRIVATE_KEY_BASE64`, legacy `DOTENC_PRIVATE_KEY`,
+`DOTENC_PRIVATE_KEY_PASSPHRASE`, or `DOTENC_ENV` from either source.
 
 In a monorepo, `run` merges environment files from the project root down to the current directory (local values win). To load only from the current directory and skip ancestor directories:
 
@@ -291,7 +377,10 @@ dotenc tools install-github-diffs \
 ```
 
 - `install-vscode-extension` adds extension recommendations for supported editors and can open the extension page.
-- `install-agent-skill` installs the dotenc agent skill through `npx skills add`.
+- `install-agent-skill` installs the dotenc agent skill through the pinned
+  `skills@1.5.22` runner. The `dotenc/skills` source itself is currently a
+  mutable repository reference; inspect it or install a known revision manually
+  when immutable source resolution is required.
 - `--force` maps to non-interactive mode (`-y`) for automation.
 - `install-github-diffs` creates a dedicated, least-privilege GitHub identity,
   grants it only to explicitly selected environments (or `--all`), uploads its
@@ -332,7 +421,10 @@ To fully offboard a team member (e.g., John), use `auth purge`:
 dotenc auth purge john --yes
 ```
 
-This revokes and re-encrypts every affected environment, then removes his public key file. Then, commit your changes:
+This resolves John's alias to its key fingerprint, preflights every environment,
+revokes and re-encrypts every affected environment, verifies the fingerprint is
+gone everywhere, and only then removes every `.pub` alias for that same key.
+Then, commit your changes:
 
 ```bash
 git checkout -b offboard-john
@@ -368,9 +460,16 @@ dotenc auth purge <user> [--yes]
 ```
 
 This command:
-1. Revokes the user's access from all environments they were granted
-2. Re-encrypts each environment without their key (data key rotation)
-3. Deletes their public key file from `.dotenc/`
+1. Resolves the named public-key alias to its fingerprint
+2. Validates and pre-decrypts every affected environment before making changes
+3. Revokes that fingerprint and re-encrypts each affected environment
+4. Rescans the project and deletes all `.pub` aliases for that fingerprint only
+   after complete verification
+
+Unreadable environments, a zero-recipient result, a failed rewrite, or a failed
+rescan make the command exit non-zero and retain the public key for a safe
+retry. Some environments may already have been rewritten after a mid-operation
+failure; the command never reports that state as successful.
 
 After running `auth purge`, also:
 - Rotate external secrets (database passwords, API tokens, etc.)
@@ -697,7 +796,10 @@ Removes the public key file from the project (`.dotenc/<name>.pub`). Does not re
 dotenc works in monorepos out of the box. Run `dotenc init` once at the repository root to create a shared `.dotenc/` folder and a root-level environment. Subdirectory packages can then have their own `.env.*.enc` files that overlay the root.
 
 **How environment loading works:**
-- `dotenc run` (and `dev`) walk from the project root to the current directory, loading and merging each layer. Local values override root values.
+- `dotenc run` walks from the project root to the current directory, loading and
+  merging each requested environment. `dotenc dev` does the same for required
+  `development` and its selected accessible `personal.<profile>`. Local values
+  override root values.
 - Use `--local-only` to load only the current directory's environments, skipping ancestor layers.
 
 **Creating, editing, rotating, and deleting environments:**
@@ -746,6 +848,9 @@ Alternatively, the `DOTENC_ENV` variable can be used to set the environment, so 
   export DOTENC_ENV="production"
   dotenc run node app.js
 ```
+
+`DOTENC_ENV` selects the environment for dotenc itself and is removed before
+the wrapped child command starts.
 
 ### Update checks
 

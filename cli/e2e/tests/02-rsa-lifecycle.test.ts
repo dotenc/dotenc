@@ -24,7 +24,9 @@ describe("RSA Lifecycle", () => {
 	test("init creates project files", () => {
 		runCli(home, workspace, ["init", "--name", "alice"])
 		expect(existsSync(path.join(workspace, ".dotenc", "alice.pub"))).toBe(true)
-		expect(existsSync(path.join(workspace, ".env.alice.enc"))).toBe(true)
+		expect(existsSync(path.join(workspace, ".env.personal.alice.enc"))).toBe(
+			true,
+		)
 	}, TIMEOUT)
 
 	test("create generates encrypted env with rsa key", () => {

@@ -4,7 +4,7 @@ import { createHash, generateKeyPairSync, randomUUID } from "node:crypto"
 import { existsSync, type Stats } from "node:fs"
 import fs from "node:fs/promises"
 import path from "node:path"
-import { type Environment, environmentSchema } from "../schemas/environment"
+import type { Environment } from "../schemas/environment"
 import { ENVIRONMENT_DIFF_LIMITS } from "../schemas/environmentDiffReport"
 import { promptConfirm, promptMultiSelect } from "../ui/prompts"
 import { isInteractive } from "../ui/tty"
@@ -18,6 +18,7 @@ import {
 import { encryptDataKey } from "./encryptDataKey"
 import { getKeyFingerprint } from "./getKeyFingerprint"
 import { getPublicKeys, type PublicKeyEntry } from "./getPublicKeys"
+import { parseEnvironmentDocument } from "./parseEnvironmentDocument"
 import { resolveProjectRoot } from "./resolveProjectRoot"
 import { validateKeyName } from "./validateKeyName"
 
@@ -989,7 +990,11 @@ const prepareSelectedEnvironments = async (
 	const prepared: SelectedEnvironment[] = []
 	for (const environment of selected) {
 		const stat = await fs.lstat(environment.absolutePath)
-		if (stat.isSymbolicLink() || !stat.isFile()) {
+		if (
+			stat.isSymbolicLink() ||
+			!stat.isFile() ||
+			stat.size > ENVIRONMENT_DIFF_LIMITS.maxFileBytes
+		) {
 			throw new Error(
 				`Selected environment must be a real file: ${environment.relativePath}.`,
 			)
@@ -1005,7 +1010,7 @@ const prepareSelectedEnvironments = async (
 		const content = decodeUtf8(originalBytes, environment.relativePath)
 		let parsed: Environment
 		try {
-			parsed = environmentSchema.parse(JSON.parse(content))
+			parsed = parseEnvironmentDocument(content)
 		} catch {
 			throw new Error(
 				`Selected environment is not a valid dotenc file: ${environment.relativePath}.`,

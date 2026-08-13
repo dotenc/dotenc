@@ -116,21 +116,17 @@ export const initCommand = async (options: Options) => {
 		)
 	}
 
-	if (username !== "development") {
-		await createCommand(username, username)
-	}
+	const personalEnvironment = `personal.${username}`
+	await createCommand(personalEnvironment, username)
 
 	console.log(`\n${chalk.green("✔")} Initialization complete!`)
 	console.log("\nSome useful tips:")
 	const developmentEditCmd = chalk.gray("dotenc env edit development")
-	const personalEditCmd = chalk.gray(`dotenc env edit ${username}`)
+	const personalEditCmd = chalk.gray(`dotenc env edit ${personalEnvironment}`)
 	console.log(`- Edit the development environment:\t${developmentEditCmd}`)
-	if (username !== "development") {
-		console.log(`- Edit your personal environment:\t${personalEditCmd}`)
-	}
+	console.log(`- Edit your personal environment:\t${personalEditCmd}`)
 
-	const devEnvironmentChain =
-		username === "development" ? "development" : `development,${username}`
+	const devEnvironmentChain = `development,${personalEnvironment}`
 	const devCmd = chalk.gray("dotenc dev <command>")
 	console.log(
 		`- Run in development mode:\t\t${devCmd} ${chalk.gray(`(loads ${devEnvironmentChain})`)}`,

@@ -57,7 +57,7 @@ describe("run/dev from subfolder with envs only at root", () => {
 		const personalResult = runCli(
 			aliceHome,
 			workspace,
-			["env", "edit", "alice"],
+			["env", "edit", "personal.alice"],
 			{ EDITOR: personalEditor },
 		)
 		expect(personalResult.exitCode).toBe(0)

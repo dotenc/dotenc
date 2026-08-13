@@ -1,7 +1,13 @@
 const fs = require("node:fs")
 const os = require("node:os")
 const path = require("node:path")
-const { runTests } = require("@vscode/test-electron")
+const {
+	downloadAndUnzipVSCode,
+	runTests,
+} = require("@vscode/test-electron")
+const {
+	resolveVSCodeExecutable,
+} = require("./resolve-vscode-executable")
 
 async function main() {
 	const extensionDevelopmentPath = path.resolve(__dirname, "..")
@@ -13,9 +19,11 @@ async function main() {
 	fs.cpSync(fixtureWorkspacePath, workspacePath, { recursive: true })
 
 	try {
+		const downloadedExecutable = await downloadAndUnzipVSCode()
 		await runTests({
 			extensionDevelopmentPath,
 			extensionTestsPath,
+			vscodeExecutablePath: resolveVSCodeExecutable(downloadedExecutable),
 			launchArgs: [workspacePath, "--disable-extensions"],
 			extensionTestsEnv: {
 				DOTENC_VSCODE_TEST: "1",

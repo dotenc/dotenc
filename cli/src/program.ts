@@ -194,6 +194,12 @@ program
 			"load only from the current directory, skip ancestor dirs",
 		),
 	)
+	.addOption(
+		new Option(
+			"--allow-process-env <name>",
+			"allow one unsafe process-control variable (repeatable)",
+		).argParser(collectValues),
+	)
 	.passThroughOptions()
 	.description("run a command in an environment")
 	.action(runCommand)
@@ -208,9 +214,20 @@ program
 			"load only from the current directory, skip ancestor dirs",
 		),
 	)
-	.addOption(new Option("-i, --identity <name>", "the identity to use"))
+	.addOption(
+		new Option("--profile <name>", "the personal.<name> profile to use"),
+	)
+	.addOption(
+		new Option("--strict", "fail if the personal environment cannot be loaded"),
+	)
+	.addOption(
+		new Option(
+			"--allow-process-env <name>",
+			"allow one unsafe process-control variable (repeatable)",
+		).argParser(collectValues),
+	)
 	.passThroughOptions()
-	.description("shortcut for 'run -e development,<yourname> <command>'")
+	.description("run with development and an accessible personal.* environment")
 	.action((command, args, options) => devCommand(command, args, options))
 
 const key = program.command("key").description("manage keys")

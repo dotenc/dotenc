@@ -51,7 +51,10 @@ describe("Mixed keyring init/dev/run flow", () => {
 			readFileSync(path.join(workspace, ".env.development.enc"), "utf-8"),
 		)
 		const personalEnv = JSON.parse(
-			readFileSync(path.join(workspace, ".env.alice.enc"), "utf-8"),
+			readFileSync(
+				path.join(workspace, ".env.personal.alice.enc"),
+				"utf-8",
+			),
 		)
 
 		expect(devEnv.keys).toHaveLength(1)
@@ -67,7 +70,9 @@ describe("Mixed keyring init/dev/run flow", () => {
 		const personalEditor = createMockEditor("PERSONAL_SECRET=personal-19")
 
 		runCli(home, workspace, ["env", "edit", "development"], { EDITOR: devEditor })
-		runCli(home, workspace, ["env", "edit", "alice"], { EDITOR: personalEditor })
+		runCli(home, workspace, ["env", "edit", "personal.alice"], {
+			EDITOR: personalEditor,
+		})
 		runCli(home, workspace, ["env", "create", "staging", "alice"])
 
 		const stagingEditor = createMockEditor("STAGING_SECRET=staging-19")
@@ -126,7 +131,10 @@ describe("Mixed keyring prefers a valid key over weak RSA during init", () => {
 		expect(result.stderr).not.toContain("minimum is 2048")
 
 		const personalEnv = JSON.parse(
-			readFileSync(path.join(workspace, ".env.alice.enc"), "utf-8"),
+			readFileSync(
+				path.join(workspace, ".env.personal.alice.enc"),
+				"utf-8",
+			),
 		)
 		expect(personalEnv.keys).toHaveLength(1)
 		expect(personalEnv.keys[0].algorithm).toBe("ed25519")

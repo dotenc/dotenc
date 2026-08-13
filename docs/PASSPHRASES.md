@@ -92,6 +92,15 @@ When a passphrase-protected key is selected in interactive chooser mode:
   encrypted keys directly, passphrase input is provided via
   `DOTENC_PRIVATE_KEY_PASSPHRASE`.
 - In conversion flow, passphrase prompt handling is delegated to `ssh-keygen`.
+- The OpenSSH unlock fallback uses a mode-`0700` temporary directory, a
+  mode-`0600` private-key copy, and a fixed mode-`0700` askpass helper. It sends
+  the passphrase through a mutable stdin buffer rather than writing a
+  passphrase file or exposing it in process arguments.
+- The fallback gives `ssh-keygen` an allowlisted child environment and
+  overwrites the passphrase buffer and unlocked key bytes after use. It
+  logically overwrites, syncs, and removes temporary key/helper files
+  best-effort. Filesystem snapshots, copy-on-write storage, and flash wear
+  leveling can retain old blocks, so this is not a physical-erasure guarantee.
 
 ## Validation Coverage
 
@@ -103,4 +112,6 @@ Added/updated tests cover:
 - conversion failure warning + continued selection
 - `_passwordless` collision handling
 - helper spawn/copy/chmod/failure behavior
+- restricted unlock fallback modes, stdin passphrase delivery, buffer zeroing,
+  allowlisted child environment, and best-effort temporary-file erasure
 - non-interactive passphrase-only behavior unchanged
