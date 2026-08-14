@@ -15,8 +15,10 @@ Open encrypted dotenc environment files as regular dotenv documents in VS Code.
 
 ## Prerequisites
 
-- `dotenc` CLI `0.5.2` or newer.
+- `dotenc` CLI `0.9.0` or newer.
 - A dotenc project initialized in your workspace.
+- A trusted VS Code workspace. The extension does not decrypt, encrypt, manage
+  environments, install, or execute the CLI in an untrusted workspace.
 
 Install the CLI with the official script:
 
@@ -32,12 +34,27 @@ curl -fsSL https://dotenc.org/install.sh | sh
 
 ## Settings
 
-- `dotenc.autoViewDecrypted`: automatically open `.env.<environment>.enc` files in the decrypted editor (default: `true`).
-- `dotenc.executablePath`: path to the `dotenc` executable (default: `dotenc`). Configure this in your user/remote settings (not workspace settings).
+- `dotenc.autoViewDecrypted`: automatically open `.env.<environment>.enc` files
+  in the decrypted editor (default: `true`). This is machine-scoped; workspace
+  and folder overrides are ignored.
+- `dotenc.executablePath`: path to the `dotenc` executable (default: `dotenc`).
+  This is machine-scoped; configure it in user/remote settings. Workspace and
+  folder overrides are ignored.
+
+Automatic decrypted views are a developer-experience choice. Opening one
+materializes plaintext in VS Code editor memory, and unsaved dirty content can
+be persisted by VS Code's hot-exit/backup machinery depending on your editor
+settings and shutdown behavior. Treat the editor profile and its backup storage
+as trusted. Use `dotenc: Open Encrypted Source` when you do not need plaintext,
+and save or discard sensitive edits deliberately. The custom dotenc document
+scheme does not itself imply that VS Code Local History stores the document.
 
 ## Update checks
 
-On startup, the extension checks whether a newer `dotenc` CLI version is available.
+The extension does not run the CLI merely because a trusted workspace starts.
+It checks for a newer CLI version lazily after the first actual dotenc CLI
+operation, and version/install/update helpers run outside the workspace
+directory.
 
 To disable CLI update checks:
 

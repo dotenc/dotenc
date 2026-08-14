@@ -51,12 +51,19 @@ describe("Git Diff Textconv", () => {
 		expect(existsSync(gitattributes)).toBe(true)
 
 		const content = readFileSync(gitattributes, "utf-8")
-		expect(content).toContain("*.enc diff=dotenc")
+		expect(content).toContain(".env.*.enc diff=dotenc")
+		expect(
+			git(workspace, [
+				"config",
+				"--get",
+				"diff.dotenc.cachetextconv",
+			]).stdout.trim(),
+		).toBe("false")
 	}, TIMEOUT)
 
 	test("init configures an existing clone without changing project data", () => {
 		const developmentPath = path.join(workspace, ".env.development.enc")
-		const personalPath = path.join(workspace, ".env.alice.enc")
+		const personalPath = path.join(workspace, ".env.personal.alice.enc")
 		const plaintextPath = path.join(workspace, ".env")
 		const developmentBefore = readFileSync(developmentPath, "utf-8")
 		const personalBefore = readFileSync(personalPath, "utf-8")
@@ -79,6 +86,13 @@ describe("Git Diff Textconv", () => {
 		expect(
 			git(workspace, ["config", "--get", "diff.dotenc.textconv"]).stdout.trim(),
 		).toBe("dotenc textconv")
+		expect(
+			git(workspace, [
+				"config",
+				"--get",
+				"diff.dotenc.cachetextconv",
+			]).stdout.trim(),
+		).toBe("false")
 	}, TIMEOUT)
 
 	test("create and edit environment", () => {

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process"
-import { getHomeConfig } from "./homeConfig"
+import { getHomeConfig, HomeConfigUnavailableError } from "./homeConfig"
 
 type GetDefaultEditorDeps = {
 	getHomeConfig: typeof getHomeConfig
@@ -9,8 +9,9 @@ type GetDefaultEditorDeps = {
 
 const SHELL_METACHARACTERS = /[$`();|<>&!\n\r]/
 
-const isSafeEditorCommand = (value: string): boolean =>
-	!SHELL_METACHARACTERS.test(value)
+export const isEditorCommandFreeOfShellMetacharacters = (
+	value: string,
+): boolean => !SHELL_METACHARACTERS.test(value)
 
 export const commandExists = (command: string) => {
 	const result = spawnSync("which", [command], { stdio: "ignore" })
@@ -30,11 +31,19 @@ const defaultGetDefaultEditorDeps: GetDefaultEditorDeps = {
 export const getDefaultEditor = async (
 	deps: GetDefaultEditorDeps = defaultGetDefaultEditorDeps,
 ) => {
-	const config = await deps.getHomeConfig()
+	let config: Awaited<ReturnType<typeof getHomeConfig>> = {}
+	try {
+		config = await deps.getHomeConfig()
+	} catch (error) {
+		// Home configuration deliberately fails closed on platforms where the
+		// runtime cannot prevent path replacement. Editor discovery can still use
+		// process environment variables and platform defaults without reading it.
+		if (!(error instanceof HomeConfigUnavailableError)) throw error
+	}
 
 	// Check the editor field in the config file
 	if (config.editor) {
-		if (!isSafeEditorCommand(config.editor)) {
+		if (!isEditorCommandFreeOfShellMetacharacters(config.editor)) {
 			throw new Error(
 				'The configured editor command contains unsafe characters. Please update it using "dotenc config editor <command>".',
 			)
@@ -43,12 +52,18 @@ export const getDefaultEditor = async (
 	}
 
 	// Check the EDITOR environment variable (skip if it contains shell metacharacters)
-	if (process.env.EDITOR && isSafeEditorCommand(process.env.EDITOR)) {
+	if (
+		process.env.EDITOR &&
+		isEditorCommandFreeOfShellMetacharacters(process.env.EDITOR)
+	) {
 		return process.env.EDITOR
 	}
 
 	// Check the VISUAL environment variable (skip if it contains shell metacharacters)
-	if (process.env.VISUAL && isSafeEditorCommand(process.env.VISUAL)) {
+	if (
+		process.env.VISUAL &&
+		isEditorCommandFreeOfShellMetacharacters(process.env.VISUAL)
+	) {
 		return process.env.VISUAL
 	}
 	// Platform-specific defaults

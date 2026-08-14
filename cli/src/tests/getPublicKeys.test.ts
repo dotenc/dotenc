@@ -77,6 +77,19 @@ describe("getPublicKeys", () => {
 			"utf-8",
 		)
 
+		const weakRsa = crypto.generateKeyPairSync("rsa", { modulusLength: 1024 })
+		writeFileSync(
+			path.join(tmpDir, ".dotenc", "weak.pub"),
+			weakRsa.publicKey.export({ type: "spki", format: "pem" }).toString(),
+			"utf-8",
+		)
+
+		writeFileSync(
+			path.join(tmpDir, ".dotenc", "private.pub"),
+			ed.privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+			"utf-8",
+		)
+
 		// Write a non-.pub file (should be ignored)
 		writeFileSync(path.join(tmpDir, ".dotenc", "readme.txt"), "hi", "utf-8")
 
@@ -146,6 +159,20 @@ describe("getPublicKeys", () => {
 		expect(
 			messages.some((m) => m.includes("Unsupported key type in carol.pub")),
 		).toBe(true)
+		errorSpy.mockRestore()
+	})
+
+	test("rejects weak RSA and private material stored in .pub files", async () => {
+		const errorSpy = spyOn(console, "error").mockImplementation(() => {})
+		const keys = await getPublicKeys()
+		expect(keys.find((key) => key.name === "weak")).toBeUndefined()
+		expect(keys.find((key) => key.name === "private")).toBeUndefined()
+
+		const messages = errorSpy.mock.calls.map((call) => String(call[0]))
+		expect(messages.some((message) => message.includes("weak.pub"))).toBe(true)
+		expect(messages.some((message) => message.includes("private.pub"))).toBe(
+			true,
+		)
 		errorSpy.mockRestore()
 	})
 })

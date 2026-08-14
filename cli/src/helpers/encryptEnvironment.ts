@@ -12,6 +12,7 @@ import { resolveProjectRoot } from "./resolveProjectRoot"
 type Options = {
 	grantPublicKeys?: string[]
 	revokePublicKeys?: string[]
+	revokePublicKeyFingerprints?: string[]
 	baseDir?: string
 }
 
@@ -62,7 +63,10 @@ export const encryptEnvironment = async (
 			continue
 		}
 
-		if (options?.revokePublicKeys?.includes(availableKey.name)) {
+		if (
+			options?.revokePublicKeys?.includes(availableKey.name) ||
+			options?.revokePublicKeyFingerprints?.includes(availableKey.fingerprint)
+		) {
 			console.log(
 				`Public key ${chalk.green(availableKey.name)} has been revoked from the environment.`,
 			)

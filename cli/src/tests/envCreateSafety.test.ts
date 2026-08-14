@@ -12,6 +12,8 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { createCommand } from "../commands/env/create"
+import { decryptData } from "../helpers/crypto"
+import { decryptDataKey } from "../helpers/decryptDataKey"
 
 describe("createCommand safety", () => {
 	let tmpDir: string
@@ -19,6 +21,7 @@ describe("createCommand safety", () => {
 	let exitSpy: ReturnType<typeof spyOn>
 	let errorSpy: ReturnType<typeof spyOn>
 	let logSpy: ReturnType<typeof spyOn>
+	let privateKey: crypto.KeyObject
 
 	beforeEach(() => {
 		tmpDir = mkdtempSync(path.join(os.tmpdir(), "dotenc-create-safety-"))
@@ -30,7 +33,9 @@ describe("createCommand safety", () => {
 		errorSpy = spyOn(console, "error").mockImplementation(() => {})
 		logSpy = spyOn(console, "log").mockImplementation(() => {})
 
-		const { publicKey } = crypto.generateKeyPairSync("ed25519")
+		const keyPair = crypto.generateKeyPairSync("ed25519")
+		privateKey = keyPair.privateKey
+		const { publicKey } = keyPair
 		const pem = publicKey
 			.export({ type: "spki", format: "pem" })
 			.toString("utf-8")
@@ -60,10 +65,36 @@ describe("createCommand safety", () => {
 		expect(existsSync(envPath)).toBe(true)
 
 		const parsed = JSON.parse(readFileSync(envPath, "utf-8")) as {
-			keys: { name: string }[]
+			version: number
+			keys: {
+				name: string
+				encryptedDataKey: string
+				algorithm: "ed25519"
+			}[]
+			encryptedContent: string
 		}
+		expect(parsed.version).toBe(2)
 		expect(parsed.keys.length).toBe(1)
 		expect(parsed.keys[0].name).toBe("alice")
+		const dataKey = decryptDataKey(
+			{ algorithm: "ed25519", privateKey },
+			Buffer.from(parsed.keys[0].encryptedDataKey, "base64"),
+		)
+		await expect(
+			decryptData(
+				dataKey,
+				Buffer.from(parsed.encryptedContent, "base64"),
+				Buffer.from("staging", "utf-8"),
+			),
+		).resolves.toBe("# staging environment\n")
+		await expect(
+			decryptData(
+				dataKey,
+				Buffer.from(parsed.encryptedContent, "base64"),
+				Buffer.from("production", "utf-8"),
+			),
+		).rejects.toThrow()
+		dataKey.fill(0)
 	})
 
 	test("uses an exclusive write so a concurrent file cannot be overwritten", async () => {

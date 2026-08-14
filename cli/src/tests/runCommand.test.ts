@@ -283,9 +283,13 @@ describe("runCommand", () => {
 	test("does not pass dotenc bootstrap keys to child process", async () => {
 		const originalBase64Key = process.env.DOTENC_PRIVATE_KEY_BASE64
 		const originalKey = process.env.DOTENC_PRIVATE_KEY
+		const originalPassphrase = process.env.DOTENC_PRIVATE_KEY_PASSPHRASE
+		const originalEnvironment = process.env.DOTENC_ENV
 		try {
 			process.env.DOTENC_PRIVATE_KEY_BASE64 = "super-secret-base64-key"
 			process.env.DOTENC_PRIVATE_KEY = "super-secret-key"
+			process.env.DOTENC_PRIVATE_KEY_PASSPHRASE = "super-secret-passphrase"
+			process.env.DOTENC_ENV = "must-not-reach-child"
 
 			const exitSpy = spyOn(process, "exit").mockImplementation(
 				(_code: number): never => undefined as never,
@@ -311,6 +315,8 @@ describe("runCommand", () => {
 			expect(capturedEnv).toBeDefined()
 			expect(capturedEnv?.DOTENC_PRIVATE_KEY_BASE64).toBeUndefined()
 			expect(capturedEnv?.DOTENC_PRIVATE_KEY).toBeUndefined()
+			expect(capturedEnv?.DOTENC_PRIVATE_KEY_PASSPHRASE).toBeUndefined()
+			expect(capturedEnv?.DOTENC_ENV).toBeUndefined()
 			expect(capturedEnv?.KEY).toBe("value")
 			exitSpy.mockRestore()
 		} finally {
@@ -319,7 +325,182 @@ describe("runCommand", () => {
 			else process.env.DOTENC_PRIVATE_KEY_BASE64 = originalBase64Key
 			if (originalKey === undefined) delete process.env.DOTENC_PRIVATE_KEY
 			else process.env.DOTENC_PRIVATE_KEY = originalKey
+			if (originalPassphrase === undefined)
+				delete process.env.DOTENC_PRIVATE_KEY_PASSPHRASE
+			else process.env.DOTENC_PRIVATE_KEY_PASSPHRASE = originalPassphrase
+			if (originalEnvironment === undefined) delete process.env.DOTENC_ENV
+			else process.env.DOTENC_ENV = originalEnvironment
 		}
+	})
+
+	test("rejects reserved decrypted variables without exposing values", async () => {
+		const errSpy = spyOn(console, "error").mockImplementation(() => {})
+		const exitSpy = spyOn(process, "exit").mockImplementation((code): never => {
+			throw new Error(`exit(${code})`)
+		})
+		const filePath = path.join(ROOT, ".env.production.enc")
+		existsSyncMock.mockImplementation((p) => p === filePath)
+		parseEnv.mockImplementation(() => ({
+			DOTENC_PRIVATE_KEY: "must-not-be-logged",
+			github_output: "also-secret",
+		}))
+
+		await expect(
+			runCommand("node", ["app.js"], {
+				env: "production",
+				allowProcessEnv: ["DOTENC_PRIVATE_KEY", "github_output"],
+			}),
+		).rejects.toThrow("exit(1)")
+
+		const diagnostics = errSpy.mock.calls
+			.map((call) => String(call[0]))
+			.join("\n")
+		expect(diagnostics).toContain("DOTENC_PRIVATE_KEY")
+		expect(diagnostics).toContain("github_output")
+		expect(diagnostics).not.toContain("must-not-be-logged")
+		expect(diagnostics).not.toContain("also-secret")
+		expect(spawnMock).not.toHaveBeenCalled()
+		errSpy.mockRestore()
+		exitSpy.mockRestore()
+	})
+
+	test("blocks unsafe loader variables unless each name is explicitly allowed", async () => {
+		const errSpy = spyOn(console, "error").mockImplementation(() => {})
+		const exitSpy = spyOn(process, "exit").mockImplementation((code): never => {
+			throw new Error(`exit(${code})`)
+		})
+		const filePath = path.join(ROOT, ".env.production.enc")
+		existsSyncMock.mockImplementation((p) => p === filePath)
+		parseEnv.mockImplementation(() => ({
+			NODE_OPTIONS: "--require ./bootstrap.js",
+			DYLD_INSERT_LIBRARIES: "/tmp/library.dylib",
+		}))
+
+		await expect(
+			runCommand("node", ["app.js"], {
+				env: "production",
+				allowProcessEnv: ["node_options"],
+			}),
+		).rejects.toThrow("exit(1)")
+
+		const diagnostics = errSpy.mock.calls
+			.map((call) => String(call[0]))
+			.join("\n")
+		expect(diagnostics).toContain("DYLD_INSERT_LIBRARIES")
+		expect(diagnostics).not.toContain("NODE_OPTIONS")
+		expect(diagnostics).not.toContain("bootstrap.js")
+		errSpy.mockRestore()
+		exitSpy.mockRestore()
+	})
+
+	test("passes explicitly allowed unsafe loader variables", async () => {
+		const filePath = path.join(ROOT, ".env.production.enc")
+		existsSyncMock.mockImplementation((p) => p === filePath)
+		parseEnv.mockImplementation(() => ({ NODE_OPTIONS: "--no-warnings" }))
+		let capturedEnv: NodeJS.ProcessEnv | undefined
+		spawnMock.mockImplementation(
+			(_command: unknown, _args: unknown, options: unknown) => {
+				capturedEnv = (options as { env: NodeJS.ProcessEnv }).env
+				const child = {
+					on: (_event: string, _cb: (code: number | null) => void) => child,
+				}
+				return child as never
+			},
+		)
+
+		await runCommand("node", ["app.js"], {
+			env: "production",
+			allowProcessEnv: ["node_options"],
+		})
+
+		expect(capturedEnv?.NODE_OPTIONS).toBe("--no-warnings")
+		expect(spawnMock).toHaveBeenCalledTimes(1)
+	})
+
+	test("fails before spawn when a bare command is absent from the original PATH", async () => {
+		const originalPath = process.env.PATH
+		const errSpy = spyOn(console, "error").mockImplementation(() => {})
+		const exitSpy = spyOn(process, "exit").mockImplementation((code): never => {
+			throw new Error(`exit(${code})`)
+		})
+		const filePath = path.join(ROOT, ".env.production.enc")
+		existsSyncMock.mockImplementation((p) => p === filePath)
+		try {
+			process.env.PATH = "/definitely/not/a/real/search/path"
+			await expect(
+				runCommand("missing-command", [], {
+					env: "production",
+					allowProcessEnv: ["PATH"],
+				}),
+			).rejects.toThrow("exit(1)")
+			expect(spawnMock).not.toHaveBeenCalled()
+			expect(String(errSpy.mock.calls.at(-1)?.[0])).toContain("missing-command")
+			expect(String(errSpy.mock.calls.at(-1)?.[0])).not.toContain("not/a/real")
+		} finally {
+			if (originalPath === undefined) delete process.env.PATH
+			else process.env.PATH = originalPath
+			errSpy.mockRestore()
+			exitSpy.mockRestore()
+		}
+	})
+
+	test("handles child spawn errors without leaking error details", async () => {
+		const errSpy = spyOn(console, "error").mockImplementation(() => {})
+		const exitSpy = spyOn(process, "exit").mockImplementation(
+			(_code: number): never => undefined as never,
+		)
+		const filePath = path.join(ROOT, ".env.production.enc")
+		existsSyncMock.mockImplementation((p) => p === filePath)
+		spawnMock.mockImplementation(() => {
+			const child = {
+				on: (event: string, callback: (value: unknown) => void) => {
+					if (event === "error") {
+						const error = Object.assign(new Error("sensitive raw detail"), {
+							code: "ENOENT",
+						})
+						callback(error)
+					}
+					return child
+				},
+			}
+			return child as never
+		})
+
+		await runCommand("node", ["app.js"], { env: "production" })
+
+		expect(exitSpy).toHaveBeenCalledWith(1)
+		const diagnostics = errSpy.mock.calls
+			.map((call) => String(call[0]))
+			.join("\n")
+		expect(diagnostics).toContain("ENOENT")
+		expect(diagnostics).not.toContain("sensitive raw detail")
+		errSpy.mockRestore()
+		exitSpy.mockRestore()
+	})
+
+	test("always fails when a required environment cannot load", async () => {
+		const errSpy = spyOn(console, "error").mockImplementation(() => {})
+		const exitSpy = spyOn(process, "exit").mockImplementation((code): never => {
+			throw new Error(`exit(${code})`)
+		})
+		const personalFile = path.join(ROOT, ".env.personal.alice.enc")
+		existsSyncMock.mockImplementation((p) => p === personalFile)
+
+		await expect(
+			runCommand("node", ["app.js"], {
+				env: "development,personal.alice",
+				requiredEnvs: ["development"],
+			}),
+		).rejects.toThrow("exit(1)")
+
+		expect(
+			errSpy.mock.calls.some((call) =>
+				String(call[0]).includes("required environment(s) failed"),
+			),
+		).toBe(true)
+		expect(spawnMock).not.toHaveBeenCalled()
+		errSpy.mockRestore()
+		exitSpy.mockRestore()
 	})
 
 	test("exits when all environments fail and reports unknown errors", async () => {

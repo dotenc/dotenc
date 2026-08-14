@@ -1,11 +1,23 @@
+const { createPublicKey } = require("node:crypto")
+const path = require("node:path")
 const vscode = require("vscode")
-const { getDotencExecutable } = require("./helpers/getDotencExecutable")
-const { getStartupCwd } = require("./helpers/getStartupCwd")
-const {
-	getWorkspaceUriForStartup,
-} = require("./helpers/getWorkspaceUriForStartup")
-const { runProcess } = require("./helpers/runProcess")
-const { stripAnsi } = require("./helpers/stripAnsi")
+
+async function getPublicKeyAlgorithm(uri) {
+	try {
+		const content = await vscode.workspace.fs.readFile(uri)
+		const key = createPublicKey(Buffer.from(content))
+		if (key.asymmetricKeyType === "rsa") {
+			return "rsa"
+		}
+		if (key.asymmetricKeyType === "ed25519") {
+			return "ed25519"
+		}
+	} catch {
+		// Keep invalid keys visible; the CLI will provide details when they are used.
+	}
+
+	return undefined
+}
 
 class KeysProvider {
 	constructor() {
@@ -32,39 +44,25 @@ class KeysProvider {
 	}
 
 	async getChildren() {
-		const workspaceUri = getWorkspaceUriForStartup()
-		if (!workspaceUri) {
+		if (!vscode.workspace.isTrusted) {
 			return []
 		}
 
-		const executable = getDotencExecutable(workspaceUri)
-		const cwd = getStartupCwd(workspaceUri)
-		const result = await runProcess(executable, cwd, ["key", "list"])
-		if (result.error || result.code !== 0) {
-			return []
-		}
-
-		const lines = stripAnsi(result.stdout)
-			.split("\n")
-			.map((line) => line.trim())
-			.filter(Boolean)
-
-		return lines.map((line) => {
-			// Output format: "name (algorithm)"
-			const match = line.match(/^(.+?)\s+\((.+?)\)$/)
-			const name = match ? match[1] : line
-			const algorithm = match ? match[2] : undefined
-
-			const item = new vscode.TreeItem(
-				name,
-				vscode.TreeItemCollapsibleState.None,
-			)
-			item.iconPath = new vscode.ThemeIcon("key")
-			if (algorithm) {
-				item.description = algorithm
-			}
-			return item
-		})
+		const uris = await vscode.workspace.findFiles("**/.dotenc/*.pub")
+		return Promise.all(
+			[...uris]
+				.sort((a, b) => a.fsPath.localeCompare(b.fsPath))
+				.map(async (uri) => {
+					const name = path.basename(uri.fsPath, ".pub")
+					const item = new vscode.TreeItem(
+						name,
+						vscode.TreeItemCollapsibleState.None,
+					)
+					item.iconPath = new vscode.ThemeIcon("key")
+					item.description = await getPublicKeyAlgorithm(uri)
+					return item
+				}),
+		)
 	}
 }
 

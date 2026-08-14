@@ -2,7 +2,11 @@ import chalk from "chalk"
 import { box } from "consola/utils"
 import pkg from "../../package.json"
 import { logger } from "../ui/logger"
-import { getHomeConfig, setHomeConfig } from "./homeConfig"
+import {
+	getHomeConfig,
+	HomeConfigUnavailableError,
+	setHomeConfig,
+} from "./homeConfig"
 import {
 	detectInstallMethod,
 	fetchLatestVersion,
@@ -93,7 +97,11 @@ export const maybeNotifyAboutUpdate = async (
 	let config: HomeConfig = {}
 	try {
 		config = await deps.getHomeConfig()
-	} catch {
+	} catch (error) {
+		// Without persistence, every dev invocation would fetch and show the same
+		// notice again. Skip the check when home configuration deliberately fails
+		// closed, while retaining the existing fallback for transient read errors.
+		if (error instanceof HomeConfigUnavailableError) return
 		config = {}
 	}
 

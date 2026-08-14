@@ -35,7 +35,9 @@ describe("Ed25519 Lifecycle", () => {
 
 		expect(result.exitCode).toBe(0)
 		expect(existsSync(path.join(workspace, ".dotenc", "alice.pub"))).toBe(true)
-		expect(existsSync(path.join(workspace, ".env.alice.enc"))).toBe(true)
+		expect(existsSync(path.join(workspace, ".env.personal.alice.enc"))).toBe(
+			true,
+		)
 		expect(existsSync(path.join(workspace, ".env"))).toBe(false)
 		expect(
 			runCli(home, workspace, [

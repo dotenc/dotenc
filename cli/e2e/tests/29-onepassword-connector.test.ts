@@ -306,7 +306,7 @@ exit 1
 			workspace,
 			[
 				"dev",
-				"--identity",
+				"--profile",
 				"alice",
 				"sh",
 				"-c",
@@ -317,7 +317,7 @@ exit 1
 		expect(result.exitCode).toBe(0)
 		expect(result.stdout).toContain("provider-value")
 		const commands = readFileSync(logPath, "utf8").split("\n")
-		expect(commands.filter((line) => line === "--version")).toHaveLength(1)
+		expect(commands.filter((line) => line === "--version")).toHaveLength(0)
 		expect(commands.filter((line) => line.includes("/private_key"))).toEqual([
 			`read --account ${ACCOUNT_A} op://${VAULT_A}/${ITEM_A}/private_key?ssh-format=openssh`,
 		])

@@ -14,9 +14,31 @@ mock.module("../ui/prompts", () => ({
 	promptSelect: promptSelectMock,
 }))
 
-const { installAgentSkillCommand, _runNpx } = await import(
+const { _installAgentSkillCommand, _runBunX } = await import(
 	"../commands/tools/install-agent-skill"
 )
+
+const ORIGINAL_ENV = {
+	PATH: "C:\\trusted-bin",
+	PATHEXT: ".EXE;.CMD",
+}
+const RESOLVED_BUN = "C:\\trusted-bin\\bun.exe"
+const resolveExecutableMock = mock(
+	(_command: string, _originalEnv?: NodeJS.ProcessEnv): string | undefined =>
+		RESOLVED_BUN,
+)
+const installAgentSkillCommand = (
+	options: Parameters<typeof _installAgentSkillCommand>[0],
+	dependencyOverrides: Parameters<typeof _installAgentSkillCommand>[1] = {},
+) =>
+	_installAgentSkillCommand(options, {
+		originalEnv: ORIGINAL_ENV,
+		resolveExecutable: resolveExecutableMock,
+		...dependencyOverrides,
+	})
+
+const IMMUTABLE_SKILL_SOURCE =
+	"https://github.com/dotenc/skills/archive/dc3245191988923fced07c63b31df8184a1d1853.tar.gz"
 
 const makeSpawn = (exitCode: number) => {
 	const child = new EventEmitter()
@@ -27,23 +49,33 @@ const makeSpawn = (exitCode: number) => {
 beforeEach(() => {
 	spawnMock.mockClear()
 	promptSelectMock.mockClear()
+	resolveExecutableMock.mockClear()
 	promptSelectMock.mockImplementation(async () => "local")
+	resolveExecutableMock.mockImplementation(() => RESOLVED_BUN)
 	spawnMock.mockImplementation(() => {
 		throw new Error("spawn not expected")
 	})
 })
 
 describe("installAgentSkillCommand", () => {
-	test("runs npx skills add for local installation", async () => {
+	test("resolves Bun before running its package runner with an immutable source", async () => {
 		spawnMock.mockImplementation(() => makeSpawn(0))
 
 		const logSpy = spyOn(console, "log").mockImplementation(() => {})
 		await installAgentSkillCommand({})
 
+		expect(resolveExecutableMock).toHaveBeenCalledWith("bun", ORIGINAL_ENV)
 		expect(spawnMock).toHaveBeenCalledWith(
-			"npx",
-			["skills", "add", "dotenc/skills", "--skill", "dotenc"],
-			expect.any(Object),
+			RESOLVED_BUN,
+			[
+				"x",
+				"skills@1.5.22",
+				"add",
+				IMMUTABLE_SKILL_SOURCE,
+				"--skill",
+				"dotenc",
+			],
+			{ stdio: "inherit", shell: false },
 		)
 		expect(
 			logSpy.mock.calls.some((call) => String(call[0]).includes("/dotenc")),
@@ -59,9 +91,17 @@ describe("installAgentSkillCommand", () => {
 		await installAgentSkillCommand({})
 
 		expect(spawnMock).toHaveBeenCalledWith(
-			"npx",
-			["skills", "add", "dotenc/skills", "--skill", "dotenc", "-g"],
-			expect.any(Object),
+			RESOLVED_BUN,
+			[
+				"x",
+				"skills@1.5.22",
+				"add",
+				IMMUTABLE_SKILL_SOURCE,
+				"--skill",
+				"dotenc",
+				"-g",
+			],
+			{ stdio: "inherit", shell: false },
 		)
 		logSpy.mockRestore()
 	})
@@ -73,9 +113,17 @@ describe("installAgentSkillCommand", () => {
 		await installAgentSkillCommand({ force: true })
 
 		expect(spawnMock).toHaveBeenCalledWith(
-			"npx",
-			["skills", "add", "dotenc/skills", "--skill", "dotenc", "-y"],
-			expect.any(Object),
+			RESOLVED_BUN,
+			[
+				"x",
+				"skills@1.5.22",
+				"add",
+				IMMUTABLE_SKILL_SOURCE,
+				"--skill",
+				"dotenc",
+				"-y",
+			],
+			{ stdio: "inherit", shell: false },
 		)
 		logSpy.mockRestore()
 	})
@@ -96,9 +144,16 @@ describe("installAgentSkillCommand", () => {
 
 		expect(promptSelectMock).toHaveBeenCalledTimes(1)
 		expect(spawnMock).toHaveBeenCalledWith(
-			"npx",
-			["skills", "add", "dotenc/skills", "--skill", "dotenc"],
-			expect.any(Object),
+			RESOLVED_BUN,
+			[
+				"x",
+				"skills@1.5.22",
+				"add",
+				IMMUTABLE_SKILL_SOURCE,
+				"--skill",
+				"dotenc",
+			],
+			{ stdio: "inherit", shell: false },
 		)
 		expect(infoSpy).toHaveBeenCalledWith(
 			expect.stringContaining("Defaulting to"),
@@ -120,7 +175,7 @@ describe("installAgentSkillCommand", () => {
 		expect(spawnMock).not.toHaveBeenCalled()
 	})
 
-	test("exits with updater exit code when npx returns non-zero", async () => {
+	test("exits with runner exit code when bun x returns non-zero", async () => {
 		spawnMock.mockImplementation(() => makeSpawn(7))
 
 		const errSpy = spyOn(console, "error").mockImplementation(() => {})
@@ -133,9 +188,28 @@ describe("installAgentSkillCommand", () => {
 		exitSpy.mockRestore()
 	})
 
-	test("exits with code 1 when npx command cannot be started", async () => {
+	test("fails before prompting or spawning when Bun is absent from a Windows PATH", async () => {
+		resolveExecutableMock.mockImplementation(() => undefined)
+
+		const errSpy = spyOn(console, "error").mockImplementation(() => {})
+		const exitSpy = spyOn(process, "exit").mockImplementation((code): never => {
+			throw new Error(`exit(${code})`)
+		})
+
+		await expect(installAgentSkillCommand({})).rejects.toThrow("exit(1)")
+		const output = errSpy.mock.calls.flat().join("\n")
+		expect(resolveExecutableMock).toHaveBeenCalledWith("bun", ORIGINAL_ENV)
+		expect(promptSelectMock).not.toHaveBeenCalled()
+		expect(spawnMock).not.toHaveBeenCalled()
+		expect(output).toContain("bun was not found on PATH")
+		expect(output).toContain("standalone dotenc binaries do not bundle Bun")
+		errSpy.mockRestore()
+		exitSpy.mockRestore()
+	})
+
+	test("redacts unexpected Bun runner startup errors", async () => {
 		spawnMock.mockImplementation(() => {
-			throw new Error("spawn ENOENT")
+			throw new Error("sensitive operating system error")
 		})
 
 		const errSpy = spyOn(console, "error").mockImplementation(() => {})
@@ -144,25 +218,35 @@ describe("installAgentSkillCommand", () => {
 		})
 
 		await expect(installAgentSkillCommand({})).rejects.toThrow("exit(1)")
+		const output = errSpy.mock.calls.flat().join("\n")
+		expect(output).toContain("Bun's package runner could not be started")
+		expect(output).not.toContain("sensitive operating system error")
 		errSpy.mockRestore()
 		exitSpy.mockRestore()
 	})
 })
 
-describe("_runNpx", () => {
-	test("resolves with exit code when npx exits successfully", async () => {
+describe("_runBunX", () => {
+	test("directly spawns the resolved Bun executable with x", async () => {
 		const child = new EventEmitter()
 		const spawnImpl = mock(() => {
 			queueMicrotask(() => child.emit("exit", 0))
 			return child as never
 		})
 
-		const result = await _runNpx(["--version"], spawnImpl as never)
+		const result = await _runBunX(
+			RESOLVED_BUN,
+			["--version"],
+			spawnImpl as never,
+		)
 		expect(result).toBe(0)
-		expect(spawnImpl).toHaveBeenCalled()
+		expect(spawnImpl).toHaveBeenCalledWith(RESOLVED_BUN, ["x", "--version"], {
+			stdio: "inherit",
+			shell: false,
+		})
 	})
 
-	test("rejects when npx process emits an error", async () => {
+	test("rejects when the Bun process emits an error", async () => {
 		const child = new EventEmitter()
 		const spawnImpl = mock(() => {
 			queueMicrotask(() => child.emit("error", new Error("spawn ENOENT")))
@@ -170,7 +254,7 @@ describe("_runNpx", () => {
 		})
 
 		await expect(
-			_runNpx(["skills", "add"], spawnImpl as never),
+			_runBunX(RESOLVED_BUN, ["skills", "add"], spawnImpl as never),
 		).rejects.toThrow("spawn ENOENT")
 	})
 })

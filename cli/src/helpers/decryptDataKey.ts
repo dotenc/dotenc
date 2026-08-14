@@ -1,5 +1,6 @@
 import crypto from "node:crypto"
 import { eciesDecrypt } from "./ecies"
+import { extractEd25519PrivateSeed } from "./ed25519Der"
 
 type PrivateKeyInfo = {
 	algorithm: "rsa" | "ed25519"
@@ -34,11 +35,12 @@ export const decryptDataKey = (
 		type: "pkcs8",
 		format: "der",
 	}) as Buffer
-	const rawSeed = Buffer.from(privDer.subarray(privDer.length - 32))
+	let rawSeed: Buffer | undefined
 	try {
+		rawSeed = extractEd25519PrivateSeed(privDer)
 		return eciesDecrypt(rawSeed, encryptedDataKey)
 	} finally {
-		rawSeed.fill(0)
+		rawSeed?.fill(0)
 		privDer.fill(0)
 	}
 }

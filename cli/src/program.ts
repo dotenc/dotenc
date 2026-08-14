@@ -15,6 +15,7 @@ import { envDeleteCommand } from "./commands/env/delete"
 import { editCommand } from "./commands/env/edit"
 import { encryptCommand } from "./commands/env/encrypt"
 import { envListCommand } from "./commands/env/list"
+import { envRenameCommand } from "./commands/env/rename"
 import { rotateCommand } from "./commands/env/rotate"
 
 import { initCommand } from "./commands/init"
@@ -118,6 +119,24 @@ env
 	)
 
 env
+	.command("rename")
+	.argument("<source>", "the current environment name")
+	.argument("<destination>", "the new environment name")
+	.addOption(
+		new Option(
+			"--all-layers",
+			"rename exact matching layers from the project root to the current directory",
+		),
+	)
+	.addOption(new Option("--yes", "skip confirmation prompt"))
+	.description(
+		"rename an encrypted environment without changing its recipients",
+	)
+	.action((source, destination, options) =>
+		envRenameCommand(source, destination, options),
+	)
+
+env
 	.command("delete")
 	.argument("[environment]", "the environment to delete")
 	.addOption(new Option("--yes", "skip confirmation prompt"))
@@ -194,6 +213,12 @@ program
 			"load only from the current directory, skip ancestor dirs",
 		),
 	)
+	.addOption(
+		new Option(
+			"--allow-process-env <name>",
+			"allow one unsafe process-control variable (repeatable)",
+		).argParser(collectValues),
+	)
 	.passThroughOptions()
 	.description("run a command in an environment")
 	.action(runCommand)
@@ -208,9 +233,20 @@ program
 			"load only from the current directory, skip ancestor dirs",
 		),
 	)
-	.addOption(new Option("-i, --identity <name>", "the identity to use"))
+	.addOption(
+		new Option("--profile <name>", "the personal.<name> profile to use"),
+	)
+	.addOption(
+		new Option("--strict", "fail if the personal environment cannot be loaded"),
+	)
+	.addOption(
+		new Option(
+			"--allow-process-env <name>",
+			"allow one unsafe process-control variable (repeatable)",
+		).argParser(collectValues),
+	)
 	.passThroughOptions()
-	.description("shortcut for 'run -e development,<yourname> <command>'")
+	.description("run with development and an accessible personal.* environment")
 	.action((command, args, options) => devCommand(command, args, options))
 
 const key = program.command("key").description("manage keys")
@@ -261,9 +297,9 @@ tools
 		new Option("--scope <scope>", "install scope").choices(["local", "global"]),
 	)
 	.addOption(
-		new Option("--force", "run npx skills in non-interactive mode (-y)"),
+		new Option("--force", "run bun x skills in non-interactive mode (-y)"),
 	)
-	.description("install the agent skill for this project")
+	.description("install the agent skill for this project (requires Bun)")
 	.action(installAgentSkillCommand)
 
 tools

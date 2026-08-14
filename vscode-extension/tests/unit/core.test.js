@@ -1,4 +1,5 @@
 const { describe, expect, test } = require("bun:test")
+const packageJson = require("../../package.json")
 const { formatDetectedVersion } = require("../../src/helpers/formatDetectedVersion")
 const {
 	getDotencExecutable,
@@ -9,6 +10,12 @@ const { getFailureUserMessage } = require("../../src/helpers/getFailureUserMessa
 const {
 	getDotencInstallCommand,
 } = require("../../src/helpers/getDotencInstallCommand")
+const {
+	getMachineScopedConfigurationValue,
+} = require("../../src/helpers/getMachineScopedConfigurationValue")
+const {
+	isAutoViewDecryptedEnabled,
+} = require("../../src/helpers/isAutoViewDecryptedEnabled")
 const { isVersionSupported } = require("../../src/helpers/isVersionSupported")
 const { mapFailureCode } = require("../../src/helpers/mapFailureCode")
 const { MIN_DOTENC_VERSION } = require("../../src/helpers/minDotencVersion")
@@ -174,9 +181,62 @@ describe("core helpers", () => {
 		expect(normalizeExecutablePath(undefined)).toBe("dotenc")
 	})
 
-	test("uses injected executable path resolver when provided", () => {
-		const resolved = getDotencExecutable(undefined, () => "  custom-dotenc  ")
+	test("uses only the machine-scoped executable path", () => {
+		const resolved = getDotencExecutable(undefined, () => ({
+			inspect: () => ({
+				defaultValue: "dotenc",
+				globalValue: "  custom-dotenc  ",
+				workspaceValue: "workspace-controlled-dotenc",
+				workspaceFolderValue: "folder-controlled-dotenc",
+			}),
+		}))
 		expect(resolved).toBe("custom-dotenc")
+	})
+
+	test("ignores workspace values for machine-scoped settings", () => {
+		const configuration = {
+			inspect: () => ({
+				defaultValue: "safe-default",
+				workspaceValue: "workspace-value",
+				workspaceFolderValue: "folder-value",
+			}),
+		}
+
+		expect(
+			getMachineScopedConfigurationValue(
+				configuration,
+				"setting",
+				"fallback",
+			),
+		).toBe("safe-default")
+	})
+
+	test("keeps auto-view enabled by default without workspace overrides", () => {
+		const enabled = isAutoViewDecryptedEnabled(() => ({
+			inspect: () => ({
+				defaultValue: true,
+				workspaceValue: false,
+				workspaceFolderValue: false,
+			}),
+		}))
+		const globallyDisabled = isAutoViewDecryptedEnabled(() => ({
+			inspect: () => ({
+				defaultValue: true,
+				globalValue: false,
+				workspaceValue: true,
+			}),
+		}))
+
+		expect(enabled).toBe(true)
+		expect(globallyDisabled).toBe(false)
+	})
+
+	test("declares machine-only settings and disables untrusted workspaces", () => {
+		const properties = packageJson.contributes.configuration.properties
+		expect(properties["dotenc.autoViewDecrypted"].default).toBe(true)
+		expect(properties["dotenc.autoViewDecrypted"].scope).toBe("machine")
+		expect(properties["dotenc.executablePath"].scope).toBe("machine")
+		expect(packageJson.capabilities.untrustedWorkspaces.supported).toBe(false)
 	})
 
 	test("runProcess returns error when executable is blank", async () => {

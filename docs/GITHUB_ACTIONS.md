@@ -393,12 +393,14 @@ repository, local workflow tests can use `./actions/<name>`.
 - uses: dotenc/setup-action@v1
 ```
 
-Pin the CLI version when reproducibility matters:
+The setup action defaults to the exact CLI version shipped with this repository
+(`0.13.0`), not npm's mutable `latest` tag. Override it only when deliberately
+selecting another release:
 
 ```yaml
 - uses: dotenc/setup-action@v1
   with:
-    version: 1.2.3
+    version: 0.12.3
 ```
 
 ### Run one command
@@ -417,6 +419,12 @@ Use `run` when decrypted values are needed by a single command:
 
 The action runs with strict mode by default. If any selected environment is
 missing or cannot decrypt, the step fails before the command starts.
+Decrypted process-control names (including `DOTENC_*`, runtime loader options,
+`PATH`, and GitHub control-file variables such as `GITHUB_ENV` and
+`GITHUB_OUTPUT`) cannot take control of the action wrapper. The CLI fails before
+the user command starts unless an ordinary CLI caller explicitly opts in an
+exact non-reserved name with `--allow-process-env`; the reusable action does not
+expose that override.
 
 ### Export allowlisted variables
 
@@ -462,6 +470,9 @@ out of git.
 ## Security notes
 
 - Grant the GitHub Actions key only to the environments that job needs.
+- The `@v1` action tag is a moving compatibility tag. Pin an action commit SHA
+  when the action implementation itself must be immutable; the setup action's
+  npm package default is already an exact version.
 - Use separate keys for separate providers and trust boundaries.
 - Prefer `run` for one command; use `export` only when values must persist to
   later steps.

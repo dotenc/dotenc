@@ -1,7 +1,8 @@
-import crypto from "node:crypto"
 import fs from "node:fs/promises"
 import path from "node:path"
+import { parseSpkiPublicKey } from "./parseSpkiPublicKey"
 import { validateKeyName } from "./validateKeyName"
+import { validatePublicKey } from "./validatePublicKey"
 
 export const getPublicKeyByName = async (name: string) => {
 	const keyNameValidation = validateKeyName(name)
@@ -21,7 +22,10 @@ export const getPublicKeyByName = async (name: string) => {
 	}
 
 	try {
-		return crypto.createPublicKey(publicKeyInput)
+		const publicKey = parseSpkiPublicKey(publicKeyInput)
+		const validation = validatePublicKey(publicKey)
+		if (!validation.valid) throw new Error(validation.reason)
+		return publicKey
 	} catch (error) {
 		throw new Error(
 			`Invalid public key format for ${name}. Please provide a valid PEM formatted public key.`,

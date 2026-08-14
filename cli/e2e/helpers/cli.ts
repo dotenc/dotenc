@@ -10,7 +10,10 @@ const getCliInvocation = (): string[] => {
 		return ["node", process.env.DOTENC_E2E_CLI_PATH ?? DEFAULT_NODE_CLI_PATH]
 	}
 
-	return ["bun", process.env.DOTENC_E2E_CLI_PATH ?? DEFAULT_BUN_CLI_PATH]
+	return [
+		process.execPath,
+		process.env.DOTENC_E2E_CLI_PATH ?? DEFAULT_BUN_CLI_PATH,
+	]
 }
 
 type Ed25519KeyOptions = {

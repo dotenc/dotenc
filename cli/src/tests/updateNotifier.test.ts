@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { HomeConfigUnavailableError } from "../helpers/homeConfig"
 import { maybeNotifyAboutUpdate } from "../helpers/updateNotifier"
 
 type UpdateConfig = {
@@ -55,6 +56,63 @@ describe("maybeNotifyAboutUpdate", () => {
 		})
 
 		expect(fetchCalls).toBe(0)
+	})
+
+	test("does not fetch when home configuration fails closed", async () => {
+		let readCalls = 0
+		let fetchCalls = 0
+		let persistCalls = 0
+		const logs: string[] = []
+
+		await maybeNotifyAboutUpdate({
+			args: ["dev", "echo"],
+			currentVersion: "0.5.0",
+			detectInstallMethod: () => "npm",
+			getHomeConfig: async () => {
+				readCalls += 1
+				throw new HomeConfigUnavailableError()
+			},
+			setHomeConfig: async () => {
+				persistCalls += 1
+			},
+			fetchLatestVersion: async () => {
+				fetchCalls += 1
+				return "0.6.0"
+			},
+			log: (message: string) => {
+				logs.push(message)
+			},
+		})
+
+		expect(readCalls).toBe(1)
+		expect(fetchCalls).toBe(0)
+		expect(persistCalls).toBe(0)
+		expect(logs).toHaveLength(0)
+	})
+
+	test("retains update fallback for other home configuration read errors", async () => {
+		let fetchCalls = 0
+		const logs: string[] = []
+
+		await maybeNotifyAboutUpdate({
+			args: ["dev", "echo"],
+			currentVersion: "0.5.0",
+			detectInstallMethod: () => "npm",
+			getHomeConfig: async () => {
+				throw new Error("transient read failure")
+			},
+			setHomeConfig: async () => {},
+			fetchLatestVersion: async () => {
+				fetchCalls += 1
+				return "0.6.0"
+			},
+			log: (message: string) => {
+				logs.push(message)
+			},
+		})
+
+		expect(fetchCalls).toBe(1)
+		expect(logs).toHaveLength(1)
 	})
 
 	test.each([

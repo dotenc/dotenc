@@ -118,9 +118,14 @@ export const createCommand = async (
 	const dataKey = createDataKey()
 
 	const content = initialContent ?? `# ${environmentName} environment\n`
-	const encryptedContent = await encryptData(dataKey, content)
+	const encryptedContent = await encryptData(
+		dataKey,
+		content,
+		Buffer.from(environmentName, "utf-8"),
+	)
 
 	const environmentJson: Environment = {
+		version: 2,
 		keys: [],
 		encryptedContent: encryptedContent.toString("base64"),
 	}

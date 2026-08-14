@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test"
 import { commandExists, getDefaultEditor } from "../helpers/getDefaultEditor"
+import { HomeConfigUnavailableError } from "../helpers/homeConfig"
 
 describe("getDefaultEditor", () => {
 	const originalEditor = process.env.EDITOR
@@ -64,6 +65,20 @@ describe("getDefaultEditor", () => {
 			platform: "win32",
 		})
 		expect(editor).toBe("notepad")
+	})
+
+	test("uses safe editor fallbacks when home config is unavailable", async () => {
+		process.env.EDITOR = "code"
+
+		const editor = await getDefaultEditor({
+			getHomeConfig: async () => {
+				throw new HomeConfigUnavailableError()
+			},
+			commandExists: () => false,
+			platform: "win32",
+		})
+
+		expect(editor).toBe("code")
 	})
 
 	test("throws when no editor is available", async () => {

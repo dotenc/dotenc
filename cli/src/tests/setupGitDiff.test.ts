@@ -30,14 +30,15 @@ describe("setupGitDiff", () => {
 	test("creates .gitattributes with diff marker", () => {
 		setupGitDiff()
 		const content = readFileSync(path.join(tmpDir, ".gitattributes"), "utf-8")
-		expect(content).toContain("*.enc diff=dotenc")
+		expect(content).toContain(".env.*.enc diff=dotenc")
+		expect(content).not.toContain("\n*.enc diff=dotenc")
 	})
 
 	test("does not duplicate marker on repeated calls", () => {
 		setupGitDiff()
 		setupGitDiff()
 		const content = readFileSync(path.join(tmpDir, ".gitattributes"), "utf-8")
-		const count = content.split("*.enc diff=dotenc").length - 1
+		const count = content.split(".env.*.enc diff=dotenc").length - 1
 		expect(count).toBe(1)
 	})
 
@@ -47,7 +48,23 @@ describe("setupGitDiff", () => {
 		setupGitDiff()
 		const content = readFileSync(attrPath, "utf-8")
 		expect(content).toContain("*.md linguist-documentation")
-		expect(content).toContain("*.enc diff=dotenc")
+		expect(content).toContain(".env.*.enc diff=dotenc")
+	})
+
+	test("migrates only the exact legacy broad marker", () => {
+		const attrPath = path.join(tmpDir, ".gitattributes")
+		writeFileSync(
+			attrPath,
+			"*.enc diff=dotenc\narchives/*.enc diff=custom\n",
+			"utf-8",
+		)
+
+		setupGitDiff()
+
+		const content = readFileSync(attrPath, "utf-8")
+		expect(content).toContain(".env.*.enc diff=dotenc")
+		expect(content).not.toContain("\n*.enc diff=dotenc")
+		expect(content).toContain("archives/*.enc diff=custom")
 	})
 
 	test("configures git diff driver", () => {
@@ -57,6 +74,18 @@ describe("setupGitDiff", () => {
 			encoding: "utf-8",
 		}).trim()
 		expect(result).toBe("dotenc textconv")
+	})
+
+	test("explicitly disables textconv plaintext caching locally", () => {
+		setupGitDiff()
+		const result = execSync(
+			"git config --local --get diff.dotenc.cachetextconv",
+			{
+				cwd: tmpDir,
+				encoding: "utf-8",
+			},
+		).trim()
+		expect(result).toBe("false")
 	})
 
 	test("targets an explicit project root from a nested directory", () => {

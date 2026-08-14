@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto"
 import chalk from "chalk"
 import type { Environment } from "../schemas/environment"
-import { decryptData } from "./crypto"
+import { decryptData, encryptData } from "./crypto"
 import { decryptDataKey } from "./decryptDataKey"
 import { passphraseProtectedKeyError } from "./errors"
 import { getEnvironmentByName } from "./getEnvironmentByName"
@@ -281,6 +281,43 @@ const unwrapEnvironmentDataKey = async (
 	}
 
 	return dataKey
+}
+
+type ReencryptEnvironmentDataDeps = DecryptEnvironmentDataDeps & {
+	encryptData?: typeof encryptData
+}
+
+/**
+ * Rebind an envelope's plaintext to a new logical name without changing its
+ * data key. The unwrapped key is never exposed to the caller and is cleared
+ * before this function returns.
+ */
+export const reencryptEnvironmentData = async (
+	sourceName: string,
+	destinationName: string,
+	environment: Environment,
+	deps: ReencryptEnvironmentDataDeps = defaultDecryptEnvironmentDataDeps,
+): Promise<{ encryptedContent: Buffer; plaintext: string }> => {
+	const dataKey = await unwrapEnvironmentDataKey(environment, deps)
+	const sourceAad =
+		(environment.version ?? 1) >= 2
+			? Buffer.from(sourceName, "utf-8")
+			: undefined
+	try {
+		const plaintext = await deps.decryptData(
+			dataKey,
+			Buffer.from(environment.encryptedContent, "base64"),
+			sourceAad,
+		)
+		const encryptedContent = await (deps.encryptData ?? encryptData)(
+			dataKey,
+			plaintext,
+			Buffer.from(destinationName, "utf-8"),
+		)
+		return { encryptedContent, plaintext }
+	} finally {
+		dataKey.fill(0)
+	}
 }
 
 /** Compare two unwrapped data keys without exposing either key to the caller. */

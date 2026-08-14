@@ -9,8 +9,10 @@ Implemented (Phase 1 in v0.8.0, Phase 2 in v0.9.0, simplified in v0.9.x).
 Enable consistent dotenc usage in monorepos and subfolders with:
 - Project discovery through `.dotenc` via ancestor lookup.
 - Hierarchical environments per folder.
-- Recursive merge by default in `dotenc run` with last-in wins.
-- `--local-only` in `dotenc run` to restrict merge to the current directory.
+- Recursive merge by default in `dotenc run` and `dotenc dev`, with last-in
+  wins.
+- `--local-only` in `dotenc run` and `dotenc dev` to restrict merge and profile
+  discovery to the current directory.
 
 ## Terminology
 
@@ -30,11 +32,34 @@ Enable consistent dotenc usage in monorepos and subfolders with:
 
 ---
 
-### `dotenc run` / `dotenc dev`
+### `dotenc run`
 
 - Accepts `-e env1,env2,...` or `DOTENC_ENV`.
 - Default: loads `.env.<name>.enc` at every level from `projectRoot` down to `invocationDir`, merging in order (deeper overrides higher; rightmost `-e` env overrides earlier ones).
 - `--local-only`: loads only from `invocationDir`, skipping all ancestor levels.
+- Decrypted `DOTENC_*` and GitHub Actions control-file names are reserved.
+  Loader, runtime, shell-startup, and executable-resolution names are blocked
+  before spawn unless each exact name is allowed with repeatable
+  `--allow-process-env <name>`.
+- The initial bare executable is resolved against the original parent `PATH`.
+  The child does not receive dotenc's private-key bootstrap variables,
+  passphrase, or `DOTENC_ENV`.
+
+### `dotenc dev`
+
+- Always loads required `development` with the same root-to-leaf merge rules.
+- Discovers `.env.personal.*.enc` only at levels in the effective ancestor
+  chain. `--local-only` restricts both discovery and loading to `invocationDir`.
+- Groups layers by logical environment and considers a profile accessible only
+  when every discovered layer decrypts through an available recipient/private
+  key fingerprint. `.pub` aliases do not select profiles.
+- Selects one accessible profile automatically, prompts for several in a TTY,
+  and requires `--profile <name>` for non-interactive ambiguity.
+- `--profile alice` always means `personal.alice`.
+- No personal file means `development` only. Missing or inaccessible personal
+  profiles warn and continue; `--strict` makes that personal failure fatal.
+  `development` failure is always fatal.
+- Accepts the same repeatable `--allow-process-env <name>` override as `run`.
 
 ---
 
@@ -49,7 +74,12 @@ Enable consistent dotenc usage in monorepos and subfolders with:
 ### `dotenc auth grant|revoke|purge`
 
 - Always resolves `projectRoot` via ancestor lookup.
-- `auth purge <publicKey>`: discovers all `.env.*.enc` files recursively under `projectRoot`, revokes the key and rotates the data key for every environment that contains it, then removes the key from `.dotenc`. Requires confirmation (`--yes` to skip).
+- `auth purge <publicKey>`: resolves the alias to a fingerprint, validates and
+  pre-decrypts every recursively discovered `.env.*.enc` file, revokes that
+  fingerprint, rescans the tree, and removes all matching `.pub` aliases only
+  after complete success. It fails closed and retains the key on unreadable,
+  zero-recipient, rewrite, or verification failure. Requires confirmation
+  (`--yes` to skip).
 
 ---
 
@@ -113,3 +143,5 @@ Enable consistent dotenc usage in monorepos and subfolders with:
 - **`.dotenc/` always resolved upward**: every command that needs public keys walks up to find the project root — no command requires being at the root.
 - **`cd` first for writes**: `create`, `rotate`, and `delete` always operate on `invocationDir`. Navigate to the target directory before running the command. No flags or interactive prompts for path disambiguation.
 - **`env list` is local by default**: discovering all environments across a large monorepo is an opt-in action (`--all`), keeping the common case fast and noise-free.
+- **Personal profiles are fingerprint-selected**: filenames reserve the
+  `personal.<profile>` namespace, while `.pub` aliases remain display-only.

@@ -1,10 +1,20 @@
-const vscode = require("vscode")
 const { AUTO_VIEW_DECRYPTED_SETTING } = require("./constants")
+const {
+	getMachineScopedConfigurationValue,
+} = require("./getMachineScopedConfigurationValue")
 
-function isAutoViewDecryptedEnabled() {
-	return vscode.workspace
-		.getConfiguration("dotenc")
-		.get(AUTO_VIEW_DECRYPTED_SETTING, true)
+function isAutoViewDecryptedEnabled(getConfiguration) {
+	const configuration =
+		typeof getConfiguration === "function"
+			? getConfiguration()
+			: require("vscode").workspace.getConfiguration("dotenc")
+	return (
+		getMachineScopedConfigurationValue(
+			configuration,
+			AUTO_VIEW_DECRYPTED_SETTING,
+			true,
+		) === true
+	)
 }
 
 module.exports = {

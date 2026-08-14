@@ -13,6 +13,8 @@ import path from "node:path"
 import { generateEd25519Key, runCli, runCliWithStdin } from "../helpers/cli"
 
 const TIMEOUT = 30_000
+const IMMUTABLE_SKILL_SOURCE =
+	"https://github.com/dotenc/skills/archive/dc3245191988923fced07c63b31df8184a1d1853.tar.gz"
 
 const git = (workspace: string, args: string[]): string => {
 	const result = Bun.spawnSync(["git", ...args], { cwd: workspace })
@@ -38,26 +40,26 @@ describe("tools install-agent-skill", () => {
 	let home: string
 	let workspace: string
 	let fakeBinDir: string
-	let fakeNpxLogPath: string
+	let fakeBunLogPath: string
 
 	beforeAll(() => {
 		home = mkdtempSync(path.join(os.tmpdir(), "e2e-18-skill-home-"))
 		workspace = mkdtempSync(path.join(os.tmpdir(), "e2e-18-skill-ws-"))
 		fakeBinDir = mkdtempSync(path.join(os.tmpdir(), "e2e-18-fake-bin-"))
-		fakeNpxLogPath = path.join(fakeBinDir, "npx-invocations.log")
-		const fakeNpxPath = path.join(fakeBinDir, "npx")
+		fakeBunLogPath = path.join(fakeBinDir, "bun-invocations.log")
+		const fakeBunPath = path.join(fakeBinDir, "bun")
 		writeFileSync(
-			fakeNpxPath,
+			fakeBunPath,
 			`#!/bin/sh
-if [ -n "$DOTENC_FAKE_NPX_FAIL" ]; then
-  exit "$DOTENC_FAKE_NPX_FAIL"
+if [ -n "$DOTENC_FAKE_BUN_FAIL" ]; then
+  exit "$DOTENC_FAKE_BUN_FAIL"
 fi
-printf '%s\n' "$*" >> "${fakeNpxLogPath}"
+printf '%s\n' "$*" >> "${fakeBunLogPath}"
 exit 0
 `,
 			"utf-8",
 		)
-		chmodSync(fakeNpxPath, 0o755)
+		chmodSync(fakeBunPath, 0o755)
 		generateEd25519Key(home)
 	})
 
@@ -67,7 +69,7 @@ exit 0
 		rmSync(fakeBinDir, { recursive: true, force: true })
 	})
 
-	test("runs npx skills add locally when first option selected", () => {
+	test("runs bun x skills add from the immutable archive when first option selected", () => {
 		// Send newline to select first option ("Locally") in the list prompt
 		const result = runCliWithStdin(
 			home,
@@ -80,9 +82,11 @@ exit 0
 		)
 		expect(result.exitCode).toBe(0)
 		expect(result.stdout).toContain("Agent skill installation completed")
-		expect(existsSync(fakeNpxLogPath)).toBe(true)
-		const log = readFileSync(fakeNpxLogPath, "utf-8")
-		expect(log).toContain("skills add dotenc/skills --skill dotenc")
+		expect(existsSync(fakeBunLogPath)).toBe(true)
+		const log = readFileSync(fakeBunLogPath, "utf-8")
+		expect(log).toContain(
+			`x skills@1.5.22 add ${IMMUTABLE_SKILL_SOURCE} --skill dotenc`,
+		)
 	}, TIMEOUT)
 
 	test("passes -y when --force is provided", () => {
@@ -96,11 +100,13 @@ exit 0
 			},
 		)
 		expect(result.exitCode).toBe(0)
-		const log = readFileSync(fakeNpxLogPath, "utf-8")
-		expect(log).toContain("skills add dotenc/skills --skill dotenc -y")
+		const log = readFileSync(fakeBunLogPath, "utf-8")
+		expect(log).toContain(
+			`x skills@1.5.22 add ${IMMUTABLE_SKILL_SOURCE} --skill dotenc -y`,
+		)
 	}, TIMEOUT)
 
-	test("exits with npx command exit code on failure", () => {
+	test("exits with bun x command exit code on failure", () => {
 		const result = runCliWithStdin(
 			home,
 			workspace,
@@ -108,7 +114,7 @@ exit 0
 			"\n",
 			{
 				PATH: `${fakeBinDir}:${process.env.PATH}`,
-				DOTENC_FAKE_NPX_FAIL: "9",
+				DOTENC_FAKE_BUN_FAIL: "9",
 			},
 		)
 		expect(result.exitCode).toBe(9)

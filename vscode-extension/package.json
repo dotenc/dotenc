@@ -2,7 +2,7 @@
 	"name": "dotenc-vscode-extension",
 	"displayName": "dotenc",
 	"description": "Seamless editing for dotenc encrypted environment files.",
-	"version": "0.6.1",
+	"version": "0.6.2",
 	"publisher": "dotenc",
 	"icon": "assets/logo-square.png",
 	"license": "MIT",
@@ -16,6 +16,12 @@
 	},
 	"engines": {
 		"vscode": "^1.96.0"
+	},
+	"capabilities": {
+		"untrustedWorkspaces": {
+			"supported": false,
+			"description": "dotenc decrypts and encrypts repository secrets by executing the locally configured dotenc CLI."
+		}
 	},
 	"categories": [
 		"Other"
@@ -126,12 +132,13 @@
 				"dotenc.autoViewDecrypted": {
 					"type": "boolean",
 					"default": true,
+					"scope": "machine",
 					"description": "Automatically replace opened .env.<environment>.enc files with the decrypted native dotenc editor."
 				},
 				"dotenc.executablePath": {
 					"type": "string",
 					"default": "dotenc",
-					"scope": "machine-overridable",
+					"scope": "machine",
 					"description": "Path to the dotenc CLI executable used by this extension."
 				}
 			}
