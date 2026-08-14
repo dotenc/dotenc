@@ -191,8 +191,8 @@ removed and which remain while retaining every verified destination.
 
 - Root lint passed across 255 files; CLI, VS Code extension, and diff-action
   typechecks passed.
-- CLI build and JS entrypoint smokes passed at version 0.13.0. All 664 isolated
-  unit tests passed. CLI line coverage is 93.22%.
+- CLI build and JS entrypoint smokes passed at version 0.13.0. All 669 isolated
+  unit tests passed. CLI line coverage is 93.25%.
 - Docker E2E passed with 139 tests, one intentionally skipped parent-TTY test,
   and no failures. The suite includes a real `BASH_ENV` payload that is blocked
   before spawn and executes only under an exact explicit override.
@@ -200,7 +200,7 @@ removed and which remain while retaining every verified destination.
   line coverage is 95.20%, and package-content inspection passed.
 - Website build and all 25 website/installer tests passed, including direct
   HTTP rejection for both downloaders and the no-redirect `wget` bootstrap case.
-- Combined line coverage is 93.27%. `git diff --check` and a changed-content
+- Combined line coverage is 93.30%. `git diff --check` and a changed-content
   scan for private-key/token fixtures passed.
 
 ## Explicit Deferrals and Limitations

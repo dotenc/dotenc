@@ -20,6 +20,25 @@ type HomeConfig = z.infer<typeof homeConfigSchema>
 const UNSAFE_CONFIG_PATH_ERROR =
 	"Refusing to use a symbolic link or non-standard file for dotenc home configuration."
 
+const UNSUPPORTED_WINDOWS_CONFIG_ERROR =
+	"Home configuration is unavailable on Windows because this runtime cannot prevent reparse-point replacement safely."
+
+export class HomeConfigUnavailableError extends Error {
+	constructor() {
+		super(UNSUPPORTED_WINDOWS_CONFIG_ERROR)
+		this.name = "HomeConfigUnavailableError"
+	}
+}
+
+const assertHomeConfigAvailable = () => {
+	// Node does not expose Windows' FILE_FLAG_OPEN_REPARSE_POINT or an openat
+	// equivalent. A path validated with lstat can therefore be redirected before
+	// open/chmod, so do not touch the path when no safe no-follow primitive exists.
+	if (process.platform === "win32") {
+		throw new HomeConfigUnavailableError()
+	}
+}
+
 const isNotFound = (error: unknown) =>
 	error instanceof Error &&
 	"code" in error &&
@@ -69,11 +88,6 @@ const ensureConfigDirectory = async (configDir: string) => {
 		await inspectConfigDirectory(configDir)
 	}
 
-	if (process.platform === "win32") {
-		await fs.chmod(configDir, 0o700)
-		return
-	}
-
 	// On POSIX, bind permission changes to an opened, non-symlink directory
 	// handle instead of resolving the path again after validation.
 	const handle = await fs.open(
@@ -107,10 +121,11 @@ const inspectConfigFile = async (
 	return "safe"
 }
 
-const noFollow = process.platform === "win32" ? 0 : constants.O_NOFOLLOW
-const nonBlock = process.platform === "win32" ? 0 : constants.O_NONBLOCK
+const noFollow = constants.O_NOFOLLOW ?? 0
+const nonBlock = constants.O_NONBLOCK ?? 0
 
 export const setHomeConfig = async (config: HomeConfig) => {
+	assertHomeConfigAvailable()
 	const parsedConfig = homeConfigSchema.parse(config)
 	const { configDir, configPath } = await getConfigPaths()
 	await ensureConfigDirectory(configDir)
@@ -136,6 +151,7 @@ export const setHomeConfig = async (config: HomeConfig) => {
 }
 
 export const getHomeConfig = async () => {
+	assertHomeConfigAvailable()
 	const { configDir, configPath } = await getConfigPaths()
 	if ((await inspectConfigDirectory(configDir)) === "missing") return {}
 	await ensureConfigDirectory(configDir)

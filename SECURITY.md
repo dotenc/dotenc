@@ -257,8 +257,8 @@ not a physical-erasure guarantee.
 |----------|------|-------|
 | SSH key directory (`~/.ssh/`) | `0o700` | Created if absent |
 | Confirmed local SSH private-key copies | `0o600` | Created exclusively; never overwrite an existing path |
-| Home configuration directory (`~/.dotenc/`) | `0o700` | Enforced when configuration is read or written |
-| Home configuration (`~/.dotenc/config.json`) | `0o600` | Enforced when configuration is read or written |
+| Home configuration directory (`~/.dotenc/`) | `0o700` | Enforced when configuration is read or written on POSIX |
+| Home configuration (`~/.dotenc/config.json`) | `0o600` | Enforced when configuration is read or written on POSIX |
 | Temporary plaintext files | `0o600` | Best-effort overwrite before deletion; no physical-erasure guarantee |
 | `.env.*.enc` files | Default umask | Encrypted; safe to be world-readable |
 | `.dotenc/*.pub` files | Default umask | Public keys; intentionally public |
@@ -268,8 +268,12 @@ configuration. dotenc rejects a symlink or non-standard file at the managed
 `~/.dotenc` directory or `config.json` component. On POSIX, it also opens the
 directory and file with no-follow semantics and applies permissions through the
 opened handles, preventing ordinary final-component symlink substitution.
-Windows retains the same pre-open link/type validation, but Node does not expose
-portable `O_NOFOLLOW` semantics there.
+Node does not expose Windows' reparse-point no-follow primitive or a directory-
+relative `open` primitive. Home configuration therefore fails closed on
+Windows before resolving, reading, creating, changing permissions on, or
+writing either managed path. Editor selection can still use `EDITOR`, `VISUAL`,
+and the platform default, but `dotenc config` persistence is unavailable on
+Windows until the runtime exposes an equivalent safe primitive.
 
 ---
 

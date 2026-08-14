@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process"
 import chalk from "chalk"
+import { resolveExecutable } from "../../helpers/resolveExecutable"
 import { logger } from "../../ui/logger"
 import { NonInteractivePromptError, promptSelect } from "../../ui/prompts"
 
@@ -19,18 +20,63 @@ const SKILLS_CLI_SPEC = "skills@1.5.22"
 const NON_INTERACTIVE_SCOPE_FALLBACK =
 	"Install scope prompt is unavailable in non-interactive mode."
 
-export const _runBunx = (args: string[], spawnImpl: typeof spawn = spawn) =>
+const reportMissingBun = (): void => {
+	console.error(
+		`${chalk.red("Error:")} ${chalk.gray("bun")} was not found on ${chalk.gray("PATH")}.`,
+	)
+	console.error(
+		`${chalk.gray("dotenc tools install-agent-skill")} requires Bun's package runner; standalone dotenc binaries do not bundle Bun.`,
+	)
+	console.error(
+		`Install Bun, ensure ${chalk.gray("bun")} is executable on ${chalk.gray("PATH")}, and retry.`,
+	)
+}
+
+const reportBunStartFailure = (): void => {
+	console.error(
+		`${chalk.red("Error:")} Bun's package runner could not be started.`,
+	)
+	console.error(
+		`Ensure ${chalk.gray("bun")} is executable on ${chalk.gray("PATH")}, and retry.`,
+	)
+}
+
+export const _runBunX = (
+	bunExecutable: string,
+	args: string[],
+	spawnImpl: typeof spawn = spawn,
+) =>
 	new Promise<number>((resolve, reject) => {
-		const child = spawnImpl("bunx", args, {
+		const child = spawnImpl(bunExecutable, ["x", ...args], {
 			stdio: "inherit",
-			shell: process.platform === "win32",
+			shell: false,
 		})
 
 		child.on("error", reject)
 		child.on("exit", (code) => resolve(code ?? 1))
 	})
 
-export const installAgentSkillCommand = async (options: Options) => {
+type InstallAgentSkillDependencies = {
+	originalEnv: NodeJS.ProcessEnv
+	resolveExecutable: typeof resolveExecutable
+	runBunX: typeof _runBunX
+}
+
+export const _installAgentSkillCommand = async (
+	options: Options,
+	dependencyOverrides: Partial<InstallAgentSkillDependencies> = {},
+) => {
+	const originalEnv = dependencyOverrides.originalEnv ?? process.env
+	const resolveExecutableImpl =
+		dependencyOverrides.resolveExecutable ?? resolveExecutable
+	const runBunX = dependencyOverrides.runBunX ?? _runBunX
+	const bunExecutable = resolveExecutableImpl("bun", originalEnv)
+
+	if (!bunExecutable) {
+		reportMissingBun()
+		process.exit(1)
+	}
+
 	let scope = options.scope
 
 	if (!scope) {
@@ -65,18 +111,13 @@ export const installAgentSkillCommand = async (options: Options) => {
 		args.push("-y")
 	}
 
-	const bunxCommand = `bunx ${args.join(" ")}`
+	const bunCommand = `bun x ${args.join(" ")}`
 	let exitCode = 0
 
 	try {
-		exitCode = await _runBunx(args)
-	} catch (error) {
-		console.error(
-			`${chalk.red("Error:")} failed to run ${chalk.gray(bunxCommand)}.`,
-		)
-		console.error(
-			`${chalk.red("Details:")} ${error instanceof Error ? error.message : String(error)}`,
-		)
+		exitCode = await runBunX(bunExecutable, args)
+	} catch {
+		reportBunStartFailure()
 		process.exit(1)
 	}
 
@@ -88,7 +129,13 @@ export const installAgentSkillCommand = async (options: Options) => {
 	}
 
 	console.log(
-		`${chalk.green("✓")} Agent skill installation completed via ${chalk.gray(bunxCommand)}.`,
+		`${chalk.green("✓")} Agent skill installation completed via ${chalk.gray(bunCommand)}.`,
 	)
 	console.log(`Run ${chalk.gray("/dotenc")} in your agent to use it.`)
+}
+
+export const installAgentSkillCommand = async (
+	options: Options,
+): Promise<void> => {
+	await _installAgentSkillCommand(options)
 }

@@ -24,8 +24,14 @@ describe("secureEraseFile", () => {
 	})
 
 	test("silently tolerates a missing file", async () => {
-		await expect(
-			secureEraseFile(path.join(os.tmpdir(), "dotenc-missing-erase-file")),
-		).resolves.toBeUndefined()
+		const tempDir = await mkdtemp(path.join(os.tmpdir(), "dotenc-erase-"))
+
+		try {
+			await expect(
+				secureEraseFile(path.join(tempDir, "missing")),
+			).resolves.toBeUndefined()
+		} finally {
+			await rm(tempDir, { recursive: true, force: true })
+		}
 	})
 })

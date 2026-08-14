@@ -40,26 +40,26 @@ describe("tools install-agent-skill", () => {
 	let home: string
 	let workspace: string
 	let fakeBinDir: string
-	let fakeBunxLogPath: string
+	let fakeBunLogPath: string
 
 	beforeAll(() => {
 		home = mkdtempSync(path.join(os.tmpdir(), "e2e-18-skill-home-"))
 		workspace = mkdtempSync(path.join(os.tmpdir(), "e2e-18-skill-ws-"))
 		fakeBinDir = mkdtempSync(path.join(os.tmpdir(), "e2e-18-fake-bin-"))
-		fakeBunxLogPath = path.join(fakeBinDir, "bunx-invocations.log")
-		const fakeBunxPath = path.join(fakeBinDir, "bunx")
+		fakeBunLogPath = path.join(fakeBinDir, "bun-invocations.log")
+		const fakeBunPath = path.join(fakeBinDir, "bun")
 		writeFileSync(
-			fakeBunxPath,
+			fakeBunPath,
 			`#!/bin/sh
-if [ -n "$DOTENC_FAKE_BUNX_FAIL" ]; then
-  exit "$DOTENC_FAKE_BUNX_FAIL"
+if [ -n "$DOTENC_FAKE_BUN_FAIL" ]; then
+  exit "$DOTENC_FAKE_BUN_FAIL"
 fi
-printf '%s\n' "$*" >> "${fakeBunxLogPath}"
+printf '%s\n' "$*" >> "${fakeBunLogPath}"
 exit 0
 `,
 			"utf-8",
 		)
-		chmodSync(fakeBunxPath, 0o755)
+		chmodSync(fakeBunPath, 0o755)
 		generateEd25519Key(home)
 	})
 
@@ -69,7 +69,7 @@ exit 0
 		rmSync(fakeBinDir, { recursive: true, force: true })
 	})
 
-	test("runs bunx skills add from the immutable archive when first option selected", () => {
+	test("runs bun x skills add from the immutable archive when first option selected", () => {
 		// Send newline to select first option ("Locally") in the list prompt
 		const result = runCliWithStdin(
 			home,
@@ -82,10 +82,10 @@ exit 0
 		)
 		expect(result.exitCode).toBe(0)
 		expect(result.stdout).toContain("Agent skill installation completed")
-		expect(existsSync(fakeBunxLogPath)).toBe(true)
-		const log = readFileSync(fakeBunxLogPath, "utf-8")
+		expect(existsSync(fakeBunLogPath)).toBe(true)
+		const log = readFileSync(fakeBunLogPath, "utf-8")
 		expect(log).toContain(
-			`skills@1.5.22 add ${IMMUTABLE_SKILL_SOURCE} --skill dotenc`,
+			`x skills@1.5.22 add ${IMMUTABLE_SKILL_SOURCE} --skill dotenc`,
 		)
 	}, TIMEOUT)
 
@@ -100,13 +100,13 @@ exit 0
 			},
 		)
 		expect(result.exitCode).toBe(0)
-		const log = readFileSync(fakeBunxLogPath, "utf-8")
+		const log = readFileSync(fakeBunLogPath, "utf-8")
 		expect(log).toContain(
-			`skills@1.5.22 add ${IMMUTABLE_SKILL_SOURCE} --skill dotenc -y`,
+			`x skills@1.5.22 add ${IMMUTABLE_SKILL_SOURCE} --skill dotenc -y`,
 		)
 	}, TIMEOUT)
 
-	test("exits with bunx command exit code on failure", () => {
+	test("exits with bun x command exit code on failure", () => {
 		const result = runCliWithStdin(
 			home,
 			workspace,
@@ -114,7 +114,7 @@ exit 0
 			"\n",
 			{
 				PATH: `${fakeBinDir}:${process.env.PATH}`,
-				DOTENC_FAKE_BUNX_FAIL: "9",
+				DOTENC_FAKE_BUN_FAIL: "9",
 			},
 		)
 		expect(result.exitCode).toBe(9)

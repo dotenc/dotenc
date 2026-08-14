@@ -248,8 +248,11 @@ Currently supported `dotenc config` key: `editor`.
 You can include editor arguments, for example: `dotenc config editor "code --wait"`.
 The configured editor is trusted local input. Shell metacharacters are rejected
 and the command is launched without a shell, but editor-specific arguments can
-still enable editor-native behavior. dotenc enforces mode `0700` on
-`~/.dotenc/` and `0600` on its `config.json` when reading or writing it.
+still enable editor-native behavior. On POSIX, dotenc enforces mode `0700` on
+`~/.dotenc/` and `0600` on its `config.json` when reading or writing it. On
+Windows, home-configuration persistence fails closed because the runtime cannot
+safely prevent reparse-point replacement; use `EDITOR` or `VISUAL`, with
+`notepad` as the platform fallback.
 
 ### Run commands on an environment
 
@@ -441,8 +444,9 @@ dotenc tools install-github-diffs \
 - `install-agent-skill` installs the dotenc agent skill through the pinned
   `skills@1.5.22` runner via Bun. The source is an immutable GitHub archive at
   [`dotenc/skills@dc3245191988923fced07c63b31df8184a1d1853`](https://github.com/dotenc/skills/commit/dc3245191988923fced07c63b31df8184a1d1853).
-- Bun must be available on `PATH`; `--force` maps to non-interactive mode (`-y`)
-  for automation.
+- Bun's `bun` executable must be available on `PATH`; the installer invokes its
+  `bun x` package runner directly, and standalone dotenc binaries do not bundle
+  Bun. `--force` maps to non-interactive mode (`-y`) for automation.
 - `install-github-diffs` creates a dedicated, least-privilege GitHub identity,
   grants it only to explicitly selected environments (or `--all`), uploads its
   private key without writing it to disk, and generates the immutable-SHA-pinned

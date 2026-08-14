@@ -4,9 +4,11 @@ const getHomeConfig = mock(
 	async () => ({}) as Record<string, string | undefined>,
 )
 const setHomeConfig = mock(async (_config: object) => {})
+class HomeConfigUnavailableError extends Error {}
 
 mock.module("../helpers/homeConfig", () => ({
 	getHomeConfig,
+	HomeConfigUnavailableError,
 	setHomeConfig,
 }))
 

@@ -297,9 +297,9 @@ tools
 		new Option("--scope <scope>", "install scope").choices(["local", "global"]),
 	)
 	.addOption(
-		new Option("--force", "run bunx skills in non-interactive mode (-y)"),
+		new Option("--force", "run bun x skills in non-interactive mode (-y)"),
 	)
-	.description("install the agent skill for this project")
+	.description("install the agent skill for this project (requires Bun)")
 	.action(installAgentSkillCommand)
 
 tools

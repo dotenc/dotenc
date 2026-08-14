@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process"
-import { getHomeConfig } from "./homeConfig"
+import { getHomeConfig, HomeConfigUnavailableError } from "./homeConfig"
 
 type GetDefaultEditorDeps = {
 	getHomeConfig: typeof getHomeConfig
@@ -31,7 +31,15 @@ const defaultGetDefaultEditorDeps: GetDefaultEditorDeps = {
 export const getDefaultEditor = async (
 	deps: GetDefaultEditorDeps = defaultGetDefaultEditorDeps,
 ) => {
-	const config = await deps.getHomeConfig()
+	let config: Awaited<ReturnType<typeof getHomeConfig>> = {}
+	try {
+		config = await deps.getHomeConfig()
+	} catch (error) {
+		// Home configuration deliberately fails closed on platforms where the
+		// runtime cannot prevent path replacement. Editor discovery can still use
+		// process environment variables and platform defaults without reading it.
+		if (!(error instanceof HomeConfigUnavailableError)) throw error
+	}
 
 	// Check the editor field in the config file
 	if (config.editor) {
