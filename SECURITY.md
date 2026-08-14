@@ -429,8 +429,66 @@ discovered set with no accessible profile, warns and continues with
 required `development` environment is always fatal.
 
 This namespace transition is deliberately not inferred from public-key names.
-A legacy `.env.alice.enc` must be decrypted and re-encrypted as
-`personal.alice`; renaming a version 2 file fails its environment-name AAD.
+When no namespaced profile is selected, `dev` may emit a read-only warning for
+an accessible unprefixed environment that matches the former convention. It
+never loads or mutates that candidate. Unprefixed environments remain valid
+explicit environments—for example, `dotenc run -e alice` continues to load an
+environment genuinely named `alice`.
+
+Migration is explicit:
+
+```bash
+dotenc env rename alice personal.alice
+dotenc env rename alice personal.alice --all-layers
+```
+
+The default operates only in the current directory. `--all-layers` preflights
+and migrates the source layers in the effective
+project-root-to-current-directory chain; it does not recurse through sibling
+packages. The command requires confirmation in a TTY and requires `--yes` in
+non-interactive use. `--yes` suppresses only confirmation and does not weaken
+validation.
+
+This operation decrypts the source content and writes a version 2 destination
+with the destination name as AAD and a fresh ciphertext IV. Recipient entries
+are preserved exactly rather than rebuilt from the current `.dotenc/*.pub`
+directory, so migration cannot silently grant, revoke, or rename a recipient.
+Each destination inode is created inside a private same-parent quarantine and
+published by an exclusive hard link. Its private recovery link remains until
+source cleanup is complete. The destination must parse and decrypt under its
+new name both before and after the source files are moved into their own private
+same-parent quarantines. Source identity, content, and permissions are rechecked
+on the quarantined inode before any source inode is deleted; this prevents a
+concurrently replaced live path from being mistaken for the object validated
+during preflight. Before releasing the destination recovery link, dotenc proves
+that the live path still names the verified inode or restores that inode with an
+exclusive link. A plain filesystem rename of a version 2 envelope fails
+authentication because it retains the old AAD.
+
+On Windows, Node does not expose portable `O_NOFOLLOW` or directory `fsync`
+semantics. The rename path still performs link/type and opened-handle identity
+checks and uses exclusive hard-link publication, but it cannot make the same
+POSIX no-follow and crash-durability claims.
+
+No filesystem transaction spans several directories. In an `--all-layers`
+migration, every destination is verified before any source cleanup. A failure
+during destination creation or verification retains all sources and triggers
+best-effort removal of destinations created by that invocation; failed rollback
+may leave both source and destination and is reported. If an unexpected object
+blocks exclusive source restoration, or quarantine restoration cannot be
+proven, the affected quarantine path is reported and every verified destination
+is kept as a redundant recovery copy. The same preservation rule applies if a
+source disappears before it can be moved into quarantine: dotenc reports the
+unresolved source path and keeps the verified destination. If a missing live
+destination cannot be exclusively restored, its private recovery path is kept
+and reported instead of being deleted. If source cleanup fails partway, all
+verified destinations remain, sources already removed are not automatically
+recreated, and undeleted sources remain at their old or reported quarantine
+paths. The command exits non-zero and reports the exact paths so the operator
+can finish source removal or restore tracked sources from Git and remove the
+destinations. Git cannot
+restore an untracked source; if its cleanup already succeeded, the verified
+destination is the remaining encrypted copy.
 
 ### Recursive Environment Discovery
 

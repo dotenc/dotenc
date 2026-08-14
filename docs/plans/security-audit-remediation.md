@@ -5,6 +5,7 @@ Audit baseline: `@dotenc/cli` 0.12.3 and VS Code extension 0.6.1
 Target releases: `@dotenc/cli` 0.13.0 and VS Code extension 0.6.2
 Accepted: 2026-08-13
 Completed: 2026-08-13
+Updated: 2026-08-14
 
 ## Objective
 
@@ -28,6 +29,12 @@ implicit process-execution or local-tooling control plane.
 - Personal development environments use the reserved `personal.<profile>`
   namespace. Public-key aliases are display metadata only and never select an
   environment.
+- The namespace cutoff is immediate: `dev` never falls back to or mutates an
+  unprefixed possible legacy profile. It may emit a read-only migration hint;
+  legitimate names remain explicitly loadable with `dotenc run -e <name>`.
+- Legacy migration uses the explicit, durable
+  `dotenc env rename <source> personal.<profile>` operation. It is never part of
+  launching an application through `dev`.
 - `dotenc dev` treats personal environments as optional overlays. A personal
   failure warns and continues with `development`; `--strict` converts it to a
   failure.
@@ -88,11 +95,32 @@ remain available; an override releases only the named non-reserved variable.
 - Warn and continue when an explicit personal profile is missing or cannot be
   loaded; fail under `--strict`.
 - New initialization creates `personal.<name>` directly. Legacy profile
-  migration must decrypt and re-encrypt because v2 AAD prevents a file rename.
+  migration uses `dotenc env rename <source> personal.<profile>` because v2 AAD
+  prevents a filesystem rename.
+- Keep possible-legacy detection advisory and read-only. Never auto-load,
+  rename, or delete a candidate; an unprefixed file may be an intentional
+  environment used by `dotenc run`.
+- Rename only the current-directory layer by default. `--all-layers` targets
+  the effective root-to-current-directory chain, not unrelated sibling trees.
+- Require confirmation in a TTY and `--yes` in non-interactive use. Preserve
+  recipient entries exactly, create every destination exclusively as v2 with
+  destination-name AAD, and verify all destinations before source cleanup. Keep
+  each verified destination inode anchored by a private same-parent hard link
+  until source cleanup and final live-path verification are complete.
+- Report rollback and cleanup state precisely. Destination setup failure keeps
+  every source and attempts to remove created destinations. Multi-directory
+  source deletion is not atomic: partial cleanup leaves all verified
+  destinations, any already removed sources absent, and remaining sources at
+  their original or reported quarantine paths. If a source vanishes before
+  quarantine, retain the verified destination and report the unresolved path.
 
 Acceptance: renaming or duplicating a `.pub` alias cannot change the selected
 profile or load `production`; multiple matching keys for one profile yield one
-choice.
+choice. `dev` never auto-loads or mutates an unprefixed candidate. A successful
+rename preserves the exact recipient set, proves the destination under its new
+AAD before deleting the source, and cannot overwrite an existing destination.
+An `--all-layers` partial cleanup exits non-zero and reports which sources were
+removed and which remain while retaining every verified destination.
 
 ### 3. VS Code extension
 
@@ -142,8 +170,9 @@ choice.
   migration guidance with the implemented behavior.
 - Preserve legacy v1 reads, but write only v2.
 - Treat the personal namespace transition as a breaking change and provide an
-  explicit migration workflow; never guess that an arbitrary legacy environment
-  was personal.
+  explicit `env rename` migration workflow; never guess that an arbitrary
+  legacy environment was personal, and keep `run -e <legacy-name>` available
+  for environments whose unprefixed name is intentional.
 - Keep diagnostics static and secret-free.
 
 ## Validation Gates
@@ -160,19 +189,18 @@ choice.
 
 ## Completion Record
 
-- Root lint passed across 252 files; CLI, VS Code extension, and diff-action
+- Root lint passed across 255 files; CLI, VS Code extension, and diff-action
   typechecks passed.
-- CLI build and JS entrypoint smokes passed at version 0.13.0. All 611 isolated
-  unit tests passed. CLI line coverage is 92.95%; changed-line coverage against
-  the PR base is 90.80%.
-- Docker E2E passed with 135 tests, one intentionally skipped parent-TTY test,
+- CLI build and JS entrypoint smokes passed at version 0.13.0. All 655 isolated
+  unit tests passed. CLI line coverage is 92.98%.
+- Docker E2E passed with 139 tests, one intentionally skipped parent-TTY test,
   and no failures. The suite includes a real `BASH_ENV` payload that is blocked
   before spawn and executes only under an exact explicit override.
 - All 23 VS Code unit tests and both host integration tests passed. Extension
   line coverage is 95.20%, and package-content inspection passed.
 - Website build and all 25 website/installer tests passed, including direct
   HTTP rejection for both downloaders and the no-redirect `wget` bootstrap case.
-- Combined line coverage is 93.01%. `git diff --check` and a changed-content
+- Combined line coverage is 93.04%. `git diff --check` and a changed-content
   scan for private-key/token fixtures passed.
 
 ## Explicit Deferrals and Limitations

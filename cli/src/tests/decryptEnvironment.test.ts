@@ -5,6 +5,7 @@ import {
 	decryptEnvironment,
 	decryptEnvironmentData,
 	environmentDataKeysEqual,
+	reencryptEnvironmentData,
 } from "../helpers/decryptEnvironment"
 import type { PrivateKeyEntry } from "../helpers/getPrivateKeys"
 import type { Environment } from "../schemas/environment"
@@ -508,6 +509,32 @@ describe("decryptEnvironmentData", () => {
 		await expect(
 			decryptEnvironmentData("test-env", makeEnvironment("fp-match"), deps),
 		).rejects.toThrow("content decryption failed")
+		expect(unwrappedDataKey).toEqual(Buffer.alloc(32))
+	})
+
+	test("zeroes the reused data key when destination encryption fails", async () => {
+		const unwrappedDataKey = Buffer.alloc(32, 11)
+		const encryptFailure = new Error("destination encryption failed")
+		const deps = {
+			getPrivateKeys: async () => ({
+				keys: [makePrivateKeyEntry("fp-match")],
+				passphraseProtectedKeys: [],
+			}),
+			decryptDataKey: (() => unwrappedDataKey) as never,
+			decryptData: (async () => "VALUE=secret") as never,
+			encryptData: async () => {
+				throw encryptFailure
+			},
+		}
+
+		await expect(
+			reencryptEnvironmentData(
+				"alice",
+				"personal.alice",
+				makeEnvironment("fp-match"),
+				deps,
+			),
+		).rejects.toBe(encryptFailure)
 		expect(unwrappedDataKey).toEqual(Buffer.alloc(32))
 	})
 })

@@ -1,7 +1,10 @@
 import chalk from "chalk"
 import { createDecryptEnvironmentDataContext } from "../helpers/decryptEnvironment"
 import {
+	discoverLegacyProfile,
 	discoverPersonalProfiles,
+	discoverPossibleLegacyProfiles,
+	type LegacyProfileCandidate,
 	toPersonalEnvironmentName,
 } from "../helpers/discoverPersonalProfiles"
 import { validateEnvironmentName } from "../helpers/validateEnvironmentName"
@@ -18,6 +21,30 @@ type Options = {
 
 const profileFromEnvironmentName = (environmentName: string) =>
 	environmentName.slice("personal.".length)
+
+const legacyRenameCommand = (candidate: LegacyProfileCandidate) =>
+	candidate.name.startsWith("-")
+		? `dotenc env rename${candidate.requiresAllLayers ? " --all-layers" : ""} -- ${candidate.name} personal.${candidate.name}`
+		: `dotenc env rename ${candidate.name} personal.${candidate.name}${candidate.requiresAllLayers ? " --all-layers" : ""}`
+
+const legacyProfileHint = (candidate: LegacyProfileCandidate) =>
+	` A possible legacy personal environment following the old key-alias convention was found: ${candidate.name}. It was not loaded.`
+
+const legacyRenameHint = (candidate: LegacyProfileCandidate) =>
+	` Rename it with ${legacyRenameCommand(candidate)}.`
+
+const warnAboutPossibleLegacyProfiles = (
+	candidates: LegacyProfileCandidate[],
+) => {
+	if (candidates.length === 0) return
+	const names = candidates.map((candidate) => candidate.name).join(", ")
+	const renameCommands = candidates
+		.map((candidate) => `- ${legacyRenameCommand(candidate)}`)
+		.join("\n")
+	console.error(
+		`${chalk.yellow("Warning:")} possible legacy personal environments following the old key-alias convention were found: ${names}. None were loaded. Rename them explicitly:\n${renameCommands}`,
+	)
+}
 
 export const devCommand = async (
 	command: string,
@@ -56,15 +83,32 @@ export const devCommand = async (
 			if (discovery.accessible.includes(requestedEnvironment)) {
 				selectedEnvironment = requestedEnvironment
 			} else {
-				const message = discovery.discovered.includes(requestedEnvironment)
+				const namespacedProfileExists =
+					discovery.discovered.includes(requestedEnvironment)
+				const legacyCandidate = namespacedProfileExists
+					? undefined
+					: await discoverLegacyProfile(options.profile, {
+							invocationDir: process.cwd(),
+							localOnly: options.localOnly,
+							decryptionContext,
+						})
+				const message = namespacedProfileExists
 					? `personal profile ${options.profile} is not accessible`
 					: `personal profile ${options.profile} was not found`
+				const legacyHint = legacyCandidate
+					? legacyProfileHint(legacyCandidate)
+					: ""
+				const renameHint = legacyCandidate
+					? legacyRenameHint(legacyCandidate)
+					: ""
 				if (options.strict) {
-					console.error(`${chalk.red("Error:")} ${message}.`)
+					console.error(
+						`${chalk.red("Error:")} ${message}.${legacyHint}${renameHint}`,
+					)
 					process.exit(1)
 				}
 				console.error(
-					`${chalk.yellow("Warning:")} ${message}; continuing with development only.`,
+					`${chalk.yellow("Warning:")} ${message}.${legacyHint} Continuing with development only.${renameHint}`,
 				)
 			}
 		} else if (discovery.accessible.length === 1) {
@@ -97,6 +141,22 @@ export const devCommand = async (
 			console.error(
 				`${chalk.yellow("Warning:")} ${message}; continuing with development only.`,
 			)
+		}
+
+		if (options.profile === undefined && selectedEnvironment === undefined) {
+			const possibleLegacyProfiles = (
+				await discoverPossibleLegacyProfiles({
+					invocationDir: process.cwd(),
+					localOnly: options.localOnly,
+					decryptionContext,
+				})
+			).filter(
+				(candidate) =>
+					!discovery.discovered.includes(
+						toPersonalEnvironmentName(candidate.name),
+					),
+			)
+			warnAboutPossibleLegacyProfiles(possibleLegacyProfiles)
 		}
 
 		await runCommand(command, args, {

@@ -32,6 +32,9 @@ Notes:
 - Do not commit real secrets, private keys, or local `.env` files. Use fixtures and temp directories.
 - Keep changes minimal and package-scoped unless the task explicitly spans multiple packages.
 - Keep `SECURITY.md` in sync with the implementation. Update it whenever you change cryptographic algorithms, key handling, file permissions, input validation, command execution, or the installation flow.
+- Encrypted environment names are cryptographic context, not just filenames.
+  Use `dotenc env rename <source> <destination>` for renames; never move an
+  `.env.*.enc` file directly or make `dotenc dev` mutate legacy profiles.
 
 CLI packaging gotcha (important):
 

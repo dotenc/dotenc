@@ -34,6 +34,9 @@ ignored-directory rules.
 - Profiles are discovered by filename namespace and access is decided by
   recipient/private-key fingerprint, never public-key alias.
 - Multiple accessible profiles are healthy; report that `dev` will prompt.
+- An accessible unprefixed environment that matches the former key-alias
+  convention is only a possible legacy personal profile, never identity truth.
+  Report it as migration advice without loading or changing it.
 - A personal profile is reported missing only when there is current evidence:
   an explicit `--profile`, a tracked working-tree deletion, or an existing but
   unreadable/corrupt profile. Do not turn arbitrary Git history into warnings.
@@ -48,10 +51,14 @@ ignored-directory rules.
    without materializing plaintext.
 4. Discover personal profiles and report accessible, ambiguous, missing,
    corrupt, or inaccessible states.
-5. Inspect Git status/history for exact recovery paths.
-6. Inspect the local diff driver, textconv cache, attributes, plaintext `.env`
+5. Diagnose possible legacy personal-profile candidates using the same bounded,
+   fingerprint-correlated checks as `dev`; report collisions or partial
+   `env rename` migrations without inferring that an arbitrary environment is
+   personal.
+6. Inspect Git status/history for exact recovery paths.
+7. Inspect the local diff driver, textconv cache, attributes, plaintext `.env`
    hygiene, and local configuration permissions.
-7. Under `--all`, validate every bounded envelope and report orphaned or stale
+8. Under `--all`, validate every bounded envelope and report orphaned or stale
    recipient metadata.
 
 ## Severity and Exit Codes
@@ -96,6 +103,13 @@ payloads, wrapped keys, private-key material/paths, or raw provider exceptions.
 - Intentional fresh start: suggest `dotenc env create personal.<profile>` and
   state explicitly that it creates an empty environment and cannot recover old
   values.
+- Accessible legacy candidate: suggest
+  `dotenc env rename <source> personal.<profile>` and add `--all-layers` when
+  any source layer is outside the current directory (including a single
+  ancestor-only source). `doctor` never runs it.
+- Partial cryptographic rename: report the remaining source and verified
+  destination paths, then suggest completing cleanup or restoring tracked
+  sources from Git before removing the destinations.
 - Access mismatch: suggest the appropriate grant workflow without applying it.
 
 ## Repair Boundary
@@ -112,8 +126,9 @@ index, create commits, fetch, or delete plaintext files.
 
 - Extract a typed, side-effect-free diagnostic engine rather than invoking
   commands that log or call `process.exit`.
-- Share bounded envelope parsing and fingerprint-based personal-profile
-  discovery with `dotenc dev` so selection semantics cannot drift.
+- Share bounded envelope parsing plus fingerprint-based personal-profile and
+  possible-legacy discovery with `dotenc dev` so selection and advisory
+  semantics cannot drift.
 - Candidate discovery may unwrap a data key but should not materialize
   plaintext unnecessarily.
 - Keep provider failures typed as inconclusive where access cannot be tested;
@@ -127,7 +142,8 @@ index, create commits, fetch, or delete plaintext files.
    a non-prompting, data-key-only diagnostic mode compatible with its offline
    contract.
 2. Fingerprint-based `dev` selection and soft personal-overlay behavior.
-   **Completed as a 0.13.0 prerequisite.**
+   Diagnostic-only legacy warnings and the explicit cryptographic `env rename`
+   recovery path are also completed as 0.13.0 prerequisites.
 3. Read-only doctor with human and JSON output.
 4. Git-aware recovery evidence and `--all` repository checks.
 5. Revisit a narrowly scoped `--fix` only after the read-only contract is
