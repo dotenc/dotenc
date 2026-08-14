@@ -25,6 +25,9 @@ requiring project configuration or a 1Password shell plugin.
 - 1Password may present its normal system authorization dialog. Explicit user
   authorization is part of the intended flow, not an error or configuration
   step.
+- `dotenc doctor` is the nonprompting offline exception: it never invokes `op`
+  or the desktop authorization flow and reports cached-provider access as
+  inconclusive.
 - Private keys retrieved from 1Password remain process-only by default. They
   must never be written to disk unless the user explicitly confirms the local
   `~/.ssh` copy option, and must never be forwarded to the wrapped command or
@@ -368,6 +371,22 @@ private-key read without broad public-metadata discovery. `whoami` remains
 provider-free when at least one project identity matches a local key, even if
 the repository contains unmatched teammate keys. It uses public-only discovery
 only when no local project identity matches.
+
+### Offline doctor exception
+
+`dotenc doctor` deliberately does not follow the runtime retrieval flow above.
+It never runs `op`, never opens 1Password's native authorization dialog, and
+never writes or removes a locator-cache entry. It may read bounded local
+locator metadata to learn that a project recipient has a cached provider
+mapping, but it does not expose the locator IDs or test the provider live.
+
+When a matching cached locator exists and no usable local key proves access,
+doctor reports provider access as inconclusive. This is not access denial and
+not proof that the provider key works; a normal decrypting command remains the
+live provider test and may present 1Password's authorization dialog. This
+exception keeps diagnostics offline, non-interactive, and suitable for stable
+human and JSON reports without weakening the normal connector's fail-closed
+behavior.
 
 ## Security boundaries
 

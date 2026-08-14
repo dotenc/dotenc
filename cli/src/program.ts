@@ -1,4 +1,4 @@
-import { Command, Option } from "commander"
+import { Command, CommanderError, Option } from "commander"
 import pkg from "../package.json"
 import { grantCommand } from "./commands/auth/grant"
 import { authListCommand } from "./commands/auth/list"
@@ -6,6 +6,11 @@ import { authPurgeCommand } from "./commands/auth/purge"
 import { revokeCommand } from "./commands/auth/revoke"
 import { configCommand } from "./commands/config"
 import { devCommand } from "./commands/dev"
+import {
+	createDoctorFailureReport,
+	doctorCommand,
+	renderDoctorJson,
+} from "./commands/doctor"
 import {
 	_resolvePublicKeySelectionForCreate,
 	createCommand,
@@ -249,6 +254,37 @@ program
 	.description("run with development and an accessible personal.* environment")
 	.action((command, args, options) => devCommand(command, args, options))
 
+const doctor = program
+	.command("doctor")
+	.exitOverride()
+	.addOption(
+		new Option(
+			"--profile <name>",
+			"diagnose the personal.<name> profile suffix",
+		).conflicts("all"),
+	)
+	.addOption(
+		new Option("--local-only", "diagnose only the current directory").conflicts(
+			"all",
+		),
+	)
+	.addOption(
+		new Option("--all", "recursively diagnose the project root").conflicts([
+			"localOnly",
+			"profile",
+		]),
+	)
+	.addOption(new Option("--json", "output versioned machine-readable JSON"))
+	.addOption(new Option("--strict", "treat diagnostic warnings as failures"))
+	.description("diagnose local dotenc state without changing it")
+	.action(doctorCommand)
+
+const doctorJsonRequested =
+	process.argv[2] === "doctor" && process.argv.slice(3).includes("--json")
+if (doctorJsonRequested) {
+	doctor.configureOutput({ writeErr: () => {} })
+}
+
 const key = program.command("key").description("manage keys")
 
 key
@@ -398,6 +434,26 @@ await maybeNotifyAboutUpdate()
 try {
 	await program.parseAsync()
 } catch (error) {
+	if (error instanceof CommanderError) {
+		if (error.exitCode === 0) process.exit(0)
+		if (process.argv[2] === "doctor") {
+			if (doctorJsonRequested) {
+				console.log(
+					renderDoctorJson(
+						createDoctorFailureReport(
+							{
+								all: process.argv.slice(3).includes("--all"),
+								localOnly: process.argv.slice(3).includes("--local-only"),
+								json: true,
+							},
+							"invocation.invalid",
+						),
+					),
+				)
+			}
+			process.exit(2)
+		}
+	}
 	if (error instanceof Error && error.name === "ExitPromptError") {
 		process.exit(0)
 	}

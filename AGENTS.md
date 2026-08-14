@@ -31,6 +31,10 @@ Notes:
 - Follow existing code patterns and let deterministic tools (Biome/tests/typecheck) catch style issues.
 - Do not commit real secrets, private keys, or local `.env` files. Use fixtures and temp directories.
 - Keep changes minimal and package-scoped unless the task explicitly spans multiple packages.
+- For every PR, check `README.md` and `SECURITY.md` against the actual product
+  behavior. Keep the README simplicity- and DX-first, with a quick start and
+  simple examples at the top and full documentation below. Keep SECURITY
+  precise about guarantees, trade-offs, and the overall security model.
 - Keep `SECURITY.md` in sync with the implementation. Update it whenever you change cryptographic algorithms, key handling, file permissions, input validation, command execution, or the installation flow.
 - Encrypted environment names are cryptographic context, not just filenames.
   Use `dotenc env rename <source> <destination>` for renames; never move an
@@ -113,6 +117,7 @@ Coverage:
 - The official operational skill is maintained separately in `dotenc/skills`; for dotenc development work, inspect and modify this repository directly instead of following consumer workflows from that skill.
 - `scripts/coverage-summary.sh` and `scripts/merge-lcov.ts` — coverage aggregation details
 - `docs/` — implementation references and deep dives (e.g. `docs/NESTING.md`)
+- `docs/plans/dotenc-doctor.md` — authoritative read-only doctor contract, finding and exit semantics, JSON redaction, and repair boundary.
 
 ## Release / Versioning Notes
 

@@ -1,5 +1,5 @@
 import crypto from "node:crypto"
-import { existsSync } from "node:fs"
+import { constants, existsSync } from "node:fs"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
@@ -193,6 +193,7 @@ export type GetPrivateKeysResult = {
 	keys: PrivateKeyEntry[]
 	passphraseProtectedKeys: string[]
 	unsupportedKeys?: UnsupportedPrivateKeyEntry[]
+	incompleteKeys?: number
 }
 
 export type GetPrivateKeysOptions = {
@@ -202,6 +203,80 @@ export type GetPrivateKeysOptions = {
 	environmentKeyErrorMode?: "exit" | "collect"
 	/** Allows non-interactive callers to suppress otherwise-safe diagnostics. */
 	logError?: (message: string) => void
+	/** Read passphrase-protected keys without invoking the temporary-file parser. */
+	decryptPassphraseProtected?: boolean
+	/** Optional bound for environment-provided and filesystem private-key inputs. */
+	maxKeyBytes?: number
+	/** Use bounded, no-follow filesystem reads and report incomplete entries. */
+	diagnosticReadOnly?: boolean
+}
+
+const MAX_DIAGNOSTIC_SSH_FILES = 4096
+const MAX_DIAGNOSTIC_PRIVATE_KEY_BYTES = 10 * 1024 * 1024
+
+type DiagnosticPrivateKeyRead =
+	| { status: "ok"; content: string }
+	| { status: "skip" }
+	| { status: "too-large" }
+	| { status: "incomplete" }
+
+const readDiagnosticPrivateKey = async (
+	filePath: string,
+	maximumBytes: number,
+): Promise<DiagnosticPrivateKeyRead> => {
+	let pathStat: Awaited<ReturnType<typeof fs.lstat>>
+	try {
+		pathStat = await fs.lstat(filePath)
+	} catch {
+		return { status: "incomplete" }
+	}
+	if (pathStat.isSymbolicLink()) return { status: "incomplete" }
+	if (!pathStat.isFile()) return { status: "skip" }
+	if (pathStat.size > maximumBytes) return { status: "too-large" }
+
+	let handle: Awaited<ReturnType<typeof fs.open>>
+	try {
+		handle = await fs.open(
+			filePath,
+			constants.O_RDONLY |
+				(constants.O_NOFOLLOW ?? 0) |
+				(constants.O_NONBLOCK ?? 0),
+		)
+	} catch {
+		return { status: "incomplete" }
+	}
+	const input = Buffer.alloc(maximumBytes + 1)
+	let offset = 0
+	try {
+		try {
+			const openedStat = await handle.stat()
+			if (
+				!openedStat.isFile() ||
+				openedStat.dev !== pathStat.dev ||
+				openedStat.ino !== pathStat.ino
+			) {
+				return { status: "incomplete" }
+			}
+			if (openedStat.size > maximumBytes) return { status: "too-large" }
+			while (offset < input.byteLength) {
+				const { bytesRead } = await handle.read(
+					input,
+					offset,
+					input.byteLength - offset,
+					null,
+				)
+				if (bytesRead === 0) break
+				offset += bytesRead
+			}
+		} catch {
+			return { status: "incomplete" }
+		}
+		if (offset > maximumBytes) return { status: "too-large" }
+		return { status: "ok", content: input.subarray(0, offset).toString("utf8") }
+	} finally {
+		input.fill(0)
+		await handle.close().catch(() => {})
+	}
 }
 
 export const getPrivateKeys = async (
@@ -210,10 +285,22 @@ export const getPrivateKeys = async (
 	const privateKeys: PrivateKeyEntry[] = []
 	const passphraseProtectedKeys: string[] = []
 	const unsupportedKeys: UnsupportedPrivateKeyEntry[] = []
-	const privateKeyPassphrase = process.env.DOTENC_PRIVATE_KEY_PASSPHRASE
+	let incompleteKeyCount = 0
+	let diagnosticBytesRead = 0
+	const privateKeyPassphrase =
+		options.decryptPassphraseProtected === false
+			? undefined
+			: process.env.DOTENC_PRIVATE_KEY_PASSPHRASE
+	const maxKeyBytes = options.maxKeyBytes
 	const environmentKeyErrorMode = options.environmentKeyErrorMode ?? "exit"
 	const logError =
 		options.logError ?? ((message: string) => console.error(message))
+	const result = (): GetPrivateKeysResult => ({
+		keys: privateKeys,
+		passphraseProtectedKeys,
+		unsupportedKeys,
+		...(incompleteKeyCount > 0 ? { incompleteKeys: incompleteKeyCount } : {}),
+	})
 
 	// Check environment-provided bootstrap keys before scanning ~/.ssh.
 	const environmentPrivateKey = getEnvironmentPrivateKey()
@@ -231,122 +318,238 @@ export const getPrivateKeys = async (
 			})
 		} else {
 			const dotencPrivateKey = environmentPrivateKey.content
-			const dotencPrivateKeyPassphraseProtected =
-				isPassphraseProtected(dotencPrivateKey)
-
-			const privateKey: crypto.KeyObject | null =
-				dotencPrivateKeyPassphraseProtected
-					? privateKeyPassphrase !== undefined
-						? await parsePassphraseProtectedPrivateKey(
-								dotencPrivateKey,
-								privateKeyPassphrase,
-							)
-						: null
-					: tryParsePrivateKey(dotencPrivateKey)
-
-			if (privateKey) {
-				const algorithm = detectAlgorithm(privateKey)
-
-				if (algorithm) {
-					const entry: PrivateKeyEntry = {
-						name: entryName,
-						privateKey,
-						fingerprint: getKeyFingerprint(privateKey),
-						algorithm,
-					}
-
-					if (algorithm === "ed25519") {
-						const { rawPublicKey } = extractEd25519RawKeys(privateKey)
-						entry.rawPublicKey = rawPublicKey
-					}
-
-					privateKeys.push(entry)
-				} else {
-					unsupportedKeys.push({
-						name: entryName,
-						reason: describeUnsupportedAlgorithm(privateKey.asymmetricKeyType),
-					})
-					logError(
-						`Unsupported key type in ${envName}: ${privateKey.asymmetricKeyType}. Only RSA and Ed25519 are supported.`,
-					)
-				}
-			} else if (dotencPrivateKeyPassphraseProtected) {
-				if (privateKeyPassphrase !== undefined) {
-					logError(
-						`Error: failed to decrypt the key in ${envName} with DOTENC_PRIVATE_KEY_PASSPHRASE. Please verify the passphrase.`,
-					)
-					if (environmentKeyErrorMode === "exit") {
-						process.exit(1)
-					}
-					unsupportedKeys.push({
-						name: entryName,
-						reason: "passphrase-protected (failed to decrypt)",
-					})
-				} else {
-					logError(
-						`Error: the key in ${envName} is passphrase-protected. Set DOTENC_PRIVATE_KEY_PASSPHRASE to use it, or provide a passwordless key.`,
-					)
-					if (environmentKeyErrorMode === "exit") {
-						process.exit(1)
-					}
-					passphraseProtectedKeys.push(entryName)
-					unsupportedKeys.push({
-						name: entryName,
-						reason: "passphrase-protected",
-					})
-				}
-			} else {
-				logError(
-					`Invalid private key format in ${envName} environment variable. Please provide a valid private key (PEM or OpenSSH format).`,
-				)
+			const dotencPrivateKeyBytes = Buffer.byteLength(dotencPrivateKey, "utf8")
+			const exceedsLimit =
+				maxKeyBytes !== undefined && dotencPrivateKeyBytes > maxKeyBytes
+			if (exceedsLimit) {
+				if (options.diagnosticReadOnly) incompleteKeyCount += 1
 				unsupportedKeys.push({
 					name: entryName,
-					reason: "invalid private key format",
+					reason: "private key exceeds the diagnostic size limit",
 				})
+			} else {
+				const dotencPrivateKeyPassphraseProtected =
+					isPassphraseProtected(dotencPrivateKey)
+				const privateKey: crypto.KeyObject | null =
+					dotencPrivateKeyPassphraseProtected
+						? privateKeyPassphrase !== undefined
+							? await parsePassphraseProtectedPrivateKey(
+									dotencPrivateKey,
+									privateKeyPassphrase,
+								)
+							: null
+						: tryParsePrivateKey(dotencPrivateKey)
+
+				if (privateKey) {
+					const algorithm = detectAlgorithm(privateKey)
+					if (algorithm) {
+						const entry: PrivateKeyEntry = {
+							name: entryName,
+							privateKey,
+							fingerprint: getKeyFingerprint(privateKey),
+							algorithm,
+						}
+						if (algorithm === "ed25519") {
+							const { rawPublicKey } = extractEd25519RawKeys(privateKey)
+							entry.rawPublicKey = rawPublicKey
+						}
+						privateKeys.push(entry)
+					} else {
+						unsupportedKeys.push({
+							name: entryName,
+							reason: describeUnsupportedAlgorithm(
+								privateKey.asymmetricKeyType,
+							),
+						})
+						logError(
+							`Unsupported key type in ${envName}: ${privateKey.asymmetricKeyType}. Only RSA and Ed25519 are supported.`,
+						)
+					}
+				} else if (dotencPrivateKeyPassphraseProtected) {
+					if (privateKeyPassphrase !== undefined) {
+						logError(
+							`Error: failed to decrypt the key in ${envName} with DOTENC_PRIVATE_KEY_PASSPHRASE. Please verify the passphrase.`,
+						)
+						if (environmentKeyErrorMode === "exit") process.exit(1)
+						unsupportedKeys.push({
+							name: entryName,
+							reason: "passphrase-protected (failed to decrypt)",
+						})
+					} else {
+						logError(
+							`Error: the key in ${envName} is passphrase-protected. Set DOTENC_PRIVATE_KEY_PASSPHRASE to use it, or provide a passwordless key.`,
+						)
+						if (environmentKeyErrorMode === "exit") process.exit(1)
+						passphraseProtectedKeys.push(entryName)
+						unsupportedKeys.push({
+							name: entryName,
+							reason: "passphrase-protected",
+						})
+					}
+				} else {
+					if (options.diagnosticReadOnly) {
+						diagnosticBytesRead += dotencPrivateKeyBytes
+					}
+					logError(
+						`Invalid private key format in ${envName} environment variable. Please provide a valid private key (PEM or OpenSSH format).`,
+					)
+					unsupportedKeys.push({
+						name: entryName,
+						reason: "invalid private key format",
+					})
+				}
 			}
 		}
 	}
 
 	if (options.environmentOnly) {
-		return { keys: privateKeys, passphraseProtectedKeys, unsupportedKeys }
+		return result()
 	}
 
 	// Scan ~/.ssh/ for SSH key files
 	const sshDir = path.join(os.homedir(), ".ssh")
-	if (!existsSync(sshDir)) {
-		return { keys: privateKeys, passphraseProtectedKeys, unsupportedKeys }
+	if (options.diagnosticReadOnly) {
+		try {
+			const sshStat = await fs.lstat(sshDir)
+			if (sshStat.isSymbolicLink() || !sshStat.isDirectory()) {
+				incompleteKeyCount += 1
+				return result()
+			}
+		} catch (error) {
+			if (
+				error instanceof Error &&
+				"code" in error &&
+				(error as NodeJS.ErrnoException).code === "ENOENT"
+			) {
+				return result()
+			}
+			incompleteKeyCount += 1
+			return result()
+		}
+	} else if (!existsSync(sshDir)) {
+		return result()
 	}
 
-	const files = await fs.readdir(sshDir)
+	let files: string[]
+	if (options.diagnosticReadOnly) {
+		const knownFiles: string[] = []
+		for (const fileName of SSH_KEY_FILES) {
+			try {
+				await fs.lstat(path.join(sshDir, fileName))
+				knownFiles.push(fileName)
+			} catch (error) {
+				if (
+					!(
+						error instanceof Error &&
+						"code" in error &&
+						(error as NodeJS.ErrnoException).code === "ENOENT"
+					)
+				) {
+					incompleteKeyCount += 1
+				}
+			}
+		}
 
-	// First check well-known key names, then any other files that look like private keys
-	const knownFiles = SSH_KEY_FILES.filter((f) => files.includes(f))
-	const otherFiles = files.filter(
-		(f) =>
-			!SSH_KEY_FILES.includes(f) &&
-			!f.endsWith(".pub") &&
-			!f.startsWith("known_hosts") &&
-			!f.startsWith("authorized_keys") &&
-			f !== "config",
+		const discovered: string[] = []
+		let directoryComplete = true
+		let handle: Awaited<ReturnType<typeof fs.opendir>>
+		try {
+			handle = await fs.opendir(sshDir)
+		} catch {
+			incompleteKeyCount += 1
+			return result()
+		}
+		try {
+			while (discovered.length <= MAX_DIAGNOSTIC_SSH_FILES) {
+				const entry = await handle.read()
+				if (!entry) break
+				if (discovered.length === MAX_DIAGNOSTIC_SSH_FILES) {
+					directoryComplete = false
+					break
+				}
+				discovered.push(entry.name)
+			}
+		} catch {
+			directoryComplete = false
+		} finally {
+			try {
+				await handle.close()
+			} catch {}
+		}
+		if (!directoryComplete) incompleteKeyCount += 1
+		files = directoryComplete
+			? [...new Set([...knownFiles, ...discovered])]
+			: knownFiles
+	} else {
+		files = await fs.readdir(sshDir)
+	}
+
+	// First check well-known key names, then deterministic candidate names.
+	const knownFiles = SSH_KEY_FILES.filter((fileName) =>
+		files.includes(fileName),
 	)
+	const otherFiles = files
+		.filter(
+			(f) =>
+				!SSH_KEY_FILES.includes(f) &&
+				!f.endsWith(".pub") &&
+				!f.startsWith("known_hosts") &&
+				!f.startsWith("authorized_keys") &&
+				f !== "config",
+		)
+		.sort((left, right) => left.localeCompare(right))
 
 	for (const fileName of [...knownFiles, ...otherFiles]) {
 		const filePath = path.join(sshDir, fileName)
-
-		let stat: Awaited<ReturnType<typeof fs.stat>>
-		try {
-			stat = await fs.stat(filePath)
-		} catch {
-			continue
-		}
-
-		if (!stat.isFile()) continue
-
 		let keyContent: string
-		try {
-			keyContent = await fs.readFile(filePath, "utf-8")
-		} catch {
-			continue
+		if (options.diagnosticReadOnly) {
+			const remainingBytes =
+				MAX_DIAGNOSTIC_PRIVATE_KEY_BYTES - diagnosticBytesRead
+			if (remainingBytes <= 0) {
+				incompleteKeyCount += 1
+				break
+			}
+			const diagnosticRead = await readDiagnosticPrivateKey(
+				filePath,
+				Math.min(maxKeyBytes ?? 1024 * 1024, remainingBytes),
+			)
+			if (diagnosticRead.status === "incomplete") {
+				incompleteKeyCount += 1
+				continue
+			}
+			if (diagnosticRead.status === "skip") continue
+			if (diagnosticRead.status === "too-large") {
+				incompleteKeyCount += 1
+				unsupportedKeys.push({
+					name: fileName,
+					reason: "private key exceeds the diagnostic size limit",
+				})
+				continue
+			}
+			keyContent = diagnosticRead.content
+			diagnosticBytesRead += Buffer.byteLength(keyContent, "utf8")
+		} else {
+			let stat: Awaited<ReturnType<typeof fs.stat>>
+			try {
+				stat = await fs.stat(filePath)
+			} catch {
+				continue
+			}
+
+			if (!stat.isFile()) continue
+			if (maxKeyBytes !== undefined && stat.size > maxKeyBytes) {
+				unsupportedKeys.push({
+					name: fileName,
+					reason: "private key exceeds the diagnostic size limit",
+				})
+				continue
+			}
+
+			try {
+				keyContent = await fs.readFile(filePath, "utf-8")
+			} catch {
+				continue
+			}
 		}
 
 		// Quick check: must look like a private key file
@@ -445,5 +648,5 @@ export const getPrivateKeys = async (
 		privateKeys.push(entry)
 	}
 
-	return { keys: privateKeys, passphraseProtectedKeys, unsupportedKeys }
+	return result()
 }

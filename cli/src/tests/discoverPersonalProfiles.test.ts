@@ -1,11 +1,22 @@
 import { describe, expect, mock, spyOn, test } from "bun:test"
+import crypto from "node:crypto"
 import path from "node:path"
-import type { DecryptEnvironmentDataContext } from "../helpers/decryptEnvironment"
+import { decryptData, encryptData } from "../helpers/crypto"
+import { decryptDataKey } from "../helpers/decryptDataKey"
+import {
+	createDecryptEnvironmentDataContext,
+	type DecryptEnvironmentDataContext,
+	decryptEnvironmentData,
+	probeEnvironmentAccess,
+} from "../helpers/decryptEnvironment"
 import {
 	discoverLegacyProfile,
 	discoverPersonalProfiles,
 	discoverPossibleLegacyProfiles,
 } from "../helpers/discoverPersonalProfiles"
+import { encryptDataKey } from "../helpers/encryptDataKey"
+import { getKeyFingerprint } from "../helpers/getKeyFingerprint"
+import type { Environment } from "../schemas/environment"
 
 const ROOT = "/repo"
 const SUBDIR = path.join(ROOT, "packages", "app")
@@ -23,9 +34,9 @@ const deps = (
 	const readFile = mock(async (filePath: string) =>
 		path.basename(filePath, ".pub"),
 	)
-	const decryptEnvironmentData = mock(async (name: string) => {
-		if (inaccessibleNames.has(name)) throw new Error("access denied")
-		return "KEY=value"
+	const decryptEnvironmentDataMock = mock(async (name: string) => {
+		if (inaccessibleNames.has(name)) throw new Error("inaccessible")
+		return "decrypted"
 	})
 	return {
 		readdir,
@@ -50,7 +61,7 @@ const deps = (
 				encryptedContent: "ZGF0YQ==",
 			}
 		}),
-		decryptEnvironmentData,
+		decryptEnvironmentData: decryptEnvironmentDataMock,
 		parseSpkiPublicKey: mock((input: string) => ({ alias: input }) as never),
 		getKeyFingerprint: mock(
 			(key: unknown) => `fingerprint:${(key as { alias: string }).alias}`,
@@ -61,6 +72,61 @@ const deps = (
 				: ({ valid: true } as const),
 		),
 	}
+}
+
+const authenticatedEnvelope = async (
+	environmentName: string,
+	options: { aadName?: string; tamperCiphertext?: boolean } = {},
+) => {
+	const keyPair = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 })
+	const fingerprint = getKeyFingerprint(keyPair.publicKey)
+	const dataKey = crypto.randomBytes(32)
+	let encryptedContent: Buffer
+	let encryptedDataKey: Buffer
+	try {
+		encryptedContent = await encryptData(
+			dataKey,
+			"SECRET_SENTINEL=authenticated-content",
+			Buffer.from(options.aadName ?? environmentName, "utf8"),
+		)
+		encryptedDataKey = encryptDataKey(
+			{ algorithm: "rsa", publicKey: keyPair.publicKey },
+			dataKey,
+		)
+	} finally {
+		dataKey.fill(0)
+	}
+	if (options.tamperCiphertext) encryptedContent[12] ^= 1
+
+	const environment: Environment = {
+		version: 2,
+		keys: [
+			{
+				name: "alice",
+				fingerprint,
+				encryptedDataKey: encryptedDataKey.toString("base64"),
+				algorithm: "rsa",
+			},
+		],
+		encryptedContent: encryptedContent.toString("base64"),
+	}
+	const decryptionContext = createDecryptEnvironmentDataContext({
+		getPrivateKeys: async () => ({
+			keys: [
+				{
+					name: "generated-test-key",
+					privateKey: keyPair.privateKey,
+					fingerprint,
+					algorithm: "rsa" as const,
+				},
+			],
+			passphraseProtectedKeys: [],
+			unsupportedKeys: [],
+		}),
+		decryptDataKey,
+		decryptData,
+	})
+	return { environment, decryptionContext, fingerprint }
 }
 
 describe("discoverPersonalProfiles", () => {
@@ -114,6 +180,38 @@ describe("discoverPersonalProfiles", () => {
 		})
 		expect(testDeps.readdir.mock.calls).toEqual([[SUBDIR]])
 		expect(testDeps.resolveProjectRoot).not.toHaveBeenCalled()
+	})
+
+	test("does not advertise a profile when its wrapped key unwraps but AAD authentication fails", async () => {
+		const { environment, decryptionContext } = await authenticatedEnvelope(
+			"personal.alice",
+			{ aadName: "personal.other" },
+		)
+		const testDeps = deps({
+			[ROOT]: [".env.personal.alice.enc"],
+			[SUBDIR]: [],
+		})
+		try {
+			expect(
+				await probeEnvironmentAccess(environment, decryptionContext),
+			).toEqual({ status: "accessible" })
+
+			const result = await discoverPersonalProfiles(
+				{ invocationDir: SUBDIR, decryptionContext },
+				{
+					...testDeps,
+					getEnvironmentByPath: mock(async () => environment),
+					decryptEnvironmentData,
+				},
+			)
+
+			expect(result).toEqual({
+				discovered: ["personal.alice"],
+				accessible: [],
+			})
+		} finally {
+			decryptionContext.dispose()
+		}
 	})
 })
 
@@ -193,6 +291,70 @@ describe("legacy personal profile discovery", () => {
 				(call) => call[0] === "alice",
 			),
 		).toBe(true)
+	})
+
+	test("does not advertise legacy profiles when ciphertext authentication fails after key unwrap", async () => {
+		const { environment, decryptionContext, fingerprint } =
+			await authenticatedEnvelope("alice", { tamperCiphertext: true })
+		const testDeps = deps({
+			[ROOT]: [".env.alice.enc"],
+			[SUBDIR]: [],
+			[path.join(ROOT, ".dotenc")]: ["alice.pub"],
+		})
+		const authenticatedDeps = {
+			...testDeps,
+			getEnvironmentByPath: mock(async () => environment),
+			getKeyFingerprint: mock(() => fingerprint),
+			decryptEnvironmentData,
+		}
+		try {
+			expect(
+				await probeEnvironmentAccess(environment, decryptionContext),
+			).toEqual({ status: "accessible" })
+
+			expect(
+				await discoverLegacyProfile(
+					"alice",
+					{ invocationDir: SUBDIR, decryptionContext },
+					authenticatedDeps,
+				),
+			).toBeUndefined()
+			expect(
+				await discoverPossibleLegacyProfiles(
+					{ invocationDir: SUBDIR, decryptionContext },
+					authenticatedDeps,
+				),
+			).toEqual([])
+		} finally {
+			decryptionContext.dispose()
+		}
+	})
+
+	test("requires the exact public alias fingerprint for an explicit legacy profile", async () => {
+		const testDeps = deps(
+			{
+				[ROOT]: [".env.alice.enc"],
+				[SUBDIR]: [],
+				[path.join(ROOT, ".dotenc")]: ["alice.pub"],
+			},
+			new Set(),
+			{ alice: ["fingerprint:someone-else"] },
+		)
+
+		const result = await discoverLegacyProfile(
+			"alice",
+			{
+				invocationDir: SUBDIR,
+				decryptionContext: context,
+			},
+			testDeps,
+		)
+
+		expect(result).toBeUndefined()
+		expect(testDeps.readFile).toHaveBeenCalledWith(
+			path.join(ROOT, ".dotenc", "alice.pub"),
+		)
+		expect(testDeps.decryptEnvironmentData).not.toHaveBeenCalled()
 	})
 
 	test("suppresses inaccessible and non-alias candidates without logging errors", async () => {

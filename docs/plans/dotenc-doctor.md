@@ -1,6 +1,7 @@
 # `dotenc doctor` Plan
 
-Status: **planned; not implemented**
+Status: **implemented in `@dotenc/cli` 0.14.0; repair mode deferred**
+Target release: `@dotenc/cli` 0.14.0
 Accepted direction: 2026-08-13
 
 ## Objective
@@ -80,9 +81,10 @@ ignored-directory rules.
 Human output is compact and actionable:
 
 ```text
-✓ development          2 layers, decryptable
-! personal.alice       deleted from the working tree
-  Restore: git restore -- .env.personal.alice.enc
+✓ development          2 layers, data key decryptable.
+! personal.alice       A tracked personal profile was deleted from the working tree.
+  Paths: .env.personal.alice.enc
+  Run: git -C . --literal-pathspecs restore -- .env.personal.alice.enc
 
 0 errors · 1 warning · 4 checks passed
 ```
@@ -114,7 +116,7 @@ payloads, wrapped keys, private-key material/paths, or raw provider exceptions.
 
 ## Repair Boundary
 
-The first release is read-only and has no `--fix`.
+The 0.14.0 release is read-only and has no `--fix`.
 
 A later `--fix` may repair deterministic clone-local configuration after
 confirmation, such as the Git diff driver and disabled textconv cache. It must
@@ -122,29 +124,29 @@ never automatically choose a historical revision, create/delete/re-encrypt an
 environment, grant/revoke/rotate/purge access, edit `.pub` files, modify the Git
 index, create commits, fetch, or delete plaintext files.
 
-## Implementation Shape
+## Implemented Shape
 
-- Extract a typed, side-effect-free diagnostic engine rather than invoking
+- Uses a typed, side-effect-free diagnostic engine rather than invoking
   commands that log or call `process.exit`.
-- Share bounded envelope parsing plus fingerprint-based personal-profile and
+- Shares bounded envelope parsing plus fingerprint-based personal-profile and
   possible-legacy discovery with `dotenc dev` so selection and advisory
   semantics cannot drift.
-- Candidate discovery may unwrap a data key but should not materialize
-  plaintext unnecessarily.
-- Keep provider failures typed as inconclusive where access cannot be tested;
+- Doctor candidate discovery unwraps only data keys and never materializes
+  plaintext; normal `dev` discovery still authenticates encrypted content.
+- Keeps provider failures typed as inconclusive where access cannot be tested;
   non-interactive execution never prompts or fabricates a result.
 
-## Delivery Phases
+## Delivery Record
 
-1. Reuse the completed bounded CLI envelope parser and adapt personal-profile
-   discovery for doctor. The existing 0.13.0 `dev` helper proves access by
-   decrypting content and may use configured key providers; doctor still needs
-   a non-prompting, data-key-only diagnostic mode compatible with its offline
+1. The bounded CLI envelope parser and personal-profile discovery foundations
+   were completed for 0.13.0. The existing 0.13.0 `dev` helper proves access by
+   decrypting content and may use configured key providers; 0.14.0 added the
+   non-prompting, data-key-only diagnostic mode required by doctor's offline
    contract.
 2. Fingerprint-based `dev` selection and soft personal-overlay behavior.
    Diagnostic-only legacy warnings and the explicit cryptographic `env rename`
    recovery path are also completed as 0.13.0 prerequisites.
-3. Read-only doctor with human and JSON output.
-4. Git-aware recovery evidence and `--all` repository checks.
-5. Revisit a narrowly scoped `--fix` only after the read-only contract is
-   stable.
+3. Read-only doctor with human and JSON output shipped in 0.14.0.
+4. Git-aware recovery evidence and `--all` repository checks shipped in 0.14.0.
+5. A narrowly scoped `--fix` remains deferred until the read-only contract has
+   operating evidence.

@@ -358,6 +358,107 @@ describe("getPrivateKeys", () => {
 		delete process.env.DOTENC_PRIVATE_KEY_PASSPHRASE
 	})
 
+	test("decryptPassphraseProtected false never decrypts environment or filesystem keys", async () => {
+		const protectedFileName = "id_protected_diagnostic"
+		const protectedFilePath = path.join(tmpDir, ".ssh", protectedFileName)
+		writeFileSync(protectedFilePath, encryptedEd25519PrivateKeyPem, "utf-8")
+
+		delete process.env.DOTENC_PRIVATE_KEY_BASE64
+		process.env.DOTENC_PRIVATE_KEY = encryptedEd25519PrivateKeyPem
+		process.env.DOTENC_PRIVATE_KEY_PASSPHRASE = "secret"
+
+		try {
+			const result = await getPrivateKeys({
+				decryptPassphraseProtected: false,
+				environmentKeyErrorMode: "collect",
+				logError: () => {},
+			})
+
+			expect(
+				result.keys.some(
+					(key) =>
+						key.name === "env.DOTENC_PRIVATE_KEY" ||
+						key.name === protectedFileName,
+				),
+			).toBe(false)
+			expect(result.passphraseProtectedKeys).toContain("env.DOTENC_PRIVATE_KEY")
+			expect(result.passphraseProtectedKeys).toContain(protectedFileName)
+			expect(result.unsupportedKeys).toContainEqual({
+				name: "env.DOTENC_PRIVATE_KEY",
+				reason: "passphrase-protected",
+			})
+			expect(result.unsupportedKeys).toContainEqual({
+				name: protectedFileName,
+				reason: "passphrase-protected",
+			})
+		} finally {
+			delete process.env.DOTENC_PRIVATE_KEY
+			delete process.env.DOTENC_PRIVATE_KEY_PASSPHRASE
+			rmSync(protectedFilePath, { force: true })
+		}
+	})
+
+	test("maxKeyBytes bounds decoded environment key content at an exact byte boundary", async () => {
+		delete process.env.DOTENC_PRIVATE_KEY
+		process.env.DOTENC_PRIVATE_KEY_BASE64 =
+			encodePrivateKey(ed25519PrivateKeyPem)
+		const keyBytes = Buffer.byteLength(ed25519PrivateKeyPem, "utf8")
+
+		try {
+			const oversized = await getPrivateKeys({
+				environmentOnly: true,
+				maxKeyBytes: keyBytes - 1,
+			})
+			expect(oversized.keys).toEqual([])
+			expect(oversized.unsupportedKeys).toContainEqual({
+				name: "env.DOTENC_PRIVATE_KEY_BASE64",
+				reason: "private key exceeds the diagnostic size limit",
+			})
+
+			const atBoundary = await getPrivateKeys({
+				environmentOnly: true,
+				maxKeyBytes: keyBytes,
+			})
+			expect(
+				atBoundary.keys.some(
+					(key) => key.name === "env.DOTENC_PRIVATE_KEY_BASE64",
+				),
+			).toBe(true)
+		} finally {
+			delete process.env.DOTENC_PRIVATE_KEY_BASE64
+		}
+	})
+
+	test("maxKeyBytes rejects an oversized filesystem key before reading it", async () => {
+		const oversizedFileName = "id_oversized_diagnostic"
+		const oversizedFilePath = path.join(tmpDir, ".ssh", oversizedFileName)
+		writeFileSync(oversizedFilePath, ed25519PrivateKeyPem, "utf-8")
+		const keyBytes = Buffer.byteLength(ed25519PrivateKeyPem, "utf8")
+		const readFileSpy = spyOn(fsPromises, "readFile")
+		delete process.env.DOTENC_PRIVATE_KEY_BASE64
+		delete process.env.DOTENC_PRIVATE_KEY
+
+		try {
+			const result = await getPrivateKeys({ maxKeyBytes: keyBytes - 1 })
+
+			expect(result.keys.some((key) => key.name === oversizedFileName)).toBe(
+				false,
+			)
+			expect(result.unsupportedKeys).toContainEqual({
+				name: oversizedFileName,
+				reason: "private key exceeds the diagnostic size limit",
+			})
+			expect(
+				readFileSpy.mock.calls.some(
+					([filePath]) => String(filePath) === oversizedFilePath,
+				),
+			).toBe(false)
+		} finally {
+			readFileSpy.mockRestore()
+			rmSync(oversizedFilePath, { force: true })
+		}
+	})
+
 	test("loads passphrase-protected ~/.ssh key when DOTENC_PRIVATE_KEY_PASSPHRASE is set", async () => {
 		writeFileSync(
 			path.join(tmpDir, ".ssh", "id_protected_decryptable"),

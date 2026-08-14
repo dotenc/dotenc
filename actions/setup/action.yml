@@ -4,7 +4,7 @@ inputs:
   version:
     description: Version of @dotenc/cli to install.
     required: false
-    default: 0.13.0
+    default: 0.14.0
   check:
     description: Run dotenc --version after installation.
     required: false

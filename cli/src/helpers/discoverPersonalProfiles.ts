@@ -6,14 +6,17 @@ import {
 	type DecryptEnvironmentDataContext,
 	decryptEnvironmentData,
 } from "./decryptEnvironment"
+import {
+	addEnvironmentLayer,
+	isPossibleLegacyProfileName,
+	personalEnvironmentNameFromFileName,
+} from "./environmentProfileSemantics"
 import { getEnvironmentByPath } from "./getEnvironmentByPath"
 import { getKeyFingerprint } from "./getKeyFingerprint"
 import { parseSpkiPublicKey } from "./parseSpkiPublicKey"
 import { resolveProjectRoot } from "./resolveProjectRoot"
 import { validateEnvironmentName } from "./validateEnvironmentName"
 import { validatePublicKey } from "./validatePublicKey"
-
-const PERSONAL_FILE_PATTERN = /^\.env\.(personal\.(.+))\.enc$/
 
 export type PersonalProfileDiscovery = {
 	discovered: string[]
@@ -140,21 +143,27 @@ export const discoverLegacyProfile = async (
 	},
 	deps: Deps = defaultDeps,
 ): Promise<LegacyProfileCandidate | undefined> => {
-	const normalizedName = name.toLowerCase()
-	if (
-		normalizedName === "development" ||
-		normalizedName.startsWith("personal.")
-	) {
+	if (!isPossibleLegacyProfileName(name)) {
 		return undefined
 	}
 
 	try {
+		const projectRoot = deps.resolveProjectRoot(
+			options.invocationDir,
+			deps.exists,
+		)
+		const publicKey = deps.parseSpkiPublicKey(
+			await deps.readFile(path.join(projectRoot, ".dotenc", `${name}.pub`)),
+		)
+		if (!deps.validatePublicKey(publicKey).valid) return undefined
+		const recipientFingerprint = deps.getKeyFingerprint(publicKey)
 		return await verifyLegacyProfile(
 			name,
-			effectiveDirs(options, deps),
+			effectiveDirs(options, deps, projectRoot),
 			options.invocationDir,
 			options.decryptionContext,
 			deps,
+			recipientFingerprint,
 		)
 	} catch {
 		return undefined
@@ -186,12 +195,7 @@ export const discoverPossibleLegacyProfiles = async (
 					.filter((fileName) => fileName.endsWith(".pub"))
 					.map(async (fileName) => {
 						const name = fileName.slice(0, -4)
-						const normalizedName = name.toLowerCase()
-						if (
-							normalizedName === "development" ||
-							normalizedName.startsWith("personal.") ||
-							!validateEnvironmentName(name).valid
-						) {
+						if (!isPossibleLegacyProfileName(name)) {
 							return undefined
 						}
 
@@ -260,14 +264,13 @@ export const discoverPersonalProfiles = async (
 		}
 
 		for (const fileName of fileNames) {
-			const match = PERSONAL_FILE_PATTERN.exec(fileName)
-			if (!match) continue
-			const environmentName = match[1]
-			const validation = validateEnvironmentName(environmentName)
-			if (!validation.valid) continue
-			const layers = layersByEnvironment.get(environmentName) ?? []
-			layers.push(path.join(dir, fileName))
-			layersByEnvironment.set(environmentName, layers)
+			const environmentName = personalEnvironmentNameFromFileName(fileName)
+			if (!environmentName) continue
+			addEnvironmentLayer(
+				layersByEnvironment,
+				environmentName,
+				path.join(dir, fileName),
+			)
 		}
 	}
 
