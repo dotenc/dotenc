@@ -349,7 +349,14 @@ Access in dotenc is enforced cryptographically, not by policy:
 - Granting access re-encrypts the data key for the new user's public key; no re-encryption of the environment contents is required
 - Revoking access removes the user's encrypted data key copy and re-encrypts the data key for all remaining users (requires the revoking user to have decrypt access)
 
-**Important limitation:** Revoking access prevents future decryption but does not invalidate knowledge of secrets already seen by the revoked user. For full offboarding, rotate the affected external secrets (API keys, database passwords, etc.) and optionally run `dotenc env rotate <environment>` to generate a new data key.
+**Important limitation:** Revoking access changes the current environment files;
+it does not invalidate secrets already seen by the revoked user or rewrite old
+envelopes retained in Git history, clones, mirrors, caches, or backups. A holder
+of the revoked private key may still decrypt historical ciphertext addressed to
+it. Complete offboarding requires rotating the affected external secrets (API
+keys, database passwords, etc.) and removing repository access. If policy
+requires removing historical ciphertext, rewrite or purge retained history and
+require fresh clones, while assuming previously copied data remains readable.
 
 Grant and revoke operations change Git-tracked files. Once committed, they are
 reviewable in the repository history subject to that repository's writer,
@@ -357,13 +364,14 @@ branch-protection, and history-retention policy.
 
 `dotenc auth purge <alias>` resolves the target `.pub` file to its canonical
 fingerprint and treats every project alias with that fingerprint as the same
-identity. Before changing anything, it validates every discovered envelope,
-rejects a revocation that would leave zero recipients, and proves every
-affected envelope decryptable. It then rewrites affected envelopes, rescans the
-entire project, and removes all matching public-key aliases only after the
-fingerprint is absent everywhere. An unreadable envelope, failed rewrite, or
-failed verification returns non-zero and retains the public key for a safe
-retry; a partial rewrite is possible but is never reported as successful.
+identity. Before changing anything, it validates every discovered envelope in
+the current project tree, rejects a revocation that would leave zero recipients,
+and proves every affected envelope decryptable. It then rewrites affected
+envelopes, rescans the current tree, and removes all matching public-key aliases
+only after the fingerprint is absent everywhere. An unreadable envelope, failed
+rewrite, or failed verification returns non-zero and retains the public key for
+a safe retry; a partial rewrite is possible but is never reported as successful.
+The command does not modify historical Git objects or copies outside that tree.
 
 ---
 

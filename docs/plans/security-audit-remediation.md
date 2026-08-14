@@ -220,9 +220,15 @@ would not provide that guarantee.
   launcher paths. No decrypted or repository-controlled string is assembled
   into those commands; replacing the compatibility path requires Windows-host
   validation.
-- Git textconv still resolves `dotenc` from the developer machine's `PATH`.
-  Clone-local plaintext caching is disabled, and machine executable resolution
-  is documented as part of the trusted-machine boundary.
+- Git textconv intentionally retains the implemented and tested bare
+  `dotenc textconv` command in this release, so Git resolves `dotenc` from the
+  developer machine's `PATH`. Pinning a portable stable executable remains
+  deferred; clone-local plaintext caching is disabled, and machine executable
+  resolution is documented as part of the trusted-machine boundary.
+- `auth purge` removes a fingerprint only from the current project tree. It does
+  not rewrite Git history or erase existing clones, mirrors, caches, or backups;
+  offboarding still requires repository-access removal and external-secret
+  rotation, plus history purging when policy requires it.
 - Best-effort overwrite reduces straightforward recovery of temporary key
   bytes but cannot guarantee physical erasure on copy-on-write filesystems,
   snapshots, SSDs, or other remapped storage.

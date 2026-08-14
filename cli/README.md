@@ -166,9 +166,11 @@ Only encrypted `.env.*.enc` files are stored and committed. The readable view ex
 `dotenc init` configures this automatically. Run it once in every clone. When it detects an existing dotenc project, it configures the clone-local Git driver without changing keys, environments, or access rules.
 
 The driver is limited to `.env.*.enc`, and clone-local textconv caching is
-disabled so Git does not persist decrypted output. The driver invokes `dotenc`
-from your machine's `PATH`, so local executable resolution remains part of the
-trusted developer-machine boundary.
+disabled so Git does not persist decrypted output. `dotenc init` currently
+writes the bare command `dotenc textconv`, so Git resolves `dotenc` from your
+machine's `PATH`. Pinning a stable installed executable path is deferred; until
+then, local executable resolution remains part of the trusted
+developer-machine boundary.
 
 Optionally, you can also enable [redacted diffs in pull requests](#redacted-pull-request-diffs).
 
@@ -287,8 +289,8 @@ filenames are human-readable aliases and do not choose a profile.
 - `development` is always required, even without `--strict`.
 
 ```bash
-dotenc dev --profile alice npm start
-dotenc dev --profile alice --strict npm start
+dotenc dev --profile alice bun run start
+dotenc dev --profile alice --strict bun run start
 ```
 
 The `personal.*` namespace is a breaking replacement for legacy personal
@@ -299,14 +301,14 @@ a migration hint: `dev` never auto-loads or modifies the candidate, because an
 unprefixed environment may be legitimate. For example, this remains valid:
 
 ```bash
-dotenc run -e alice npm test
+dotenc run -e alice bun run test
 ```
 
 Migrate a personal environment in the current directory explicitly:
 
 ```bash
 dotenc env rename alice personal.alice
-dotenc dev --profile alice npm test
+dotenc dev --profile alice bun run test
 ```
 
 For a profile layered from the project root through the current directory,
@@ -480,7 +482,8 @@ Now, Alice will be able to decrypt the `development` and `test` environments usi
 
 ### Revoking access from a team member
 
-To fully offboard a team member (e.g., John), use `auth purge`:
+To revoke a team member's key from every environment in the current repository
+state (e.g., John), use `auth purge`:
 
 ```bash
 dotenc auth purge john --yes
@@ -498,7 +501,13 @@ git commit -m "Offboard John from all environments"
 git push origin offboard-john
 ```
 
-Once merged, he will no longer be able to decrypt any environments.
+Once merged, John's private key can no longer decrypt the current environment
+files. `auth purge` does not rewrite Git history or erase existing clones, so
+that key may still decrypt historical ciphertext addressed to it. Complete
+offboarding also requires removing repository access and rotating every
+external secret. If policy requires removing historical ciphertext, rewrite or
+purge the retained history and require fresh clones, while assuming old clones,
+mirrors, backups, and other copies remain readable.
 
 If you only want to remove the key file without revoking environment access, use `key remove`:
 
@@ -518,7 +527,8 @@ Lists all public keys that have access to the specified environment.
 
 ## Offboarding a Team Member
 
-Use `auth purge` to fully offboard a team member in one step:
+Use `auth purge` to revoke a team member's key from every environment in the
+current repository state and remove its public-key aliases in one operation:
 
 ```bash
 dotenc auth purge <user> [--yes]
@@ -536,9 +546,18 @@ rescan make the command exit non-zero and retain the public key for a safe
 retry. Some environments may already have been rewritten after a mid-operation
 failure; the command never reports that state as successful.
 
+This command does not rewrite Git history or erase existing clones. A holder of
+the purged private key may still decrypt historical ciphertext that names that
+key as a recipient.
+
 After running `auth purge`, also:
-- Rotate external secrets (database passwords, API tokens, etc.)
+- Remove the teammate's repository and organization access
+- Rotate external secrets (database passwords, API tokens, etc.); this remains
+  necessary because retained copies cannot be recalled
 - Deploy updated configuration
+- If policy requires removing historical ciphertext, rewrite or purge retained
+  Git history and require fresh clones, while treating old clones, mirrors,
+  backups, and other copies as still readable
 
 ### Individual environment management
 
