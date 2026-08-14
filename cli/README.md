@@ -346,10 +346,11 @@ but multiple filesystem operations cannot be atomic across directories. A
 write or verification failure keeps every source and attempts to remove any
 destinations created by that invocation. If source cleanup fails partway, all
 verified destinations remain, already removed sources stay removed, and the
-remaining sources stay at their old paths; the command exits non-zero and lists
-the state. If an unexpected object blocks exclusive restoration, or quarantine
-restoration cannot be proven, the affected quarantine path is reported and
-every verified destination is retained as a recovery copy. If a source vanishes
+remaining sources stay at their old or reported quarantine paths; the command
+exits non-zero and lists the state. If an unexpected object blocks exclusive
+restoration, or quarantine restoration cannot be proven, the affected
+quarantine path is reported and every verified destination is retained as a
+recovery copy. If a source vanishes
 before quarantine, its unresolved path is reported and the verified destination
 is kept. If an exclusive destination restore is blocked, its private recovery
 path is kept and reported. Review `git diff`,
