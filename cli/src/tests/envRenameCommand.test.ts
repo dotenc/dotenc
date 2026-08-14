@@ -33,6 +33,7 @@ import { getEnvironmentByPath } from "../helpers/getEnvironmentByPath"
 import { getKeyFingerprint } from "../helpers/getKeyFingerprint"
 import { prepareEnvironmentRename } from "../helpers/renameEnvironment"
 import type { Environment } from "../schemas/environment"
+import { ENVIRONMENT_DIFF_LIMITS } from "../schemas/environmentDiffReport"
 
 const confirmPromptMock = mock(async (_message: string) => true)
 mock.module("../prompts/confirm", () => ({ confirmPrompt: confirmPromptMock }))
@@ -996,6 +997,283 @@ describe("env rename", () => {
 		expect(existsSync(localTarget)).toBe(false)
 		root.dataKey.fill(0)
 		local.dataKey.fill(0)
+	})
+
+	test("rejects a missing source before creating a transaction", async () => {
+		await expect(
+			prepareEnvironmentRename({
+				sourceName: "alice",
+				destinationName: "personal.alice",
+				invocationDir: workspace,
+			}),
+		).rejects.toThrow("Source environment not found: alice")
+		expect(existsSync(path.join(workspace, ".env.personal.alice.enc"))).toBe(
+			false,
+		)
+	})
+
+	test("normalizes a preflight path-inspection failure without writing", async () => {
+		const source = await writeEnvironment(workspace, "alice", "VALUE=source\n")
+		const sourceBefore = readFileSync(source.filePath)
+
+		await expect(
+			prepareEnvironmentRename(
+				{
+					sourceName: "alice",
+					destinationName: "personal.alice",
+					invocationDir: workspace,
+				},
+				{
+					lstat: (async (filePath: Parameters<typeof fs.lstat>[0]) => {
+						if (filePath.toString() === source.filePath) {
+							throw Object.assign(new Error("synthetic inspection failure"), {
+								code: "EACCES",
+							})
+						}
+						return fs.lstat(filePath)
+					}) as typeof fs.lstat,
+				},
+			),
+		).rejects.toThrow("preflight could not inspect all paths")
+		expect(readFileSync(source.filePath)).toEqual(sourceBefore)
+		expect(existsSync(path.join(workspace, ".env.personal.alice.enc"))).toBe(
+			false,
+		)
+		source.dataKey.fill(0)
+	})
+
+	test("rejects an oversized source before parsing or writing", async () => {
+		const sourcePath = path.join(workspace, ".env.alice.enc")
+		writeFileSync(
+			sourcePath,
+			Buffer.alloc(ENVIRONMENT_DIFF_LIMITS.maxFileBytes + 1, 0x20),
+		)
+
+		await expect(
+			prepareEnvironmentRename({
+				sourceName: "alice",
+				destinationName: "personal.alice",
+				invocationDir: workspace,
+			}),
+		).rejects.toThrow("preflight rejected source")
+		expect(existsSync(sourcePath)).toBe(true)
+		expect(existsSync(path.join(workspace, ".env.personal.alice.enc"))).toBe(
+			false,
+		)
+	})
+
+	test("rejects invalid UTF-8 before parsing or writing", async () => {
+		const sourcePath = path.join(workspace, ".env.alice.enc")
+		writeFileSync(sourcePath, Buffer.from([0xc3, 0x28]))
+
+		await expect(
+			prepareEnvironmentRename({
+				sourceName: "alice",
+				destinationName: "personal.alice",
+				invocationDir: workspace,
+			}),
+		).rejects.toThrow("preflight rejected source")
+		expect(existsSync(sourcePath)).toBe(true)
+		expect(existsSync(path.join(workspace, ".env.personal.alice.enc"))).toBe(
+			false,
+		)
+	})
+
+	test("rolls back when default verification decrypts unexpected plaintext", async () => {
+		const source = await writeEnvironment(
+			workspace,
+			"alice",
+			"VALUE=expected\n",
+		)
+		const targetPath = path.join(workspace, ".env.personal.alice.enc")
+		let verificationCalls = 0
+		const plan = await prepareEnvironmentRename(
+			{
+				sourceName: "alice",
+				destinationName: "personal.alice",
+				invocationDir: workspace,
+			},
+			{
+				decryptEnvironmentData: async (...args) => {
+					await decryptEnvironmentDataDefault(...args)
+					verificationCalls += 1
+					return "VALUE=unexpected\n"
+				},
+			},
+		)
+
+		try {
+			await expect(plan.commit()).rejects.toThrow(
+				"failed before source removal",
+			)
+		} finally {
+			plan.dispose()
+		}
+		expect(verificationCalls).toBe(1)
+		expect(existsSync(source.filePath)).toBe(true)
+		expect(existsSync(targetPath)).toBe(false)
+		source.dataKey.fill(0)
+	})
+
+	test("rejects reusing a completed rename transaction", async () => {
+		const source = await writeEnvironment(workspace, "alice", "VALUE=once\n")
+		const plan = await prepareEnvironmentRename({
+			sourceName: "alice",
+			destinationName: "personal.alice",
+			invocationDir: workspace,
+		})
+
+		try {
+			await plan.commit()
+			await expect(plan.commit()).rejects.toThrow(
+				"rename transaction is no longer usable",
+			)
+		} finally {
+			plan.dispose()
+		}
+		expect(existsSync(source.filePath)).toBe(false)
+		expect(existsSync(path.join(workspace, ".env.personal.alice.enc"))).toBe(
+			true,
+		)
+		source.dataKey.fill(0)
+	})
+
+	test("cleans private target recovery when publication loses a race", async () => {
+		const source = await writeEnvironment(workspace, "alice", "VALUE=race\n")
+		const targetPath = path.join(workspace, ".env.personal.alice.enc")
+		let publicationAttempted = false
+		const plan = await prepareEnvironmentRename(
+			{
+				sourceName: "alice",
+				destinationName: "personal.alice",
+				invocationDir: workspace,
+			},
+			{
+				link: async (existingPath, newPath) => {
+					if (newPath.toString() === targetPath) {
+						publicationAttempted = true
+						throw Object.assign(new Error("synthetic publication race"), {
+							code: "EEXIST",
+						})
+					}
+					await fs.link(existingPath, newPath)
+				},
+			},
+		)
+
+		try {
+			await expect(plan.commit()).rejects.toThrow(
+				"failed before source removal",
+			)
+		} finally {
+			plan.dispose()
+		}
+		expect(publicationAttempted).toBe(true)
+		expect(existsSync(source.filePath)).toBe(true)
+		expect(existsSync(targetPath)).toBe(false)
+		expect(
+			readdirSync(workspace).filter((entry) =>
+				entry.startsWith(".dotenc-rename-quarantine-"),
+			),
+		).toEqual([])
+		source.dataKey.fill(0)
+	})
+
+	test("rejects an unsafe Windows quarantine directory", async () => {
+		const source = await writeEnvironment(workspace, "alice", "VALUE=windows\n")
+		const targetPath = path.join(workspace, ".env.personal.alice.enc")
+		let quarantineInspected = false
+		const plan = await prepareEnvironmentRename(
+			{
+				sourceName: "alice",
+				destinationName: "personal.alice",
+				invocationDir: workspace,
+			},
+			{
+				platform: "win32",
+				lstat: (async (filePath: Parameters<typeof fs.lstat>[0]) => {
+					const stat = await fs.lstat(filePath)
+					if (
+						path
+							.basename(filePath.toString())
+							.startsWith(".dotenc-rename-quarantine-")
+					) {
+						quarantineInspected = true
+						stat.isSymbolicLink = () => true
+					}
+					return stat
+				}) as typeof fs.lstat,
+			},
+		)
+
+		try {
+			await expect(plan.commit()).rejects.toThrow(
+				"failed before source removal",
+			)
+		} finally {
+			plan.dispose()
+		}
+		expect(quarantineInspected).toBe(true)
+		expect(existsSync(source.filePath)).toBe(true)
+		expect(existsSync(targetPath)).toBe(false)
+		expect(
+			readdirSync(workspace).filter((entry) =>
+				entry.startsWith(".dotenc-rename-quarantine-"),
+			),
+		).toEqual([])
+		source.dataKey.fill(0)
+	})
+
+	test("reports a target recovery that cannot be released after success", async () => {
+		const source = await writeEnvironment(
+			workspace,
+			"alice",
+			"VALUE=recovery\n",
+		)
+		const targetPath = path.join(workspace, ".env.personal.alice.enc")
+		let targetRecoveryPath: string | undefined
+		const plan = await prepareEnvironmentRename(
+			{
+				sourceName: "alice",
+				destinationName: "personal.alice",
+				invocationDir: workspace,
+			},
+			{
+				link: async (existingPath, newPath) => {
+					if (newPath.toString() === targetPath) {
+						targetRecoveryPath = existingPath.toString()
+					}
+					await fs.link(existingPath, newPath)
+				},
+				unlink: async (filePath) => {
+					if (filePath.toString() === targetRecoveryPath) {
+						throw Object.assign(
+							new Error("synthetic recovery cleanup failure"),
+							{
+								code: "EPERM",
+							},
+						)
+					}
+					await fs.unlink(filePath)
+				},
+			},
+		)
+
+		let failure: Error | undefined
+		try {
+			await plan.commit()
+		} catch (error) {
+			failure = error as Error
+		} finally {
+			plan.dispose()
+		}
+		expect(failure?.message).toContain("cleanup is incomplete")
+		expect(failure?.message).toContain(targetRecoveryPath ?? "missing")
+		expect(existsSync(source.filePath)).toBe(false)
+		expect(existsSync(targetPath)).toBe(true)
+		expect(targetRecoveryPath).toBeDefined()
+		expect(existsSync(targetRecoveryPath ?? "")).toBe(true)
+		source.dataKey.fill(0)
 	})
 
 	test("requires confirmation and performs no writes when it is declined", async () => {
