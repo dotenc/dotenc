@@ -21443,13 +21443,74 @@ function detectUnsupportedOpenSSHAlgorithm(keyContent) {
     return null;
   return publicBlobType.value;
 }
+var MAX_DIAGNOSTIC_SSH_FILES = 4096;
+var MAX_DIAGNOSTIC_PRIVATE_KEY_BYTES = 10 * 1024 * 1024;
+var readDiagnosticPrivateKey = async (filePath, maximumBytes) => {
+  let pathStat;
+  try {
+    pathStat = await import_promises4.default.lstat(filePath);
+  } catch {
+    return { status: "incomplete" };
+  }
+  if (pathStat.isSymbolicLink())
+    return { status: "incomplete" };
+  if (!pathStat.isFile())
+    return { status: "skip" };
+  if (pathStat.size > maximumBytes)
+    return { status: "too-large" };
+  let handle;
+  try {
+    handle = await import_promises4.default.open(filePath, import_node_fs.constants.O_RDONLY | (import_node_fs.constants.O_NOFOLLOW ?? 0) | (import_node_fs.constants.O_NONBLOCK ?? 0));
+  } catch {
+    return { status: "incomplete" };
+  }
+  const input = Buffer.alloc(maximumBytes + 1);
+  let offset = 0;
+  try {
+    try {
+      const openedStat = await handle.stat();
+      if (!openedStat.isFile() || openedStat.dev !== pathStat.dev || openedStat.ino !== pathStat.ino) {
+        return { status: "incomplete" };
+      }
+      if (openedStat.size > maximumBytes)
+        return { status: "too-large" };
+      while (offset < input.byteLength) {
+        const { bytesRead } = await handle.read(input, offset, input.byteLength - offset, null);
+        if (bytesRead === 0)
+          break;
+        offset += bytesRead;
+      }
+    } catch {
+      return { status: "incomplete" };
+    }
+    if (offset > maximumBytes)
+      return { status: "too-large" };
+    return {
+      status: "ok",
+      content: input.subarray(0, offset).toString("utf8"),
+      bytesRead: offset
+    };
+  } finally {
+    input.fill(0);
+    await handle.close().catch(() => {});
+  }
+};
 var getPrivateKeys = async (options = {}) => {
   const privateKeys = [];
   const passphraseProtectedKeys = [];
   const unsupportedKeys = [];
-  const privateKeyPassphrase = process.env.DOTENC_PRIVATE_KEY_PASSPHRASE;
+  let incompleteKeyCount = 0;
+  let diagnosticBytesRead = 0;
+  const privateKeyPassphrase = options.decryptPassphraseProtected === false ? undefined : process.env.DOTENC_PRIVATE_KEY_PASSPHRASE;
+  const maxKeyBytes = options.maxKeyBytes;
   const environmentKeyErrorMode = options.environmentKeyErrorMode ?? "exit";
   const logError = options.logError ?? ((message) => console.error(message));
+  const result = () => ({
+    keys: privateKeys,
+    passphraseProtectedKeys,
+    unsupportedKeys,
+    ...incompleteKeyCount > 0 ? { incompleteKeys: incompleteKeyCount } : {}
+  });
   const environmentPrivateKey = getEnvironmentPrivateKey();
   if (environmentPrivateKey) {
     const envName = environmentPrivateKey.name;
@@ -21462,84 +21523,187 @@ var getPrivateKeys = async (options = {}) => {
       });
     } else {
       const dotencPrivateKey = environmentPrivateKey.content;
-      const dotencPrivateKeyPassphraseProtected = isPassphraseProtected(dotencPrivateKey);
-      const privateKey = dotencPrivateKeyPassphraseProtected ? privateKeyPassphrase !== undefined ? await parsePassphraseProtectedPrivateKey(dotencPrivateKey, privateKeyPassphrase) : null : tryParsePrivateKey(dotencPrivateKey);
-      if (privateKey) {
-        const algorithm = detectAlgorithm(privateKey);
-        if (algorithm) {
-          const entry = {
-            name: entryName,
-            privateKey,
-            fingerprint: getKeyFingerprint(privateKey),
-            algorithm
-          };
-          if (algorithm === "ed25519") {
-            const { rawPublicKey } = extractEd25519RawKeys(privateKey);
-            entry.rawPublicKey = rawPublicKey;
-          }
-          privateKeys.push(entry);
-        } else {
-          unsupportedKeys.push({
-            name: entryName,
-            reason: describeUnsupportedAlgorithm(privateKey.asymmetricKeyType)
-          });
-          logError(`Unsupported key type in ${envName}: ${privateKey.asymmetricKeyType}. Only RSA and Ed25519 are supported.`);
-        }
-      } else if (dotencPrivateKeyPassphraseProtected) {
-        if (privateKeyPassphrase !== undefined) {
-          logError(`Error: failed to decrypt the key in ${envName} with DOTENC_PRIVATE_KEY_PASSPHRASE. Please verify the passphrase.`);
-          if (environmentKeyErrorMode === "exit") {
-            process.exit(1);
-          }
-          unsupportedKeys.push({
-            name: entryName,
-            reason: "passphrase-protected (failed to decrypt)"
-          });
-        } else {
-          logError(`Error: the key in ${envName} is passphrase-protected. Set DOTENC_PRIVATE_KEY_PASSPHRASE to use it, or provide a passwordless key.`);
-          if (environmentKeyErrorMode === "exit") {
-            process.exit(1);
-          }
-          passphraseProtectedKeys.push(entryName);
-          unsupportedKeys.push({
-            name: entryName,
-            reason: "passphrase-protected"
-          });
-        }
-      } else {
-        logError(`Invalid private key format in ${envName} environment variable. Please provide a valid private key (PEM or OpenSSH format).`);
+      const dotencPrivateKeyBytes = Buffer.byteLength(dotencPrivateKey, "utf8");
+      const exceedsLimit = maxKeyBytes !== undefined && dotencPrivateKeyBytes > maxKeyBytes;
+      if (exceedsLimit) {
+        if (options.diagnosticReadOnly)
+          incompleteKeyCount += 1;
         unsupportedKeys.push({
           name: entryName,
-          reason: "invalid private key format"
+          reason: "private key exceeds the diagnostic size limit"
         });
+      } else {
+        const dotencPrivateKeyPassphraseProtected = isPassphraseProtected(dotencPrivateKey);
+        const privateKey = dotencPrivateKeyPassphraseProtected ? privateKeyPassphrase !== undefined ? await parsePassphraseProtectedPrivateKey(dotencPrivateKey, privateKeyPassphrase) : null : tryParsePrivateKey(dotencPrivateKey);
+        if (privateKey) {
+          const algorithm = detectAlgorithm(privateKey);
+          if (algorithm) {
+            const entry = {
+              name: entryName,
+              privateKey,
+              fingerprint: getKeyFingerprint(privateKey),
+              algorithm
+            };
+            if (algorithm === "ed25519") {
+              const { rawPublicKey } = extractEd25519RawKeys(privateKey);
+              entry.rawPublicKey = rawPublicKey;
+            }
+            privateKeys.push(entry);
+          } else {
+            unsupportedKeys.push({
+              name: entryName,
+              reason: describeUnsupportedAlgorithm(privateKey.asymmetricKeyType)
+            });
+            logError(`Unsupported key type in ${envName}: ${privateKey.asymmetricKeyType}. Only RSA and Ed25519 are supported.`);
+          }
+        } else if (dotencPrivateKeyPassphraseProtected) {
+          if (privateKeyPassphrase !== undefined) {
+            logError(`Error: failed to decrypt the key in ${envName} with DOTENC_PRIVATE_KEY_PASSPHRASE. Please verify the passphrase.`);
+            if (environmentKeyErrorMode === "exit")
+              process.exit(1);
+            unsupportedKeys.push({
+              name: entryName,
+              reason: "passphrase-protected (failed to decrypt)"
+            });
+          } else {
+            logError(`Error: the key in ${envName} is passphrase-protected. Set DOTENC_PRIVATE_KEY_PASSPHRASE to use it, or provide a passwordless key.`);
+            if (environmentKeyErrorMode === "exit")
+              process.exit(1);
+            passphraseProtectedKeys.push(entryName);
+            unsupportedKeys.push({
+              name: entryName,
+              reason: "passphrase-protected"
+            });
+          }
+        } else {
+          if (options.diagnosticReadOnly) {
+            diagnosticBytesRead += dotencPrivateKeyBytes;
+          }
+          logError(`Invalid private key format in ${envName} environment variable. Please provide a valid private key (PEM or OpenSSH format).`);
+          unsupportedKeys.push({
+            name: entryName,
+            reason: "invalid private key format"
+          });
+        }
       }
     }
   }
   if (options.environmentOnly) {
-    return { keys: privateKeys, passphraseProtectedKeys, unsupportedKeys };
+    return result();
   }
   const sshDir = import_node_path3.default.join(import_node_os3.default.homedir(), ".ssh");
-  if (!import_node_fs.existsSync(sshDir)) {
-    return { keys: privateKeys, passphraseProtectedKeys, unsupportedKeys };
+  if (options.diagnosticReadOnly) {
+    try {
+      const sshStat = await import_promises4.default.lstat(sshDir);
+      if (sshStat.isSymbolicLink() || !sshStat.isDirectory()) {
+        incompleteKeyCount += 1;
+        return result();
+      }
+    } catch (error51) {
+      if (error51 instanceof Error && "code" in error51 && error51.code === "ENOENT") {
+        return result();
+      }
+      incompleteKeyCount += 1;
+      return result();
+    }
+  } else if (!import_node_fs.existsSync(sshDir)) {
+    return result();
   }
-  const files = await import_promises4.default.readdir(sshDir);
-  const knownFiles = SSH_KEY_FILES.filter((f) => files.includes(f));
-  const otherFiles = files.filter((f) => !SSH_KEY_FILES.includes(f) && !f.endsWith(".pub") && !f.startsWith("known_hosts") && !f.startsWith("authorized_keys") && f !== "config");
+  let files;
+  if (options.diagnosticReadOnly) {
+    const knownFiles2 = [];
+    for (const fileName of SSH_KEY_FILES) {
+      try {
+        await import_promises4.default.lstat(import_node_path3.default.join(sshDir, fileName));
+        knownFiles2.push(fileName);
+      } catch (error51) {
+        if (!(error51 instanceof Error && ("code" in error51) && error51.code === "ENOENT")) {
+          incompleteKeyCount += 1;
+        }
+      }
+    }
+    const discovered = [];
+    let directoryComplete = true;
+    let handle;
+    try {
+      handle = await import_promises4.default.opendir(sshDir);
+    } catch {
+      incompleteKeyCount += 1;
+      return result();
+    }
+    try {
+      while (discovered.length <= MAX_DIAGNOSTIC_SSH_FILES) {
+        const entry = await handle.read();
+        if (!entry)
+          break;
+        if (discovered.length === MAX_DIAGNOSTIC_SSH_FILES) {
+          directoryComplete = false;
+          break;
+        }
+        discovered.push(entry.name);
+      }
+    } catch {
+      directoryComplete = false;
+    } finally {
+      try {
+        await handle.close();
+      } catch {}
+    }
+    if (!directoryComplete)
+      incompleteKeyCount += 1;
+    files = directoryComplete ? [...new Set([...knownFiles2, ...discovered])] : knownFiles2;
+  } else {
+    files = await import_promises4.default.readdir(sshDir);
+  }
+  const knownFiles = SSH_KEY_FILES.filter((fileName) => files.includes(fileName));
+  const otherFiles = files.filter((f) => !SSH_KEY_FILES.includes(f) && !f.endsWith(".pub") && !f.startsWith("known_hosts") && !f.startsWith("authorized_keys") && f !== "config").sort((left, right) => left.localeCompare(right));
   for (const fileName of [...knownFiles, ...otherFiles]) {
     const filePath = import_node_path3.default.join(sshDir, fileName);
-    let stat;
-    try {
-      stat = await import_promises4.default.stat(filePath);
-    } catch {
-      continue;
-    }
-    if (!stat.isFile())
-      continue;
     let keyContent;
-    try {
-      keyContent = await import_promises4.default.readFile(filePath, "utf-8");
-    } catch {
-      continue;
+    if (options.diagnosticReadOnly) {
+      const remainingBytes = MAX_DIAGNOSTIC_PRIVATE_KEY_BYTES - diagnosticBytesRead;
+      if (remainingBytes <= 0) {
+        incompleteKeyCount += 1;
+        break;
+      }
+      const diagnosticRead = await readDiagnosticPrivateKey(filePath, Math.min(maxKeyBytes ?? 1024 * 1024, remainingBytes));
+      if (diagnosticRead.status === "incomplete") {
+        incompleteKeyCount += 1;
+        continue;
+      }
+      if (diagnosticRead.status === "skip")
+        continue;
+      if (diagnosticRead.status === "too-large") {
+        incompleteKeyCount += 1;
+        unsupportedKeys.push({
+          name: fileName,
+          reason: "private key exceeds the diagnostic size limit"
+        });
+        continue;
+      }
+      keyContent = diagnosticRead.content;
+      diagnosticBytesRead += diagnosticRead.bytesRead;
+    } else {
+      let stat;
+      try {
+        stat = await import_promises4.default.stat(filePath);
+      } catch {
+        continue;
+      }
+      if (!stat.isFile())
+        continue;
+      if (maxKeyBytes !== undefined && stat.size > maxKeyBytes) {
+        unsupportedKeys.push({
+          name: fileName,
+          reason: "private key exceeds the diagnostic size limit"
+        });
+        continue;
+      }
+      try {
+        keyContent = await import_promises4.default.readFile(filePath, "utf-8");
+      } catch {
+        continue;
+      }
     }
     if (!keyContent.includes("PRIVATE KEY"))
       continue;
@@ -21611,7 +21775,7 @@ var getPrivateKeys = async (options = {}) => {
     }
     privateKeys.push(entry);
   }
-  return { keys: privateKeys, passphraseProtectedKeys, unsupportedKeys };
+  return result();
 };
 
 // cli/src/helpers/onePasswordKeyProvider.ts
@@ -21619,6 +21783,7 @@ var import_node_child_process2 = require("node:child_process");
 var import_node_crypto9 = __toESM(require("node:crypto"));
 // cli/src/helpers/onePasswordLocatorCache.ts
 var import_node_crypto7 = require("node:crypto");
+var import_node_fs2 = require("node:fs");
 var import_promises5 = __toESM(require("node:fs/promises"));
 var import_node_os4 = __toESM(require("node:os"));
 var import_node_path4 = __toESM(require("node:path"));
@@ -21653,23 +21818,59 @@ function cacheEntryPath(fingerprint, cacheDirectory) {
   const cacheKey = import_node_crypto7.createHash("sha256").update(fingerprint).digest("hex");
   return import_node_path4.default.join(cacheDirectory, "onepassword-locators-v1", `${cacheKey}.json`);
 }
-async function readOnePasswordLocator(fingerprint, options = {}) {
+async function probeOnePasswordLocator(fingerprint, options = {}) {
   const cacheDirectory = options.cacheDirectory ?? getOnePasswordLocatorCacheDirectory();
   const filePath = cacheEntryPath(fingerprint, cacheDirectory);
+  let pathStat;
   try {
-    const handle = await import_promises5.default.open(filePath, "r");
-    try {
-      const stat = await handle.stat();
-      if (!stat.isFile() || stat.size > MAX_CACHE_ENTRY_BYTES)
-        return;
-      const entry = cacheEntrySchema.parse(JSON.parse(await handle.readFile("utf8")));
-      return entry.fingerprint === fingerprint ? entry.locator : undefined;
-    } finally {
-      await handle.close();
-    }
-  } catch {
-    return;
+    pathStat = await import_promises5.default.lstat(filePath);
+  } catch (error51) {
+    return error51 instanceof Error && "code" in error51 && error51.code === "ENOENT" ? { status: "absent" } : { status: "incomplete" };
   }
+  if (pathStat.isSymbolicLink() || !pathStat.isFile() || pathStat.size > MAX_CACHE_ENTRY_BYTES) {
+    return { status: "incomplete" };
+  }
+  let handle;
+  try {
+    handle = await import_promises5.default.open(filePath, import_node_fs2.constants.O_RDONLY | (import_node_fs2.constants.O_NOFOLLOW ?? 0) | (import_node_fs2.constants.O_NONBLOCK ?? 0));
+  } catch {
+    return { status: "incomplete" };
+  }
+  const input = Buffer.alloc(MAX_CACHE_ENTRY_BYTES + 1);
+  let offset = 0;
+  try {
+    try {
+      const openedStat = await handle.stat();
+      if (!openedStat.isFile() || openedStat.dev !== pathStat.dev || openedStat.ino !== pathStat.ino || openedStat.size > MAX_CACHE_ENTRY_BYTES) {
+        return { status: "incomplete" };
+      }
+      while (offset < input.byteLength) {
+        const { bytesRead } = await handle.read(input, offset, input.byteLength - offset, null);
+        if (bytesRead === 0)
+          break;
+        offset += bytesRead;
+      }
+    } catch {
+      return { status: "incomplete" };
+    }
+    if (offset > MAX_CACHE_ENTRY_BYTES)
+      return { status: "incomplete" };
+    try {
+      const entry = cacheEntrySchema.parse(JSON.parse(input.subarray(0, offset).toString("utf8")));
+      return entry.fingerprint === fingerprint ? { status: "present", locator: entry.locator } : { status: "incomplete" };
+    } catch {
+      return { status: "incomplete" };
+    }
+  } finally {
+    input.fill(0);
+    try {
+      await handle.close();
+    } catch {}
+  }
+}
+async function readOnePasswordLocator(fingerprint, options = {}) {
+  const result = await probeOnePasswordLocator(fingerprint, options);
+  return result.status === "present" ? result.locator : undefined;
 }
 async function writeOnePasswordLocator(fingerprint, locator, options = {}) {
   const parsedLocator = locatorSchema.safeParse(locator);
@@ -22316,6 +22517,7 @@ var createDecryptionKeyContext = (deps = {
   discoverOnePasswordKeyCandidates
 }) => {
   let privateKeysPromise;
+  let nonInteractivePrivateKeysPromise;
   let discoveryPromise;
   const providerPrivateKeys = new Map;
   let cachedProviderTransientFailure;
@@ -22341,8 +22543,13 @@ var createDecryptionKeyContext = (deps = {
     return result;
   };
   return {
-    getPrivateKeys: () => {
-      privateKeysPromise ??= deps.getPrivateKeys();
+    getPrivateKeys: (options) => {
+      const nonInteractive = options?.environmentKeyErrorMode === "collect" && options.logError !== undefined;
+      if (nonInteractive) {
+        nonInteractivePrivateKeysPromise ??= deps.getPrivateKeys(options);
+        return nonInteractivePrivateKeysPromise;
+      }
+      privateKeysPromise ??= deps.getPrivateKeys(options);
       return privateKeysPromise;
     },
     loadCachedOnePasswordPrivateKey: deps.loadCachedOnePasswordPrivateKey ? (fingerprints) => serializeProviderPrivateKeyLoad(async () => {
@@ -22378,6 +22585,7 @@ var createDecryptionKeyContext = (deps = {
         return;
       disposed = true;
       privateKeysPromise = undefined;
+      nonInteractivePrivateKeysPromise = undefined;
       discoveryPromise = undefined;
       cachedProviderTransientFailure = undefined;
       providerPrivateKeys.clear();
@@ -22391,6 +22599,35 @@ var createDecryptEnvironmentDataContext = (deps = defaultDecryptEnvironmentDataD
     ...keyContext
   };
 };
+class EnvironmentInaccessibleError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "EnvironmentInaccessibleError";
+  }
+}
+
+class EnvironmentDataKeyCorruptError extends Error {
+  constructor(options) {
+    super("Failed to decrypt the data key.", options);
+    this.name = "EnvironmentDataKeyCorruptError";
+  }
+}
+
+class EnvironmentProviderInconclusiveError extends Error {
+  reason;
+  constructor(reason) {
+    super("Configured private-key provider access could not be determined.");
+    this.reason = reason;
+    this.name = "EnvironmentProviderInconclusiveError";
+  }
+}
+
+class EnvironmentLocalKeyInconclusiveError extends Error {
+  constructor() {
+    super("Passphrase-protected local-key access could not be determined.");
+    this.name = "EnvironmentLocalKeyInconclusiveError";
+  }
+}
 
 class EnvironmentAccessDeniedError extends Error {
   availablePrivateKeyNames;
@@ -22400,8 +22637,11 @@ class EnvironmentAccessDeniedError extends Error {
     this.name = "EnvironmentAccessDeniedError";
   }
 }
-var unwrapEnvironmentDataKey = async (environment, deps) => {
-  const { keys: availablePrivateKeys, passphraseProtectedKeys } = await deps.getPrivateKeys();
+var unwrapEnvironmentDataKey = async (environment, deps, mode = "decrypt") => {
+  const { keys: availablePrivateKeys, passphraseProtectedKeys } = await (mode === "probe" ? deps.getPrivateKeys({
+    environmentKeyErrorMode: "collect",
+    logError: () => {}
+  }) : deps.getPrivateKeys());
   let grantedKey;
   let selectedPrivateKey;
   let providerStatus;
@@ -22410,47 +22650,101 @@ var unwrapEnvironmentDataKey = async (environment, deps) => {
   let cachedProviderResult = {
     status: "miss"
   };
+  let corruptMatchingLocalWrap = false;
   for (const privateKeyEntry2 of availablePrivateKeys) {
-    grantedKey = environment.keys.find((key) => {
-      return key.fingerprint === privateKeyEntry2.fingerprint;
-    });
-    if (grantedKey) {
-      selectedPrivateKey = privateKeyEntry2;
-      break;
+    for (const recipient of environment.keys) {
+      if (recipient.fingerprint !== privateKeyEntry2.fingerprint)
+        continue;
+      let candidateDataKey;
+      try {
+        candidateDataKey = deps.decryptDataKey(privateKeyEntry2, Buffer.from(recipient.encryptedDataKey, "base64"));
+      } catch {
+        corruptMatchingLocalWrap = true;
+        continue;
+      }
+      if (candidateDataKey.byteLength === 32)
+        return candidateDataKey;
+      candidateDataKey.fill(0);
+      corruptMatchingLocalWrap = true;
     }
   }
   if (!grantedKey && deps.loadCachedOnePasswordPrivateKey) {
-    cachedProviderResult = await deps.loadCachedOnePasswordPrivateKey(environment.keys.map((key) => key.fingerprint));
+    try {
+      cachedProviderResult = await deps.loadCachedOnePasswordPrivateKey(environment.keys.map((key) => key.fingerprint));
+    } catch (error51) {
+      if (mode === "probe") {
+        throw new EnvironmentProviderInconclusiveError("cached-key-unavailable");
+      }
+      throw error51;
+    }
     if (cachedProviderResult.status === "loaded") {
       selectedPrivateKey = cachedProviderResult.privateKey;
       grantedKey = environment.keys.find((key) => key.fingerprint === selectedPrivateKey?.fingerprint);
     } else if (cachedProviderResult.status === "transient-failure") {
+      if (mode === "probe") {
+        throw new EnvironmentProviderInconclusiveError("cached-key-unavailable");
+      }
       throw cachedProviderResult.error;
     }
   }
   if (!grantedKey && cachedProviderResult.status === "miss" && availablePrivateKeys.length === 0 && passphraseProtectedKeys.length > 0) {
-    throw new Error(passphraseProtectedKeyError(passphraseProtectedKeys));
+    if (mode === "probe")
+      throw new EnvironmentLocalKeyInconclusiveError;
+    throw new EnvironmentInaccessibleError(passphraseProtectedKeyError(passphraseProtectedKeys));
   }
   if (!grantedKey && deps.discoverOnePasswordKeyCandidates) {
-    const discovery = await deps.discoverOnePasswordKeyCandidates();
+    let discovery;
+    try {
+      discovery = await deps.discoverOnePasswordKeyCandidates();
+    } catch (error51) {
+      if (mode === "probe") {
+        throw new EnvironmentProviderInconclusiveError("discovery-unavailable");
+      }
+      throw error51;
+    }
     providerStatus = discovery.status;
     providerKeyNames = discovery.keys.map((candidate) => `${candidate.group.label} / ${candidate.name}`);
     unavailableProviderAccountLabels = discovery.unavailableAccounts.map((account) => account.label);
     const matchingCandidates = discovery.keys.filter((candidate) => environment.keys.some((key) => key.fingerprint === candidate.fingerprint)).sort((left, right) => left.selector.localeCompare(right.selector));
     if (matchingCandidates.length > 0) {
       const candidate = matchingCandidates[0];
-      selectedPrivateKey = await (deps.loadPrivateKey?.(candidate) ?? candidate.loadPrivateKey());
+      try {
+        selectedPrivateKey = await (deps.loadPrivateKey?.(candidate) ?? candidate.loadPrivateKey());
+      } catch (error51) {
+        if (mode === "probe") {
+          throw new EnvironmentProviderInconclusiveError("private-key-unavailable");
+        }
+        throw error51;
+      }
       grantedKey = environment.keys.find((key) => key.fingerprint === selectedPrivateKey?.fingerprint);
     }
   }
   if (!grantedKey || !selectedPrivateKey) {
+    if (mode === "probe" && passphraseProtectedKeys.length > 0) {
+      throw new EnvironmentLocalKeyInconclusiveError;
+    }
+    if (mode === "decrypt" && passphraseProtectedKeys.length > 0) {
+      throw new EnvironmentInaccessibleError(passphraseProtectedKeyError(passphraseProtectedKeys));
+    }
     if (providerStatus === "unsupported-version") {
+      if (mode === "probe") {
+        throw new EnvironmentProviderInconclusiveError("unsupported-version");
+      }
       throw new Error("The installed 1Password CLI version is unsupported. dotenc requires op 2.x.");
+    }
+    if (mode === "probe" && providerStatus === "unavailable") {
+      throw new EnvironmentProviderInconclusiveError("discovery-unavailable");
+    }
+    if (mode === "probe" && unavailableProviderAccountLabels.length > 0) {
+      throw new EnvironmentProviderInconclusiveError("account-unavailable");
+    }
+    if (corruptMatchingLocalWrap) {
+      throw new EnvironmentDataKeyCorruptError;
     }
     if (availablePrivateKeys.length === 0 && providerKeyNames.length === 0) {
       const unavailableAccounts = [...new Set(unavailableProviderAccountLabels)];
       const providerGuidance = unavailableAccounts.length > 0 ? ` 1Password access was unavailable for: ${unavailableAccounts.join(", ")}.` : "";
-      throw new Error(`No private keys found. Please ensure you have SSH keys in ~/.ssh/ or set DOTENC_PRIVATE_KEY_BASE64.${providerGuidance}`);
+      throw new EnvironmentInaccessibleError(`No private keys found. Please ensure you have SSH keys in ~/.ssh/ or set DOTENC_PRIVATE_KEY_BASE64.${providerGuidance}`);
     }
     throw new EnvironmentAccessDeniedError([
       ...new Set([
@@ -22463,11 +22757,23 @@ var unwrapEnvironmentDataKey = async (environment, deps) => {
   try {
     dataKey = deps.decryptDataKey(selectedPrivateKey, Buffer.from(grantedKey.encryptedDataKey, "base64"));
   } catch (error51) {
-    throw new Error("Failed to decrypt the data key.", { cause: error51 });
+    if (mode === "probe" && passphraseProtectedKeys.length > 0) {
+      throw new EnvironmentLocalKeyInconclusiveError;
+    }
+    if (mode === "probe" && unavailableProviderAccountLabels.length > 0) {
+      throw new EnvironmentProviderInconclusiveError("account-unavailable");
+    }
+    throw new EnvironmentDataKeyCorruptError({ cause: error51 });
   }
   if (dataKey.byteLength !== 32) {
     dataKey.fill(0);
-    throw new Error("Failed to decrypt the data key.");
+    if (mode === "probe" && passphraseProtectedKeys.length > 0) {
+      throw new EnvironmentLocalKeyInconclusiveError;
+    }
+    if (mode === "probe" && unavailableProviderAccountLabels.length > 0) {
+      throw new EnvironmentProviderInconclusiveError("account-unavailable");
+    }
+    throw new EnvironmentDataKeyCorruptError;
   }
   return dataKey;
 };

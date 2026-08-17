@@ -232,6 +232,6 @@ would not provide that guarantee.
 - Best-effort overwrite reduces straightforward recovery of temporary key
   bytes but cannot guarantee physical erasure on copy-on-write filesystems,
   snapshots, SSDs, or other remapped storage.
-- `dotenc doctor` remains a separate planned command. Its bounded parser and
-  `dev` discovery foundations are complete, but a non-prompting, data-key-only
-  diagnostic adapter, the command itself, and any repair mode remain pending.
+- `dotenc doctor` shipped separately in `@dotenc/cli` 0.14.0 with bounded,
+  non-prompting, data-key-only diagnostics and read-only Git recovery advice.
+  An automatic repair mode remains deferred.

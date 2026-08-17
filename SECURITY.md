@@ -42,6 +42,9 @@ independent of the repository.
   process-control variables to silently take over a wrapped command
 - Modification of a given AES-GCM ciphertext without its data key
 - Path traversal or command injection via user-supplied names and editor configuration
+- Plaintext, wrapped-key, private-key-path, and raw provider-error disclosure
+  through `dotenc doctor` reports; diagnostic inputs and output are bounded and
+  redacted as described under [Read-only Diagnostics](#read-only-diagnostics)
 
 **Not protected against:**
 - An attacker who has already obtained an authorized SSH private key
@@ -51,6 +54,9 @@ independent of the repository.
   public key, or replaying an older valid Git revision
 - A compromised machine where decryption takes place (memory forensics, malicious processes)
 - Passphrase-protected keys when no passphrase source is provided — dotenc does not prompt interactively for passphrases; see [Known Limitations](#known-limitations)
+- Treating a successful `dotenc doctor` data-key probe as authentication of the
+  encrypted environment content or as a substitute for an actual `run`/`dev`
+  load
 
 ---
 
@@ -430,7 +436,7 @@ The `--local-only` flag narrows decryption scope to the current directory only, 
 `.env.personal.<profile>.enc` files along the effective ancestor chain, groups
 same-named layers, and tests every layer with the existing fingerprint-based
 private-key decryption context. Public-key aliases are display metadata and
-never select a profile.
+never select a namespaced `personal.<profile>` profile.
 
 One accessible profile is selected automatically. Several accessible profiles
 prompt in a TTY and require `--profile <name>` in non-interactive use; an
@@ -443,9 +449,12 @@ required `development` environment is always fatal.
 This namespace transition is deliberately not inferred from public-key names.
 When no namespaced profile is selected, `dev` may emit a read-only warning for
 an accessible unprefixed environment that matches the former convention. It
-never loads or mutates that candidate. Unprefixed environments remain valid
-explicit environments—for example, `dotenc run -e alice` continues to load an
-environment genuinely named `alice`.
+never loads or mutates that candidate. The legacy hint requires the exact
+project-root `.dotenc/<name>.pub` alias to parse and validate, its fingerprint
+to appear as a recipient in every effective `.env.<name>.enc` layer, and every
+layer to decrypt and authenticate successfully. Unprefixed environments remain
+valid explicit environments—for example, `dotenc run -e alice` continues to
+load an environment genuinely named `alice`.
 
 Migration is explicit:
 
@@ -501,6 +510,58 @@ can finish source removal or restore tracked sources from Git and remove the
 destinations. Git cannot
 restore an untracked source; if its cleanup already succeeded, the verified
 destination is the remaining encrypted copy.
+
+### Read-only Diagnostics
+
+`dotenc doctor` treats repository envelopes, filenames, local Git metadata,
+home configuration, and private-key inputs as untrusted diagnostic evidence.
+It uses bounded file counts, byte sizes, directory traversal, JSON depth, key
+counts, and path normalization; rejects symlinks or non-regular files where a
+stable regular file is required; and marks the report incomplete instead of
+continuing past a failed bound. Incomplete evidence exits `2` and must not be
+converted into confident recovery advice.
+
+The command is read-only and offline. It does not edit keys, encrypted
+environments, Git configuration, attributes, home configuration, the index, or
+the worktree. It does not fetch Git history, invoke a key provider, open an
+authorization prompt, or write/remove provider locator-cache entries. Recovery
+commands are inert argv arrays in the report; doctor never executes them.
+Local Git subprocesses inspect only the existing worktree, configuration,
+attributes, and object database.
+
+Human recovery rendering uses POSIX literal quoting on Unix-like systems and
+explicitly labeled PowerShell literal quoting on Windows. Versioned JSON keeps
+the canonical command as an argv array so automation never has to parse or
+execute a rendered shell string.
+
+For access checks, doctor parses bounded envelopes and tries every matching
+local recipient/private-key fingerprint pair until one unwraps a 32-byte data
+key. Every returned data-key buffer is explicitly zeroed. Passphrase-protected
+or otherwise unsafe local key inputs are not decrypted through the temporary
+key-file path; they make offline access inconclusive. A matching cached
+1Password locator also makes access inconclusive because doctor reads only
+bounded locator presence and never calls `op`. Passwordless local private keys
+necessarily enter process memory for the unwrap, inside the same
+developer-machine trust boundary as ordinary decryption.
+
+Doctor never decrypts `encryptedContent`, materializes dotenv variables, or
+reads a plaintext `.env` file's contents. It inspects only plaintext filenames,
+file type, and local Git tracked/ignored state. JSON and human reports exclude
+plaintext names and values, plaintext contents, ciphertext, wrapped keys,
+private-key material and paths, provider IDs, and raw exceptions. Rendered file
+paths are normalized project-relative paths; unsafe or unrepresentable paths
+make the evidence incomplete.
+
+This data-key-only design has an explicit tradeoff: a successful 32-byte unwrap
+proves that one stored wrapped-key copy is usable by a matching local private
+key, but it does not authenticate the AES-GCM environment content or its v2
+AAD. Actual content decryptability is established only by a command that loads
+the environment. Likewise, offline recovery is limited to complete local Git
+evidence. With shallow, absent, unreadable, or incomplete history, doctor does
+not fetch or guess; recovery command arrays remain absent or empty. A fresh
+personal-environment creation command is suggested only after complete,
+non-shallow local history finds no recoverable revision, and the finding states
+that creation starts empty and cannot recover prior values.
 
 ### Recursive Environment Discovery
 
@@ -603,6 +664,40 @@ Alternatively, follow the [installation guide](docs/INSTALLATION.md) to install
 a native release package, configure APT or RPM manually, or use APK, AUR,
 Homebrew, Scoop, npm, the `ghcr.io/dotenc/cli` OCI image, or a standalone
 binary. Those paths do not execute the install script.
+
+Standalone binary publication is gated by the exact forward `main` transition,
+not by the independently timed npm publication. The workflow validates the
+triggering and previous commit identities and ancestry, requires the current
+stable CLI version on a version-changing transition to exceed every stable
+version found in a bounded first-parent history. An unchanged follow-up commit
+may inherit an unpublished version only after the same bounded history and
+remote-state checks. The highest prior distinct stable version itself must
+already be a published stable GitHub release; a draft, prerelease, or orphan
+reservation therefore blocks a later version from publishing past incomplete
+state.
+
+Before publisher jobs start, the workflow proves that the triggering revision
+is the exact current `main` head and that no newer CLI version has superseded
+it. It then creates an annotated `v<version>` tag object whose bounded marker
+binds the version, triggering commit, and stable GitHub workflow run ID, and
+atomically points the release tag at that object. Production binary runs are
+serialized without cancelling queued version bumps. A rerun may reuse only its
+own exact reservation; another run cannot reuse or replace it. An unchanged
+descendant that finds the valid earlier reservation skips publication and
+leaves it to the owning run, while a conflicting run, lightweight tag, or
+mismatched marker fails closed for explicit reconciliation. If `main` advances
+after reservation, the owning run may finish because the tag has already fixed
+the release target.
+
+Immediately before release creation, the binary job requires that authenticated
+reservation and proves that no draft or published release already uses it. The
+release action receives the triggering commit explicitly and cannot move the
+pre-existing annotated tag. Before Homebrew, Scoop, or native-package
+publication can continue, the workflow peels and authenticates the reservation,
+then verifies that the published stable release contains exactly the expected
+base archives with matching sizes and SHA-256 digests. Existing release assets
+are never overwritten; partial state remains reserved and blocks automatic
+reuse until it is reconciled deliberately.
 
 ---
 
@@ -806,7 +901,7 @@ implementation actions in `actions/`, which are thin wrappers around the dotenc
 CLI:
 
 - `actions/setup` installs `@dotenc/cli` through npm. Its default is the exact
-  CLI package version shipped with this repository (`0.13.0`), not npm's
+  CLI package version shipped with this repository (`0.14.0`), not npm's
   mutable `latest` tag. Pin the action ref to a commit when workflows also need
   an immutable action implementation.
 - `actions/run` writes the requested command to a temporary script and executes

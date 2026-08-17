@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
+import { constants } from "node:fs"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
@@ -21,6 +22,11 @@ const cacheEntrySchema = z.strictObject({
 })
 
 export type OnePasswordLocator = z.infer<typeof locatorSchema>
+
+export type OnePasswordLocatorProbeResult =
+	| { status: "present"; locator: OnePasswordLocator }
+	| { status: "absent" }
+	| { status: "incomplete" }
 
 type CacheDirectoryDeps = {
 	env?: NodeJS.ProcessEnv
@@ -78,29 +84,94 @@ function cacheEntryPath(fingerprint: string, cacheDirectory: string): string {
 	)
 }
 
-export async function readOnePasswordLocator(
+export async function probeOnePasswordLocator(
 	fingerprint: string,
 	options: LocatorCacheOptions = {},
-): Promise<OnePasswordLocator | undefined> {
+): Promise<OnePasswordLocatorProbeResult> {
 	const cacheDirectory =
 		options.cacheDirectory ?? getOnePasswordLocatorCacheDirectory()
 	const filePath = cacheEntryPath(fingerprint, cacheDirectory)
 
+	let pathStat: Awaited<ReturnType<typeof fs.lstat>>
 	try {
-		const handle = await fs.open(filePath, "r")
-		try {
-			const stat = await handle.stat()
-			if (!stat.isFile() || stat.size > MAX_CACHE_ENTRY_BYTES) return undefined
-			const entry = cacheEntrySchema.parse(
-				JSON.parse(await handle.readFile("utf8")),
-			)
-			return entry.fingerprint === fingerprint ? entry.locator : undefined
-		} finally {
-			await handle.close()
-		}
-	} catch {
-		return undefined
+		pathStat = await fs.lstat(filePath)
+	} catch (error) {
+		return error instanceof Error &&
+			"code" in error &&
+			(error as NodeJS.ErrnoException).code === "ENOENT"
+			? { status: "absent" }
+			: { status: "incomplete" }
 	}
+	if (
+		pathStat.isSymbolicLink() ||
+		!pathStat.isFile() ||
+		pathStat.size > MAX_CACHE_ENTRY_BYTES
+	) {
+		return { status: "incomplete" }
+	}
+
+	let handle: Awaited<ReturnType<typeof fs.open>>
+	try {
+		handle = await fs.open(
+			filePath,
+			constants.O_RDONLY |
+				(constants.O_NOFOLLOW ?? 0) |
+				(constants.O_NONBLOCK ?? 0),
+		)
+	} catch {
+		return { status: "incomplete" }
+	}
+	const input = Buffer.alloc(MAX_CACHE_ENTRY_BYTES + 1)
+	let offset = 0
+	try {
+		try {
+			const openedStat = await handle.stat()
+			if (
+				!openedStat.isFile() ||
+				openedStat.dev !== pathStat.dev ||
+				openedStat.ino !== pathStat.ino ||
+				openedStat.size > MAX_CACHE_ENTRY_BYTES
+			) {
+				return { status: "incomplete" }
+			}
+			while (offset < input.byteLength) {
+				const { bytesRead } = await handle.read(
+					input,
+					offset,
+					input.byteLength - offset,
+					null,
+				)
+				if (bytesRead === 0) break
+				offset += bytesRead
+			}
+		} catch {
+			return { status: "incomplete" }
+		}
+		if (offset > MAX_CACHE_ENTRY_BYTES) return { status: "incomplete" }
+		try {
+			const entry = cacheEntrySchema.parse(
+				JSON.parse(input.subarray(0, offset).toString("utf8")),
+			)
+			return entry.fingerprint === fingerprint
+				? { status: "present", locator: entry.locator }
+				: { status: "incomplete" }
+		} catch {
+			return { status: "incomplete" }
+		}
+	} finally {
+		input.fill(0)
+		try {
+			await handle.close()
+		} catch {}
+	}
+}
+
+export async function readOnePasswordLocator(
+	fingerprint: string,
+	options: LocatorCacheOptions = {},
+): Promise<OnePasswordLocator | undefined> {
+	const result = await probeOnePasswordLocator(fingerprint, options)
+	return result.status === "present" ? result.locator : undefined
 }
 
 export async function writeOnePasswordLocator(

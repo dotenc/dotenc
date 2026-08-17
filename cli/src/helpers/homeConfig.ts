@@ -10,7 +10,7 @@ const updateConfigSchema = z.object({
 	notifiedVersion: z.string().nullish(),
 })
 
-const homeConfigSchema = z.object({
+export const homeConfigSchema = z.object({
 	editor: z.string().nullish(),
 	update: updateConfigSchema.nullish(),
 })

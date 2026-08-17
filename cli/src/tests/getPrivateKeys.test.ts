@@ -1,6 +1,20 @@
-import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test"
+import {
+	afterAll,
+	beforeAll,
+	describe,
+	expect,
+	mock,
+	spyOn,
+	test,
+} from "bun:test"
 import crypto from "node:crypto"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import {
+	mkdirSync,
+	mkdtempSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs"
 import fsPromises from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
@@ -356,6 +370,327 @@ describe("getPrivateKeys", () => {
 
 		delete process.env.DOTENC_PRIVATE_KEY
 		delete process.env.DOTENC_PRIVATE_KEY_PASSPHRASE
+	})
+
+	test("decryptPassphraseProtected false never decrypts environment or filesystem keys", async () => {
+		const protectedFileName = "id_protected_diagnostic"
+		const protectedFilePath = path.join(tmpDir, ".ssh", protectedFileName)
+		writeFileSync(protectedFilePath, encryptedEd25519PrivateKeyPem, "utf-8")
+
+		delete process.env.DOTENC_PRIVATE_KEY_BASE64
+		process.env.DOTENC_PRIVATE_KEY = encryptedEd25519PrivateKeyPem
+		process.env.DOTENC_PRIVATE_KEY_PASSPHRASE = "secret"
+
+		try {
+			const result = await getPrivateKeys({
+				decryptPassphraseProtected: false,
+				environmentKeyErrorMode: "collect",
+				logError: () => {},
+			})
+
+			expect(
+				result.keys.some(
+					(key) =>
+						key.name === "env.DOTENC_PRIVATE_KEY" ||
+						key.name === protectedFileName,
+				),
+			).toBe(false)
+			expect(result.passphraseProtectedKeys).toContain("env.DOTENC_PRIVATE_KEY")
+			expect(result.passphraseProtectedKeys).toContain(protectedFileName)
+			expect(result.unsupportedKeys).toContainEqual({
+				name: "env.DOTENC_PRIVATE_KEY",
+				reason: "passphrase-protected",
+			})
+			expect(result.unsupportedKeys).toContainEqual({
+				name: protectedFileName,
+				reason: "passphrase-protected",
+			})
+		} finally {
+			delete process.env.DOTENC_PRIVATE_KEY
+			delete process.env.DOTENC_PRIVATE_KEY_PASSPHRASE
+			rmSync(protectedFilePath, { force: true })
+		}
+	})
+
+	test("maxKeyBytes bounds decoded environment key content at an exact byte boundary", async () => {
+		delete process.env.DOTENC_PRIVATE_KEY
+		process.env.DOTENC_PRIVATE_KEY_BASE64 =
+			encodePrivateKey(ed25519PrivateKeyPem)
+		const keyBytes = Buffer.byteLength(ed25519PrivateKeyPem, "utf8")
+
+		try {
+			const oversized = await getPrivateKeys({
+				environmentOnly: true,
+				maxKeyBytes: keyBytes - 1,
+			})
+			expect(oversized.keys).toEqual([])
+			expect(oversized.unsupportedKeys).toContainEqual({
+				name: "env.DOTENC_PRIVATE_KEY_BASE64",
+				reason: "private key exceeds the diagnostic size limit",
+			})
+
+			const atBoundary = await getPrivateKeys({
+				environmentOnly: true,
+				maxKeyBytes: keyBytes,
+			})
+			expect(
+				atBoundary.keys.some(
+					(key) => key.name === "env.DOTENC_PRIVATE_KEY_BASE64",
+				),
+			).toBe(true)
+		} finally {
+			delete process.env.DOTENC_PRIVATE_KEY_BASE64
+		}
+	})
+
+	test("maxKeyBytes rejects an oversized filesystem key before reading it", async () => {
+		const oversizedFileName = "id_oversized_diagnostic"
+		const oversizedFilePath = path.join(tmpDir, ".ssh", oversizedFileName)
+		writeFileSync(oversizedFilePath, ed25519PrivateKeyPem, "utf-8")
+		const keyBytes = Buffer.byteLength(ed25519PrivateKeyPem, "utf8")
+		const readFileSpy = spyOn(fsPromises, "readFile")
+		delete process.env.DOTENC_PRIVATE_KEY_BASE64
+		delete process.env.DOTENC_PRIVATE_KEY
+
+		try {
+			const result = await getPrivateKeys({ maxKeyBytes: keyBytes - 1 })
+
+			expect(result.keys.some((key) => key.name === oversizedFileName)).toBe(
+				false,
+			)
+			expect(result.unsupportedKeys).toContainEqual({
+				name: oversizedFileName,
+				reason: "private key exceeds the diagnostic size limit",
+			})
+			expect(
+				readFileSpy.mock.calls.some(
+					([filePath]) => String(filePath) === oversizedFilePath,
+				),
+			).toBe(false)
+		} finally {
+			readFileSpy.mockRestore()
+			rmSync(oversizedFilePath, { force: true })
+		}
+	})
+
+	test("diagnostic cumulative budget counts invalid UTF-8 as raw bytes read", async () => {
+		const diagnosticHome = mkdtempSync(
+			path.join(os.tmpdir(), "test-privkeys-diagnostic-budget-"),
+		)
+		const diagnosticSshDir = path.join(diagnosticHome, ".ssh")
+		mkdirSync(diagnosticSshDir)
+		const rawChunk = Buffer.alloc(1024 * 1024, 0x80)
+		// Four raw MiB fit the 10 MiB budget, but decoded replacement characters
+		// re-encode to 12 MiB and used to exhaust it before the valid key was read.
+		for (let index = 0; index < 4; index += 1) {
+			writeFileSync(
+				path.join(diagnosticSshDir, `aa-invalid-utf8-${index}`),
+				rawChunk,
+			)
+		}
+		writeFileSync(
+			path.join(diagnosticSshDir, "zz-valid-key"),
+			ed25519PrivateKeyPem,
+			"utf-8",
+		)
+		homeSpy.mockReturnValue(diagnosticHome)
+		delete process.env.DOTENC_PRIVATE_KEY_BASE64
+		delete process.env.DOTENC_PRIVATE_KEY
+
+		try {
+			const result = await getPrivateKeys({ diagnosticReadOnly: true })
+
+			expect(result.keys.some((key) => key.name === "zz-valid-key")).toBe(true)
+			expect(result.incompleteKeys).toBeUndefined()
+		} finally {
+			rawChunk.fill(0)
+			homeSpy.mockReturnValue(tmpDir)
+			rmSync(diagnosticHome, { recursive: true, force: true })
+		}
+	})
+
+	test("diagnostic mode rejects symlink candidates without opening them", async () => {
+		const diagnosticHome = mkdtempSync(
+			path.join(os.tmpdir(), "test-privkeys-diagnostic-symlink-"),
+		)
+		const diagnosticSshDir = path.join(diagnosticHome, ".ssh")
+		mkdirSync(diagnosticSshDir)
+		const targetPath = path.join(diagnosticSshDir, "target.pub")
+		const symlinkPath = path.join(diagnosticSshDir, "aa-symlink-key")
+		writeFileSync(targetPath, ed25519PrivateKeyPem, "utf-8")
+		symlinkSync(targetPath, symlinkPath)
+		homeSpy.mockReturnValue(diagnosticHome)
+		delete process.env.DOTENC_PRIVATE_KEY_BASE64
+		delete process.env.DOTENC_PRIVATE_KEY
+		const openSpy = spyOn(fsPromises, "open")
+
+		try {
+			const result = await getPrivateKeys({ diagnosticReadOnly: true })
+
+			expect(result.keys).toEqual([])
+			expect(result.incompleteKeys).toBe(1)
+			expect(
+				openSpy.mock.calls.some(
+					([filePath]) => String(filePath) === symlinkPath,
+				),
+			).toBe(false)
+		} finally {
+			openSpy.mockRestore()
+			homeSpy.mockReturnValue(tmpDir)
+			rmSync(diagnosticHome, { recursive: true, force: true })
+		}
+	})
+
+	test("diagnostic mode reports oversized candidates as incomplete before opening them", async () => {
+		const diagnosticHome = mkdtempSync(
+			path.join(os.tmpdir(), "test-privkeys-diagnostic-oversized-"),
+		)
+		const diagnosticSshDir = path.join(diagnosticHome, ".ssh")
+		mkdirSync(diagnosticSshDir)
+		const oversizedFileName = "aa-oversized-key"
+		const oversizedPath = path.join(diagnosticSshDir, oversizedFileName)
+		writeFileSync(oversizedPath, Buffer.from([0, 1]))
+		homeSpy.mockReturnValue(diagnosticHome)
+		delete process.env.DOTENC_PRIVATE_KEY_BASE64
+		delete process.env.DOTENC_PRIVATE_KEY
+		const openSpy = spyOn(fsPromises, "open")
+
+		try {
+			const result = await getPrivateKeys({
+				diagnosticReadOnly: true,
+				maxKeyBytes: 1,
+			})
+
+			expect(result.keys).toEqual([])
+			expect(result.incompleteKeys).toBe(1)
+			expect(result.unsupportedKeys).toContainEqual({
+				name: oversizedFileName,
+				reason: "private key exceeds the diagnostic size limit",
+			})
+			expect(
+				openSpy.mock.calls.some(
+					([filePath]) => String(filePath) === oversizedPath,
+				),
+			).toBe(false)
+		} finally {
+			openSpy.mockRestore()
+			homeSpy.mockReturnValue(tmpDir)
+			rmSync(diagnosticHome, { recursive: true, force: true })
+		}
+	})
+
+	test("diagnostic mode stops directory enumeration at the file-count bound", async () => {
+		const diagnosticHome = mkdtempSync(
+			path.join(os.tmpdir(), "test-privkeys-diagnostic-file-count-"),
+		)
+		const diagnosticSshDir = path.join(diagnosticHome, ".ssh")
+		mkdirSync(diagnosticSshDir)
+		homeSpy.mockReturnValue(diagnosticHome)
+		delete process.env.DOTENC_PRIVATE_KEY_BASE64
+		delete process.env.DOTENC_PRIVATE_KEY
+		let nextEntry = 0
+		const read = mock(async () => ({
+			name: `candidate-${nextEntry++}`,
+		}))
+		const close = mock(async () => {})
+		const opendirSpy = spyOn(fsPromises, "opendir").mockImplementation(
+			(async () => ({ read, close })) as unknown as typeof fsPromises.opendir,
+		)
+
+		try {
+			const result = await getPrivateKeys({ diagnosticReadOnly: true })
+
+			expect(result.keys).toEqual([])
+			expect(result.incompleteKeys).toBe(1)
+			expect(opendirSpy).toHaveBeenCalledWith(diagnosticSshDir)
+			expect(read).toHaveBeenCalledTimes(4097)
+			expect(close).toHaveBeenCalledTimes(1)
+		} finally {
+			opendirSpy.mockRestore()
+			homeSpy.mockReturnValue(tmpDir)
+			rmSync(diagnosticHome, { recursive: true, force: true })
+		}
+	})
+
+	test("diagnostic mode marks cumulative raw-byte exhaustion incomplete", async () => {
+		const diagnosticHome = mkdtempSync(
+			path.join(os.tmpdir(), "test-privkeys-diagnostic-total-bytes-"),
+		)
+		const diagnosticSshDir = path.join(diagnosticHome, ".ssh")
+		mkdirSync(diagnosticSshDir)
+		const rawChunk = Buffer.alloc(1024 * 1024)
+		for (let index = 0; index < 10; index += 1) {
+			writeFileSync(
+				path.join(
+					diagnosticSshDir,
+					`aa-budget-${index.toString().padStart(2, "0")}`,
+				),
+				rawChunk,
+			)
+		}
+		writeFileSync(
+			path.join(diagnosticSshDir, "zz-valid-key"),
+			ed25519PrivateKeyPem,
+			"utf-8",
+		)
+		homeSpy.mockReturnValue(diagnosticHome)
+		delete process.env.DOTENC_PRIVATE_KEY_BASE64
+		delete process.env.DOTENC_PRIVATE_KEY
+
+		try {
+			const result = await getPrivateKeys({ diagnosticReadOnly: true })
+
+			expect(result.keys).toEqual([])
+			expect(result.incompleteKeys).toBe(1)
+		} finally {
+			rawChunk.fill(0)
+			homeSpy.mockReturnValue(tmpDir)
+			rmSync(diagnosticHome, { recursive: true, force: true })
+		}
+	})
+
+	test("diagnostic mode rejects an opened inode that differs from the candidate", async () => {
+		const diagnosticHome = mkdtempSync(
+			path.join(os.tmpdir(), "test-privkeys-diagnostic-inode-"),
+		)
+		const diagnosticSshDir = path.join(diagnosticHome, ".ssh")
+		mkdirSync(diagnosticSshDir)
+		const candidateFileName = "aa-candidate-key"
+		const candidatePath = path.join(diagnosticSshDir, candidateFileName)
+		const openedPath = path.join(diagnosticSshDir, "opened-target.pub")
+		writeFileSync(candidatePath, ed25519PrivateKeyPem, "utf-8")
+		writeFileSync(openedPath, "different inode", "utf-8")
+		homeSpy.mockReturnValue(diagnosticHome)
+		delete process.env.DOTENC_PRIVATE_KEY_BASE64
+		delete process.env.DOTENC_PRIVATE_KEY
+		const originalOpen = fsPromises.open
+		const openSpy = spyOn(fsPromises, "open").mockImplementation((async (
+			...args: unknown[]
+		) => {
+			const [filePath] = args
+			if (String(filePath) === candidatePath) {
+				return originalOpen(openedPath, "r")
+			}
+			return Reflect.apply(originalOpen, fsPromises, args)
+		}) as unknown as typeof fsPromises.open)
+
+		try {
+			const result = await getPrivateKeys({ diagnosticReadOnly: true })
+
+			expect(result.keys.some((key) => key.name === candidateFileName)).toBe(
+				false,
+			)
+			expect(result.incompleteKeys).toBe(1)
+			expect(
+				openSpy.mock.calls.some(
+					([filePath]) => String(filePath) === candidatePath,
+				),
+			).toBe(true)
+		} finally {
+			openSpy.mockRestore()
+			homeSpy.mockReturnValue(tmpDir)
+			rmSync(diagnosticHome, { recursive: true, force: true })
+		}
 	})
 
 	test("loads passphrase-protected ~/.ssh key when DOTENC_PRIVATE_KEY_PASSPHRASE is set", async () => {

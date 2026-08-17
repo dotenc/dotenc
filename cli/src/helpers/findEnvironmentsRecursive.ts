@@ -4,7 +4,7 @@ import path from "node:path"
 
 export type EnvFile = { name: string; filePath: string; dir: string }
 
-const IGNORED_DIRS = new Set([
+export const DOTENC_RECURSIVE_IGNORED_DIRS = new Set([
 	"node_modules",
 	".git",
 	"dist",
@@ -40,7 +40,7 @@ export const findEnvironmentsRecursive = async (
 
 		for (const entry of entries) {
 			if (entry.isDirectory()) {
-				if (!IGNORED_DIRS.has(entry.name)) {
+				if (!DOTENC_RECURSIVE_IGNORED_DIRS.has(entry.name)) {
 					await walk(path.join(dir, entry.name))
 				}
 			} else if (entry.isFile()) {

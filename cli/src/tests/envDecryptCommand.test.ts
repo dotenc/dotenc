@@ -138,4 +138,33 @@ describe("env decrypt command", () => {
 		writeSpy.mockRestore()
 		exitSpy.mockRestore()
 	})
+
+	test("maps corrupt wrapped data-key errors to access denied in JSON mode", async () => {
+		decryptEnvironmentData.mockImplementation(async () => {
+			throw new Error("Failed to decrypt the data key.")
+		})
+
+		const writeSpy = spyOn(process.stdout, "write").mockImplementation(
+			() => true,
+		)
+		const exitSpy = spyOn(process, "exit").mockImplementation((code): never => {
+			throw new Error(`exit(${code})`)
+		})
+
+		await expect(decryptCommand("production", { json: true })).rejects.toThrow(
+			"exit(1)",
+		)
+
+		const [rawJson] = writeSpy.mock.calls[0] as [string]
+		const parsed = JSON.parse(rawJson) as {
+			ok: boolean
+			error: { code: string; message: string }
+		}
+
+		expect(parsed.ok).toBe(false)
+		expect(parsed.error.code).toBe("ACCESS_DENIED")
+		expect(parsed.error.message).toBe("Failed to decrypt the data key.")
+		writeSpy.mockRestore()
+		exitSpy.mockRestore()
+	})
 })

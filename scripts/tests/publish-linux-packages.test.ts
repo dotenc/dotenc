@@ -112,6 +112,44 @@ afterEach(() => {
 })
 
 describe("Linux package publication manifest", () => {
+	test("gates binary releases on the triggering main version change", () => {
+		const releaseWorkflow = readFileSync(
+			path.resolve(import.meta.dir, "../../.github/workflows/release.yml"),
+			"utf8",
+		)
+		const versionJob = workflowJob(releaseWorkflow, "check-version")
+		const releaseJob = workflowJob(releaseWorkflow, "build-and-release")
+
+		expect(releaseWorkflow).toContain(
+			"concurrency:\n  group: release-binaries-production\n  cancel-in-progress: false\n  queue: max",
+		)
+		expect(versionJob).toContain("          fetch-depth: 0")
+		expect(versionJob).toContain("    permissions:\n      contents: write")
+		expect(versionJob).toContain(
+			"          DOTENC_RELEASE_BEFORE_SHA: ${{ github.event.before }}",
+		)
+		expect(versionJob).toContain("          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}")
+		expect(versionJob).toContain("run: bun run ./scripts/check-cli-release.ts")
+		expect(versionJob).not.toContain("npm view")
+		expect(releaseJob).toContain(
+			"if: github.event_name == 'push' && needs.check-version.outputs.bumped == 'true'",
+		)
+		const targetCheck = releaseJob.indexOf(
+			"bun run ./scripts/check-cli-release.ts --target-only",
+		)
+		const releaseAction = releaseJob.indexOf(
+			"uses: softprops/action-gh-release@",
+		)
+		const releaseVerification = releaseJob.indexOf(
+			"bun run ./scripts/check-cli-release.ts --verify-release",
+		)
+		expect(targetCheck).toBeGreaterThan(-1)
+		expect(releaseAction).toBeGreaterThan(targetCheck)
+		expect(releaseVerification).toBeGreaterThan(releaseAction)
+		expect(releaseJob).toContain("          target_commitish: ${{ github.sha }}")
+		expect(releaseJob).toContain("          overwrite_files: false")
+	})
+
 	test("passes protected secrets to both release publisher workflows", () => {
 		const releaseWorkflow = readFileSync(
 			path.resolve(import.meta.dir, "../../.github/workflows/release.yml"),

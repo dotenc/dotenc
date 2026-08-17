@@ -2,11 +2,15 @@ import { spawnSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 
+export const DOTENC_DIFF_TEXTCONV = "dotenc textconv"
+export const DOTENC_DIFF_CACHE_TEXTCONV = "false"
+export const DOTENC_DIFF_ATTRIBUTE = ".env.*.enc diff=dotenc"
+
 export const setupGitDiff = (projectRoot = process.cwd()) => {
 	// Configure git first so a failure cannot leave a tracked attribute change.
 	for (const [key, value] of [
-		["diff.dotenc.textconv", "dotenc textconv"],
-		["diff.dotenc.cachetextconv", "false"],
+		["diff.dotenc.textconv", DOTENC_DIFF_TEXTCONV],
+		["diff.dotenc.cachetextconv", DOTENC_DIFF_CACHE_TEXTCONV],
 	] as const) {
 		const result = spawnSync("git", ["config", "--local", key, value], {
 			cwd: projectRoot,
@@ -31,7 +35,7 @@ export const setupGitDiff = (projectRoot = process.cwd()) => {
 	// untouched.
 	const gitattributesPath = path.join(projectRoot, ".gitattributes")
 	const legacyMarker = "*.enc diff=dotenc"
-	const marker = ".env.*.enc diff=dotenc"
+	const marker = DOTENC_DIFF_ATTRIBUTE
 
 	let content = ""
 	if (fs.existsSync(gitattributesPath)) {

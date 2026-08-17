@@ -35,7 +35,10 @@ const mapErrorCode = (message: string): CliErrorCode => {
 	if (message.includes("Environment file not found")) {
 		return "ENVIRONMENT_NOT_FOUND"
 	}
-	if (message === "Access denied to the environment.") {
+	if (
+		message === "Access denied to the environment." ||
+		message === "Failed to decrypt the data key."
+	) {
 		return "ACCESS_DENIED"
 	}
 	if (message.includes("No private keys found")) {

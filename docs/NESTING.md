@@ -13,6 +13,7 @@ Enable consistent dotenc usage in monorepos and subfolders with:
   wins.
 - `--local-only` in `dotenc run` and `dotenc dev` to restrict merge and profile
   discovery to the current directory.
+- Matching diagnostic scopes in `dotenc doctor` without loading plaintext.
 
 ## Terminology
 
@@ -60,6 +61,26 @@ Enable consistent dotenc usage in monorepos and subfolders with:
   profiles warn and continue; `--strict` makes that personal failure fatal.
   `development` failure is always fatal.
 - Accepts the same repeatable `--allow-process-env <name>` override as `run`.
+
+---
+
+### `dotenc doctor`
+
+- Default: diagnoses the effective project-root-to-`invocationDir` chain, the
+  same nesting scope used by `dev`.
+- `--local-only`: diagnoses only `invocationDir` and skips ancestor layers.
+- `--all`: performs a bounded recursive audit from `projectRoot` using the
+  standard ignored-directory rules. It cannot be combined with `--local-only`
+  or `--profile`.
+- `--profile alice` always requests the `personal.alice` suffix. Public-key
+  aliases remain display metadata and never select a profile.
+- No personal profile is healthy. Multiple accessible profiles are also
+  healthy and are reported as information because interactive `dev` will
+  prompt for a choice.
+- Doctor is read-only and offline: it never fetches Git history, invokes a key
+  provider, mutates project or local configuration, reads plaintext `.env`
+  contents, or decrypts encrypted environment content. It validates bounded
+  envelopes and unwraps matching data-key copies only.
 
 ---
 
@@ -145,3 +166,6 @@ Enable consistent dotenc usage in monorepos and subfolders with:
 - **`env list` is local by default**: discovering all environments across a large monorepo is an opt-in action (`--all`), keeping the common case fast and noise-free.
 - **Personal profiles are fingerprint-selected**: filenames reserve the
   `personal.<profile>` namespace, while `.pub` aliases remain display-only.
+- **Diagnostics mirror runtime scope without becoming runtime**: `doctor`
+  follows effective/local/recursive nesting rules but never materializes the
+  merged plaintext environment.

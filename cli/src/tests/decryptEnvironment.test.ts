@@ -1,13 +1,18 @@
-import { describe, expect, mock, test } from "bun:test"
+import { describe, expect, mock, spyOn, test } from "bun:test"
 import crypto from "node:crypto"
 import {
 	createDecryptEnvironmentDataContext,
+	createEnvironmentAccessProbeContext,
 	decryptEnvironment,
 	decryptEnvironmentData,
 	environmentDataKeysEqual,
+	probeEnvironmentAccess,
 	reencryptEnvironmentData,
 } from "../helpers/decryptEnvironment"
-import type { PrivateKeyEntry } from "../helpers/getPrivateKeys"
+import type {
+	GetPrivateKeysOptions,
+	PrivateKeyEntry,
+} from "../helpers/getPrivateKeys"
 import type { Environment } from "../schemas/environment"
 
 type DecryptEnvironmentDataDeps = NonNullable<
@@ -19,6 +24,7 @@ type DecryptEnvironmentDeps = NonNullable<
 type EnvironmentDataKeyComparisonDeps = NonNullable<
 	Parameters<typeof environmentDataKeysEqual>[2]
 >
+type EnvironmentAccessProbeDeps = Parameters<typeof probeEnvironmentAccess>[1]
 
 function makePrivateKeyEntry(
 	fingerprint: string,
@@ -51,7 +57,393 @@ function makeEnvironment(
 	}
 }
 
+describe("probeEnvironmentAccess", () => {
+	test("unwraps only, clears the data key, and suppresses key-loader diagnostics", async () => {
+		const unwrappedDataKey = Buffer.alloc(32, 17)
+		const decryptData = mock(async () => "SECRET=value")
+		const getPrivateKeys = mock(async (_options?: GetPrivateKeysOptions) => ({
+			keys: [makePrivateKeyEntry("fp-match")],
+			passphraseProtectedKeys: [],
+		}))
+		const deps: DecryptEnvironmentDataDeps = {
+			getPrivateKeys,
+			decryptDataKey: (() => unwrappedDataKey) as never,
+			decryptData: decryptData as never,
+		}
+
+		expect(
+			await probeEnvironmentAccess(makeEnvironment("fp-match"), deps),
+		).toEqual({ status: "accessible" })
+		expect(decryptData).not.toHaveBeenCalled()
+		expect(unwrappedDataKey).toEqual(Buffer.alloc(32))
+		expect(getPrivateKeys).toHaveBeenCalledTimes(1)
+		expect(getPrivateKeys.mock.calls[0][0]).toMatchObject({
+			environmentKeyErrorMode: "collect",
+		})
+		const diagnosticLogger = getPrivateKeys.mock.calls[0][0]?.logError
+		expect(diagnosticLogger).toBeFunction()
+		const errSpy = spyOn(console, "error").mockImplementation(() => {})
+		diagnosticLogger?.("provider detail that must not be logged")
+		expect(errSpy).not.toHaveBeenCalled()
+		errSpy.mockRestore()
+	})
+
+	test("uses recipient fingerprints rather than display aliases", async () => {
+		const decryptDataKey = mock(() => Buffer.alloc(32, 1))
+		const localKey = makePrivateKeyEntry("fp-local", "same-alias")
+		const environment = makeEnvironment("fp-recipient", "same-alias")
+		const deps: EnvironmentAccessProbeDeps = {
+			getPrivateKeys: async () => ({
+				keys: [localKey],
+				passphraseProtectedKeys: [],
+			}),
+			decryptDataKey: decryptDataKey as never,
+		}
+
+		expect(await probeEnvironmentAccess(environment, deps)).toEqual({
+			status: "inaccessible",
+		})
+		expect(decryptDataKey).not.toHaveBeenCalled()
+	})
+
+	test("classifies a corrupt wrapped data key without exposing the failure", async () => {
+		const deps: EnvironmentAccessProbeDeps = {
+			getPrivateKeys: async () => ({
+				keys: [makePrivateKeyEntry("fp-match")],
+				passphraseProtectedKeys: [],
+			}),
+			decryptDataKey: () => {
+				throw new Error("raw cryptographic failure: private detail")
+			},
+		}
+
+		const result = await probeEnvironmentAccess(
+			makeEnvironment("fp-match"),
+			deps,
+		)
+		expect(result).toEqual({ status: "corrupt-data-key" })
+		expect(JSON.stringify(result)).not.toContain("private detail")
+	})
+
+	test("clears an invalid-length unwrapped key before reporting corruption", async () => {
+		const invalidDataKey = Buffer.alloc(31, 23)
+		const deps: EnvironmentAccessProbeDeps = {
+			getPrivateKeys: async () => ({
+				keys: [makePrivateKeyEntry("fp-match")],
+				passphraseProtectedKeys: [],
+			}),
+			decryptDataKey: (() => invalidDataKey) as never,
+		}
+
+		expect(
+			await probeEnvironmentAccess(makeEnvironment("fp-match"), deps),
+		).toEqual({ status: "corrupt-data-key" })
+		expect(invalidDataKey).toEqual(Buffer.alloc(31))
+	})
+
+	test("continues from a corrupt local wrap to a valid local wrap and clears both keys", async () => {
+		const corruptKey = makePrivateKeyEntry("fp-corrupt", "id_corrupt")
+		const validKey = makePrivateKeyEntry("fp-valid", "id_valid")
+		const invalidDataKey = Buffer.alloc(31, 19)
+		const validDataKey = Buffer.alloc(32, 29)
+		const decryptDataKey = mock((privateKey: PrivateKeyEntry) =>
+			privateKey.fingerprint === "fp-corrupt" ? invalidDataKey : validDataKey,
+		)
+		const deps: EnvironmentAccessProbeDeps = {
+			getPrivateKeys: async () => ({
+				keys: [corruptKey, validKey],
+				passphraseProtectedKeys: [],
+			}),
+			decryptDataKey: decryptDataKey as never,
+		}
+
+		expect(
+			await probeEnvironmentAccess(
+				makeEnvironment(["fp-corrupt", "fp-valid"]),
+				deps,
+			),
+		).toEqual({ status: "accessible" })
+		expect(decryptDataKey).toHaveBeenCalledTimes(2)
+		expect(invalidDataKey).toEqual(Buffer.alloc(31))
+		expect(validDataKey).toEqual(Buffer.alloc(32))
+	})
+
+	test.each([
+		["corrupt first", ["fp-corrupt", "fp-valid"]],
+		["valid first", ["fp-valid", "fp-corrupt"]],
+	] as const)("is accessible with matching local keys in %s order", async (_label, order) => {
+		const keysByFingerprint = new Map([
+			["fp-corrupt", makePrivateKeyEntry("fp-corrupt", "id_corrupt")],
+			["fp-valid", makePrivateKeyEntry("fp-valid", "id_valid")],
+		])
+		const validDataKey = Buffer.alloc(32, 31)
+		const decryptDataKey = mock((privateKey: PrivateKeyEntry) => {
+			if (privateKey.fingerprint === "fp-corrupt") {
+				throw new Error("corrupt wrapped key")
+			}
+			return validDataKey
+		})
+		const discoverOnePasswordKeyCandidates = mock(async () => ({
+			status: "unavailable" as const,
+			keys: [],
+			unsupportedKeys: [],
+			unavailableAccounts: [],
+		}))
+		const deps: EnvironmentAccessProbeDeps = {
+			getPrivateKeys: async () => ({
+				keys: order.map((fingerprint) => {
+					const key = keysByFingerprint.get(fingerprint)
+					if (!key) throw new Error("missing test key")
+					return key
+				}),
+				passphraseProtectedKeys: [],
+			}),
+			discoverOnePasswordKeyCandidates,
+			decryptDataKey: decryptDataKey as never,
+		}
+
+		expect(
+			await probeEnvironmentAccess(makeEnvironment([...order].reverse()), deps),
+		).toEqual({ status: "accessible" })
+		expect(validDataKey).toEqual(Buffer.alloc(32))
+		expect(discoverOnePasswordKeyCandidates).not.toHaveBeenCalled()
+	})
+
+	test("defers corrupt classification to inconclusive provider evidence", async () => {
+		const localKey = makePrivateKeyEntry("fp-local")
+		const decryptDataKey = mock(() => {
+			throw new Error("corrupt wrapped key")
+		})
+		const baseDeps: EnvironmentAccessProbeDeps = {
+			getPrivateKeys: async () => ({
+				keys: [localKey],
+				passphraseProtectedKeys: [],
+			}),
+			decryptDataKey: decryptDataKey as never,
+		}
+
+		expect(
+			await probeEnvironmentAccess(makeEnvironment("fp-local"), {
+				...baseDeps,
+				discoverOnePasswordKeyCandidates: async () => ({
+					status: "unavailable",
+					keys: [],
+					unsupportedKeys: [],
+					unavailableAccounts: [],
+				}),
+			}),
+		).toEqual({
+			status: "provider-inconclusive",
+			provider: "1password",
+			reason: "discovery-unavailable",
+		})
+
+		expect(
+			await probeEnvironmentAccess(makeEnvironment("fp-local"), {
+				...baseDeps,
+				discoverOnePasswordKeyCandidates: async () => ({
+					status: "available",
+					keys: [],
+					unsupportedKeys: [],
+					unavailableAccounts: [],
+				}),
+			}),
+		).toEqual({ status: "corrupt-data-key" })
+	})
+
+	test("keeps passphrase-protected local access inconclusive after corrupt usable wraps", async () => {
+		const deps: EnvironmentAccessProbeDeps = {
+			getPrivateKeys: async () => ({
+				keys: [makePrivateKeyEntry("fp-local")],
+				passphraseProtectedKeys: ["id_protected"],
+			}),
+			decryptDataKey: () => {
+				throw new Error("corrupt wrapped key")
+			},
+		}
+
+		expect(
+			await probeEnvironmentAccess(makeEnvironment("fp-local"), deps),
+		).toEqual({
+			status: "local-key-inconclusive",
+			reason: "passphrase-protected",
+		})
+	})
+
+	test("sanitizes cached provider failures into a stable classification", async () => {
+		const deps: EnvironmentAccessProbeDeps = {
+			getPrivateKeys: async () => ({
+				keys: [],
+				passphraseProtectedKeys: [],
+			}),
+			loadCachedOnePasswordPrivateKey: async () => ({
+				status: "transient-failure",
+				error: new Error("raw provider exception: account detail") as never,
+			}),
+			decryptDataKey: (() => Buffer.alloc(32)) as never,
+		}
+
+		const result = await probeEnvironmentAccess(
+			makeEnvironment("fp-provider"),
+			deps,
+		)
+		expect(result).toEqual({
+			status: "provider-inconclusive",
+			provider: "1password",
+			reason: "cached-key-unavailable",
+		})
+		expect(JSON.stringify(result)).not.toContain("account detail")
+
+		const rejectedResult = await probeEnvironmentAccess(
+			makeEnvironment("fp-provider"),
+			{
+				...deps,
+				loadCachedOnePasswordPrivateKey: async () => {
+					throw new Error("raw rejected provider promise: account detail")
+				},
+			},
+		)
+		expect(rejectedResult).toEqual({
+			status: "provider-inconclusive",
+			provider: "1password",
+			reason: "cached-key-unavailable",
+		})
+		expect(JSON.stringify(rejectedResult)).not.toContain("account detail")
+	})
+
+	test("distinguishes provider discovery and partial-account failures", async () => {
+		const baseDeps: EnvironmentAccessProbeDeps = {
+			getPrivateKeys: async () => ({
+				keys: [],
+				passphraseProtectedKeys: [],
+			}),
+			decryptDataKey: (() => Buffer.alloc(32)) as never,
+		}
+
+		expect(
+			await probeEnvironmentAccess(makeEnvironment("fp-provider"), {
+				...baseDeps,
+				discoverOnePasswordKeyCandidates: async () => ({
+					status: "unavailable",
+					keys: [],
+					unsupportedKeys: [],
+					unavailableAccounts: [],
+				}),
+			}),
+		).toEqual({
+			status: "provider-inconclusive",
+			provider: "1password",
+			reason: "discovery-unavailable",
+		})
+
+		expect(
+			await probeEnvironmentAccess(makeEnvironment("fp-provider"), {
+				...baseDeps,
+				discoverOnePasswordKeyCandidates: async () => ({
+					status: "available",
+					keys: [],
+					unsupportedKeys: [],
+					unavailableAccounts: [
+						{
+							label: "sanitized account label",
+							reason: "authorization-or-access-failed",
+						},
+					],
+				}),
+			}),
+		).toEqual({
+			status: "provider-inconclusive",
+			provider: "1password",
+			reason: "account-unavailable",
+		})
+	})
+
+	test("shares local and provider state across an explicitly supplied context", async () => {
+		const privateKey = makePrivateKeyEntry("fp-provider", "1Password / key")
+		const loadPrivateKey = mock(async () => privateKey)
+		const getPrivateKeys = mock(async () => ({
+			keys: [],
+			passphraseProtectedKeys: [],
+		}))
+		const discoverOnePasswordKeyCandidates = mock(async () => ({
+			status: "available" as const,
+			keys: [
+				{
+					source: "1password" as const,
+					selector: "1password:a:v:i",
+					name: "key",
+					hint: "ed25519",
+					group: { id: "a", label: "Account A" },
+					publicKey: crypto.createPublicKey(privateKey.privateKey),
+					fingerprint: "fp-provider",
+					algorithm: "ed25519" as const,
+					loadPrivateKey,
+				},
+			],
+			unsupportedKeys: [],
+			unavailableAccounts: [],
+		}))
+		const firstDataKey = Buffer.alloc(32, 3)
+		const secondDataKey = Buffer.alloc(32, 4)
+		let unwrapCalls = 0
+		const context = createEnvironmentAccessProbeContext({
+			getPrivateKeys,
+			discoverOnePasswordKeyCandidates,
+			decryptDataKey: (() =>
+				unwrapCalls++ === 0 ? firstDataKey : secondDataKey) as never,
+		})
+
+		try {
+			expect(
+				await Promise.all([
+					probeEnvironmentAccess(makeEnvironment("fp-provider"), context),
+					probeEnvironmentAccess(makeEnvironment("fp-provider"), context),
+				]),
+			).toEqual([{ status: "accessible" }, { status: "accessible" }])
+			expect(getPrivateKeys).toHaveBeenCalledTimes(1)
+			expect(discoverOnePasswordKeyCandidates).toHaveBeenCalledTimes(1)
+			expect(loadPrivateKey).toHaveBeenCalledTimes(1)
+			expect(firstDataKey).toEqual(Buffer.alloc(32))
+			expect(secondDataKey).toEqual(Buffer.alloc(32))
+		} finally {
+			context.dispose()
+		}
+	})
+})
+
 describe("decryptEnvironmentData", () => {
+	test("continues from a corrupt local wrap to a later decryptable local wrap", async () => {
+		const corruptKey = makePrivateKeyEntry("fp-corrupt", "id_corrupt")
+		const validKey = makePrivateKeyEntry("fp-valid", "id_valid")
+		const invalidDataKey = Buffer.alloc(31, 19)
+		const validDataKey = Buffer.alloc(32, 29)
+		const decryptData = mock(async (dataKey: Buffer) => {
+			expect(dataKey).toEqual(Buffer.alloc(32, 29))
+			return "OK"
+		})
+		const deps: DecryptEnvironmentDataDeps = {
+			getPrivateKeys: async () => ({
+				keys: [corruptKey, validKey],
+				passphraseProtectedKeys: [],
+			}),
+			decryptDataKey: ((privateKey: PrivateKeyEntry) =>
+				privateKey.fingerprint === "fp-corrupt"
+					? invalidDataKey
+					: validDataKey) as never,
+			decryptData: decryptData as never,
+		}
+
+		expect(
+			await decryptEnvironmentData(
+				"development",
+				makeEnvironment(["fp-corrupt", "fp-valid"]),
+				deps,
+			),
+		).toBe("OK")
+		expect(invalidDataKey).toEqual(Buffer.alloc(31))
+		expect(validDataKey).toEqual(Buffer.alloc(32))
+	})
+
 	test("does not discover 1Password when a local key matches", async () => {
 		const discover = mock(async () => ({
 			status: "available" as const,

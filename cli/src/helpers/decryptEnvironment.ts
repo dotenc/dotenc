@@ -46,6 +46,9 @@ export const createDecryptionKeyContext = (
 	},
 ): DecryptionKeyContext => {
 	let privateKeysPromise: ReturnType<typeof deps.getPrivateKeys> | undefined
+	let nonInteractivePrivateKeysPromise:
+		| ReturnType<typeof deps.getPrivateKeys>
+		| undefined
 	let discoveryPromise:
 		| ReturnType<typeof discoverOnePasswordKeyCandidates>
 		| undefined
@@ -81,8 +84,15 @@ export const createDecryptionKeyContext = (
 	}
 
 	return {
-		getPrivateKeys: () => {
-			privateKeysPromise ??= deps.getPrivateKeys()
+		getPrivateKeys: (options) => {
+			const nonInteractive =
+				options?.environmentKeyErrorMode === "collect" &&
+				options.logError !== undefined
+			if (nonInteractive) {
+				nonInteractivePrivateKeysPromise ??= deps.getPrivateKeys(options)
+				return nonInteractivePrivateKeysPromise
+			}
+			privateKeysPromise ??= deps.getPrivateKeys(options)
 			return privateKeysPromise
 		},
 		loadCachedOnePasswordPrivateKey: deps.loadCachedOnePasswordPrivateKey
@@ -126,6 +136,7 @@ export const createDecryptionKeyContext = (
 			if (disposed) return
 			disposed = true
 			privateKeysPromise = undefined
+			nonInteractivePrivateKeysPromise = undefined
 			discoveryPromise = undefined
 			cachedProviderTransientFailure = undefined
 			providerPrivateKeys.clear()
@@ -156,6 +167,81 @@ type EnvironmentDataKeyComparisonDeps = Pick<
 	| "decryptDataKey"
 >
 
+export type EnvironmentAccessProbeDeps = EnvironmentDataKeyComparisonDeps
+
+export type EnvironmentAccessProbeContext = EnvironmentAccessProbeDeps & {
+	dispose: () => void
+}
+
+/**
+ * Share local/provider key discovery across a diagnostic batch. Callers supply
+ * provider functions explicitly so read-only diagnostics can disable locator
+ * cache writes and removals instead of inheriting mutable provider defaults.
+ */
+export const createEnvironmentAccessProbeContext = (
+	deps: EnvironmentAccessProbeDeps,
+): EnvironmentAccessProbeContext => {
+	const keyContext = createDecryptionKeyContext(deps)
+	return {
+		...deps,
+		...keyContext,
+	}
+}
+
+export type EnvironmentAccessProbeResult =
+	| { status: "accessible" }
+	| { status: "inaccessible" }
+	| { status: "corrupt-data-key" }
+	| {
+			status: "local-key-inconclusive"
+			reason: "passphrase-protected" | "key-inventory-incomplete"
+	  }
+	| {
+			status: "provider-inconclusive"
+			provider: "1password"
+			reason:
+				| "cached-key-unavailable"
+				| "discovery-unavailable"
+				| "unsupported-version"
+				| "account-unavailable"
+				| "private-key-unavailable"
+	  }
+
+type EnvironmentDataKeyUnwrapMode = "decrypt" | "probe"
+
+class EnvironmentInaccessibleError extends Error {
+	constructor(message: string) {
+		super(message)
+		this.name = "EnvironmentInaccessibleError"
+	}
+}
+
+class EnvironmentDataKeyCorruptError extends Error {
+	constructor(options?: ErrorOptions) {
+		super("Failed to decrypt the data key.", options)
+		this.name = "EnvironmentDataKeyCorruptError"
+	}
+}
+
+class EnvironmentProviderInconclusiveError extends Error {
+	constructor(
+		readonly reason: Extract<
+			EnvironmentAccessProbeResult,
+			{ status: "provider-inconclusive" }
+		>["reason"],
+	) {
+		super("Configured private-key provider access could not be determined.")
+		this.name = "EnvironmentProviderInconclusiveError"
+	}
+}
+
+class EnvironmentLocalKeyInconclusiveError extends Error {
+	constructor() {
+		super("Passphrase-protected local-key access could not be determined.")
+		this.name = "EnvironmentLocalKeyInconclusiveError"
+	}
+}
+
 class EnvironmentAccessDeniedError extends Error {
 	constructor(readonly availablePrivateKeyNames: string[]) {
 		super("Access denied to the environment.")
@@ -166,9 +252,15 @@ class EnvironmentAccessDeniedError extends Error {
 const unwrapEnvironmentDataKey = async (
 	environment: Environment,
 	deps: EnvironmentDataKeyComparisonDeps,
+	mode: EnvironmentDataKeyUnwrapMode = "decrypt",
 ): Promise<Buffer> => {
 	const { keys: availablePrivateKeys, passphraseProtectedKeys } =
-		await deps.getPrivateKeys()
+		await (mode === "probe"
+			? deps.getPrivateKeys({
+					environmentKeyErrorMode: "collect",
+					logError: () => {},
+				})
+			: deps.getPrivateKeys())
 
 	let grantedKey: Environment["keys"][number] | undefined
 	let selectedPrivateKey: PrivateKeyEntry | undefined
@@ -180,28 +272,49 @@ const unwrapEnvironmentDataKey = async (
 	let cachedProviderResult: CachedOnePasswordPrivateKeyResult = {
 		status: "miss",
 	}
+	let corruptMatchingLocalWrap = false
 
 	for (const privateKeyEntry of availablePrivateKeys) {
-		grantedKey = environment.keys.find((key) => {
-			return key.fingerprint === privateKeyEntry.fingerprint
-		})
+		for (const recipient of environment.keys) {
+			if (recipient.fingerprint !== privateKeyEntry.fingerprint) continue
 
-		if (grantedKey) {
-			selectedPrivateKey = privateKeyEntry
-			break
+			let candidateDataKey: Buffer
+			try {
+				candidateDataKey = deps.decryptDataKey(
+					privateKeyEntry,
+					Buffer.from(recipient.encryptedDataKey, "base64"),
+				)
+			} catch {
+				corruptMatchingLocalWrap = true
+				continue
+			}
+
+			if (candidateDataKey.byteLength === 32) return candidateDataKey
+			candidateDataKey.fill(0)
+			corruptMatchingLocalWrap = true
 		}
 	}
 
 	if (!grantedKey && deps.loadCachedOnePasswordPrivateKey) {
-		cachedProviderResult = await deps.loadCachedOnePasswordPrivateKey(
-			environment.keys.map((key) => key.fingerprint),
-		)
+		try {
+			cachedProviderResult = await deps.loadCachedOnePasswordPrivateKey(
+				environment.keys.map((key) => key.fingerprint),
+			)
+		} catch (error) {
+			if (mode === "probe") {
+				throw new EnvironmentProviderInconclusiveError("cached-key-unavailable")
+			}
+			throw error
+		}
 		if (cachedProviderResult.status === "loaded") {
 			selectedPrivateKey = cachedProviderResult.privateKey
 			grantedKey = environment.keys.find(
 				(key) => key.fingerprint === selectedPrivateKey?.fingerprint,
 			)
 		} else if (cachedProviderResult.status === "transient-failure") {
+			if (mode === "probe") {
+				throw new EnvironmentProviderInconclusiveError("cached-key-unavailable")
+			}
 			throw cachedProviderResult.error
 		}
 	}
@@ -212,11 +325,22 @@ const unwrapEnvironmentDataKey = async (
 		availablePrivateKeys.length === 0 &&
 		passphraseProtectedKeys.length > 0
 	) {
-		throw new Error(passphraseProtectedKeyError(passphraseProtectedKeys))
+		if (mode === "probe") throw new EnvironmentLocalKeyInconclusiveError()
+		throw new EnvironmentInaccessibleError(
+			passphraseProtectedKeyError(passphraseProtectedKeys),
+		)
 	}
 
 	if (!grantedKey && deps.discoverOnePasswordKeyCandidates) {
-		const discovery = await deps.discoverOnePasswordKeyCandidates()
+		let discovery: Awaited<ReturnType<typeof discoverOnePasswordKeyCandidates>>
+		try {
+			discovery = await deps.discoverOnePasswordKeyCandidates()
+		} catch (error) {
+			if (mode === "probe") {
+				throw new EnvironmentProviderInconclusiveError("discovery-unavailable")
+			}
+			throw error
+		}
 		providerStatus = discovery.status
 		providerKeyNames = discovery.keys.map(
 			(candidate) => `${candidate.group.label} / ${candidate.name}`,
@@ -234,8 +358,17 @@ const unwrapEnvironmentDataKey = async (
 
 		if (matchingCandidates.length > 0) {
 			const candidate = matchingCandidates[0]
-			selectedPrivateKey = await (deps.loadPrivateKey?.(candidate) ??
-				candidate.loadPrivateKey())
+			try {
+				selectedPrivateKey = await (deps.loadPrivateKey?.(candidate) ??
+					candidate.loadPrivateKey())
+			} catch (error) {
+				if (mode === "probe") {
+					throw new EnvironmentProviderInconclusiveError(
+						"private-key-unavailable",
+					)
+				}
+				throw error
+			}
 			grantedKey = environment.keys.find(
 				(key) => key.fingerprint === selectedPrivateKey?.fingerprint,
 			)
@@ -243,10 +376,30 @@ const unwrapEnvironmentDataKey = async (
 	}
 
 	if (!grantedKey || !selectedPrivateKey) {
+		if (mode === "probe" && passphraseProtectedKeys.length > 0) {
+			throw new EnvironmentLocalKeyInconclusiveError()
+		}
+		if (mode === "decrypt" && passphraseProtectedKeys.length > 0) {
+			throw new EnvironmentInaccessibleError(
+				passphraseProtectedKeyError(passphraseProtectedKeys),
+			)
+		}
 		if (providerStatus === "unsupported-version") {
+			if (mode === "probe") {
+				throw new EnvironmentProviderInconclusiveError("unsupported-version")
+			}
 			throw new Error(
 				"The installed 1Password CLI version is unsupported. dotenc requires op 2.x.",
 			)
+		}
+		if (mode === "probe" && providerStatus === "unavailable") {
+			throw new EnvironmentProviderInconclusiveError("discovery-unavailable")
+		}
+		if (mode === "probe" && unavailableProviderAccountLabels.length > 0) {
+			throw new EnvironmentProviderInconclusiveError("account-unavailable")
+		}
+		if (corruptMatchingLocalWrap) {
+			throw new EnvironmentDataKeyCorruptError()
 		}
 		if (availablePrivateKeys.length === 0 && providerKeyNames.length === 0) {
 			const unavailableAccounts = [...new Set(unavailableProviderAccountLabels)]
@@ -254,7 +407,7 @@ const unwrapEnvironmentDataKey = async (
 				unavailableAccounts.length > 0
 					? ` 1Password access was unavailable for: ${unavailableAccounts.join(", ")}.`
 					: ""
-			throw new Error(
+			throw new EnvironmentInaccessibleError(
 				`No private keys found. Please ensure you have SSH keys in ~/.ssh/ or set DOTENC_PRIVATE_KEY_BASE64.${providerGuidance}`,
 			)
 		}
@@ -273,14 +426,68 @@ const unwrapEnvironmentDataKey = async (
 			Buffer.from(grantedKey.encryptedDataKey, "base64"),
 		)
 	} catch (error) {
-		throw new Error("Failed to decrypt the data key.", { cause: error })
+		if (mode === "probe" && passphraseProtectedKeys.length > 0) {
+			throw new EnvironmentLocalKeyInconclusiveError()
+		}
+		if (mode === "probe" && unavailableProviderAccountLabels.length > 0) {
+			throw new EnvironmentProviderInconclusiveError("account-unavailable")
+		}
+		throw new EnvironmentDataKeyCorruptError({ cause: error })
 	}
 	if (dataKey.byteLength !== 32) {
 		dataKey.fill(0)
-		throw new Error("Failed to decrypt the data key.")
+		if (mode === "probe" && passphraseProtectedKeys.length > 0) {
+			throw new EnvironmentLocalKeyInconclusiveError()
+		}
+		if (mode === "probe" && unavailableProviderAccountLabels.length > 0) {
+			throw new EnvironmentProviderInconclusiveError("account-unavailable")
+		}
+		throw new EnvironmentDataKeyCorruptError()
 	}
 
 	return dataKey
+}
+
+/**
+ * Test whether an envelope's wrapped data key is usable without decrypting or
+ * otherwise materializing its plaintext content. Provider failures are reduced
+ * to stable reason codes and a successfully unwrapped key is always cleared.
+ */
+export const probeEnvironmentAccess = async (
+	environment: Environment,
+	deps: EnvironmentAccessProbeDeps,
+): Promise<EnvironmentAccessProbeResult> => {
+	let dataKey: Buffer | undefined
+	try {
+		dataKey = await unwrapEnvironmentDataKey(environment, deps, "probe")
+		return { status: "accessible" }
+	} catch (error) {
+		if (error instanceof EnvironmentDataKeyCorruptError) {
+			return { status: "corrupt-data-key" }
+		}
+		if (error instanceof EnvironmentProviderInconclusiveError) {
+			return {
+				status: "provider-inconclusive",
+				provider: "1password",
+				reason: error.reason,
+			}
+		}
+		if (error instanceof EnvironmentLocalKeyInconclusiveError) {
+			return {
+				status: "local-key-inconclusive",
+				reason: "passphrase-protected",
+			}
+		}
+		if (
+			error instanceof EnvironmentAccessDeniedError ||
+			error instanceof EnvironmentInaccessibleError
+		) {
+			return { status: "inaccessible" }
+		}
+		throw error
+	} finally {
+		dataKey?.fill(0)
+	}
 }
 
 type ReencryptEnvironmentDataDeps = DecryptEnvironmentDataDeps & {
