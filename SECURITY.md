@@ -768,11 +768,19 @@ The trust model separates authenticity from delivery:
   render signature-enforcing configuration locally. Compromise of
   `packages.dotenc.org` alone therefore cannot substitute a first-install trust
   root without failing that digest check.
-- A first package publication accepts Linux binaries only from the immutable
-  Actions artifact created earlier in the same release run; manual and
-  scheduled invocations are refresh-only. Later refreshes authenticate the
-  canonical six-package bundle through its APT-subkey-signed digest manifest,
-  not through the adjacent mutable checksum alone.
+- A first package publication normally accepts Linux binaries only from the
+  immutable Actions artifact created earlier in the same release run. A narrow,
+  environment-protected manual recovery may instead name the exact artifact
+  from a completed failed `main` release run when no canonical bundle exists.
+  That path binds the source run, repository, revision, annotated reservation
+  marker, unchanged package-generation inputs, artifact identity, non-expiry,
+  bounded size, and name to the stable release. Immediately before signing it
+  revalidates the annotated reservation and exact base-release asset set, then
+  requires the artifact checksum manifest and every Linux archive digest to
+  match the already published release. Other manual and scheduled invocations
+  remain validation- or refresh-only. Later refreshes authenticate the canonical
+  six-package bundle through its APT-subkey-signed digest manifest, not through
+  the adjacent mutable checksum alone.
 - After the signed repositories pass clean direct-package, repository, and
   public-edge verification, the publisher copies the exact DEB and RPM bytes to
   stable architecture-specific GitHub Release asset names. Existing assets must
@@ -810,11 +818,13 @@ DEB has no independent per-package signature. The adjacent checksum detects
 accidental corruption but is delivered through the same trust boundary. Once
 installed, the embedded public key and repository configuration authenticate
 future APT or DNF updates through the signed repository metadata and, for RPM,
-the signed package itself. DNF keeps repository-metadata keys separately from
-RPM's package-signature database, so it can require one local confirmation when
-it first imports the package-provided certificate for metadata verification.
-This bootstrap boundary is why the direct packages must not be described as
-self-authenticating.
+the signed package itself. Clean-image release validation requires the canonical
+and package-installed RPM certificate SHA-256 digests to match before exercising
+that configuration against the local signed repository. DNF keeps
+repository-metadata keys separately from RPM's package-signature database, so it
+can require one local confirmation when it first imports the package-provided
+certificate for metadata verification. This bootstrap boundary is why the
+direct packages must not be described as self-authenticating.
 
 The repository objects are stored in the private-write
 `dotenc-packages` Cloudflare R2 bucket and exposed through the

@@ -11,6 +11,10 @@ on:
         description: Same-run immutable artifact ID used only for initial signing
         required: false
         type: string
+      source_run_id:
+        description: Reserved for reviewed manual recovery from a failed release run
+        required: false
+        type: string
       validate_only:
         description: Reserved for manual signing-key validation
         required: false
@@ -27,12 +31,21 @@ on:
         required: true
         type: boolean
         default: true
+      source_run_id:
+        description: Failed release workflow run ID for reviewed initial-publication recovery
+        required: false
+        type: string
+      package_input_artifact_id:
+        description: Immutable Linux input artifact ID from the failed release run
+        required: false
+        type: string
   schedule:
     - cron: "17 4 * * 1"
 
 concurrency:
   group: linux-packages-production
   cancel-in-progress: false
+  queue: max
 
 jobs:
   publish:
@@ -47,6 +60,7 @@ jobs:
     env:
       VERSION: ${{ inputs.version }}
       PACKAGE_INPUT_ARTIFACT_ID: ${{ inputs.package_input_artifact_id }}
+      SOURCE_RUN_ID: ${{ inputs.source_run_id }}
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
       R2_BUCKET: ${{ vars.R2_BUCKET }}
@@ -128,7 +142,15 @@ jobs:
           fi
 
           publication_epoch=$(date -u +%s)
+          source_run_id=${SOURCE_RUN_ID:-}
+          package_input_artifact_id=${PACKAGE_INPUT_ARTIFACT_ID:-}
+          recovery=false
+          release_commit=""
           if [[ "$validate_only" == "true" ]]; then
+            if [[ -n "$source_run_id" || -n "$package_input_artifact_id" ]]; then
+              echo "Signing-key validation does not accept recovery artifact inputs" >&2
+              exit 1
+            fi
             refresh=false
             checkout_version=$(jq -r '.version' cli/package.json)
             if [[ "$checkout_version" != "$version" ]]; then
@@ -141,16 +163,21 @@ jobs:
               exit 1
             fi
           elif [[ "$bundle_present" == "true" ]]; then
+            if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" &&
+              ( -n "$source_run_id" || -n "$package_input_artifact_id" ) ]]; then
+              echo "Recovery artifact inputs are invalid after the canonical Linux bundle exists" >&2
+              exit 1
+            fi
+            if [[ -n "$source_run_id" ]]; then
+              echo "A source release run is valid only for reviewed manual initial-publication recovery" >&2
+              exit 1
+            fi
             refresh=true
             source_date_epoch=""
           else
             refresh=false
-            if [[ "$GITHUB_EVENT_NAME" != "push" ]]; then
-              echo "Initial signing is restricted to the release workflow's same-run immutable artifact; dispatch and schedule may only refresh an existing canonical bundle" >&2
-              exit 1
-            fi
-            if [[ ! "$PACKAGE_INPUT_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]; then
-              echo "Initial signing requires the immutable same-run Linux package input artifact ID" >&2
+            if [[ "$GITHUB_EVENT_NAME" != "push" && "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]]; then
+              echo "Initial signing is restricted to the release workflow or reviewed manual recovery" >&2
               exit 1
             fi
             checkout_version=$(jq -r '.version' cli/package.json)
@@ -162,10 +189,180 @@ jobs:
               "refs/tags/v$version:refs/tags/v$version"
             checkout_commit=$(git rev-parse 'HEAD^{commit}')
             tag_commit=$(git rev-parse "v$version^{commit}")
-            if [[ "$checkout_commit" != "$GITHUB_SHA" || "$tag_commit" != "$GITHUB_SHA" ]]; then
-              echo "Initial signing requires release tag v$version to resolve to the checked-out release commit" >&2
-              exit 1
+
+            if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+              if [[ -n "$source_run_id" ]]; then
+                echo "Push-triggered initial signing does not accept a source release run override" >&2
+                exit 1
+              fi
+              if [[ ! "$package_input_artifact_id" =~ ^[1-9][0-9]*$ ]]; then
+                echo "Initial signing requires the immutable same-run Linux package input artifact ID" >&2
+                exit 1
+              fi
+              if [[ "$checkout_commit" != "$GITHUB_SHA" || "$tag_commit" != "$GITHUB_SHA" ]]; then
+                echo "Initial signing requires release tag v$version to resolve to the checked-out release commit" >&2
+                exit 1
+              fi
+              release_commit=$tag_commit
+            else
+              recovery=true
+              if [[ ! "$source_run_id" =~ ^[1-9][0-9]{0,19}$ ||
+                ! "$package_input_artifact_id" =~ ^[1-9][0-9]{0,19}$ ]]; then
+                echo "Manual initial recovery requires canonical source run and artifact IDs" >&2
+                exit 1
+              fi
+
+              source_run_json=$(gh api \
+                "repos/$GITHUB_REPOSITORY/actions/runs/$source_run_id")
+              if ! jq -e \
+                --arg run_id "$source_run_id" \
+                --arg repository "$GITHUB_REPOSITORY" \
+                '(.id | type) == "number" and .id > 0 and
+                  (.id | tostring) == $run_id and
+                  .event == "push" and
+                  .status == "completed" and
+                  .conclusion == "failure" and
+                  .head_branch == "main" and
+                  .path == ".github/workflows/release.yml" and
+                  (.repository.id | type) == "number" and .repository.id > 0 and
+                  (.head_repository.id | type) == "number" and
+                  .head_repository.id == .repository.id and
+                  .repository.full_name == $repository and
+                  .head_repository.full_name == $repository' \
+                <<<"$source_run_json" >/dev/null; then
+                echo "The recovery source is not an exact failed main release workflow run" >&2
+                exit 1
+              fi
+              source_head_sha=$(jq -r '.head_sha' <<<"$source_run_json")
+              if [[ ! "$source_head_sha" =~ ^[0-9a-f]{40}$ || "$tag_commit" != "$source_head_sha" ]]; then
+                echo "The recovery source revision does not match the release tag" >&2
+                exit 1
+              fi
+              if [[ "$checkout_commit" != "$GITHUB_SHA" ]]; then
+                echo "Manual recovery requires the exact checked-out main workflow revision" >&2
+                exit 1
+              fi
+              if ! git --no-pager diff --quiet --no-ext-diff --no-textconv \
+                "$tag_commit" "$checkout_commit" -- \
+                bun.lockb \
+                cli/package.json \
+                cli/packaging \
+                package.json \
+                scripts/alpine-package-tool.sh \
+                scripts/publish-linux-packages.ts \
+                scripts/verify-packages-edge.sh; then
+                echo "Manual recovery requires release package-generation inputs to remain unchanged" >&2
+                exit 1
+              fi
+
+              tag_ref_json=$(gh api \
+                "repos/$GITHUB_REPOSITORY/git/ref/tags/v$version")
+              if ! jq -e \
+                --arg ref "refs/tags/v$version" \
+                '.ref == $ref and .object.type == "tag" and
+                  (.object.sha | test("^[0-9a-f]{40}$"))' \
+                <<<"$tag_ref_json" >/dev/null; then
+                echo "Manual recovery requires the annotated release reservation tag" >&2
+                exit 1
+              fi
+              tag_object_sha=$(jq -r '.object.sha' <<<"$tag_ref_json")
+              tag_object_json=$(gh api \
+                "repos/$GITHUB_REPOSITORY/git/tags/$tag_object_sha")
+              expected_marker=$(printf '%s\n%s\n%s\n%s' \
+                'dotenc-release-reservation:v1' \
+                "version=$version" \
+                "commit=$source_head_sha" \
+                "run-id=$source_run_id")
+              if ! jq -e \
+                --arg object_sha "$tag_object_sha" \
+                --arg tag "v$version" \
+                --arg commit "$source_head_sha" \
+                --arg marker "$expected_marker" \
+                '.sha == $object_sha and .tag == $tag and .message == $marker and
+                  .object.type == "commit" and .object.sha == $commit' \
+                <<<"$tag_object_json" >/dev/null; then
+                echo "The release reservation does not authorize this recovery source run" >&2
+                exit 1
+              fi
+
+              release_api_json=$(gh api \
+                "repos/$GITHUB_REPOSITORY/releases/tags/v$version")
+              if ! jq -e \
+                --arg tag "v$version" \
+                --arg commit "$source_head_sha" \
+                '.tag_name == $tag and .draft == false and .prerelease == false and
+                  .published_at != null and .target_commitish == $commit and
+                  ([.assets[] | select(
+                    .state != "uploaded" or
+                    (.size | type) != "number" or .size <= 0 or
+                    (.digest | type) != "string" or
+                    (.digest | test("^sha256:[0-9a-f]{64}$") | not)
+                  )] | length) == 0' \
+                <<<"$release_api_json" >/dev/null; then
+                echo "The published release is not valid for manual initial recovery" >&2
+                exit 1
+              fi
+              expected_release_assets=(
+                SHA256SUMS
+                dotenc-darwin-arm64.tar.gz
+                dotenc-darwin-x64.tar.gz
+                dotenc-linux-arm64-musl.tar.gz
+                dotenc-linux-arm64.tar.gz
+                dotenc-linux-x64-musl.tar.gz
+                dotenc-linux-x64.tar.gz
+                dotenc-windows-x64.zip
+              )
+              mapfile -t expected_release_assets < <(
+                printf '%s\n' "${expected_release_assets[@]}" | LC_ALL=C sort
+              )
+              mapfile -t actual_release_assets < <(
+                jq -r '.assets[].name' <<<"$release_api_json" | LC_ALL=C sort
+              )
+              if [[ "${actual_release_assets[*]}" != "${expected_release_assets[*]}" ]]; then
+                echo "Manual initial recovery requires the exact base GitHub release asset set" >&2
+                exit 1
+              fi
+
+              artifact_json=$(gh api \
+                "repos/$GITHUB_REPOSITORY/actions/artifacts/$package_input_artifact_id")
+              source_repository_id=$(jq -r '.repository.id | tostring' \
+                <<<"$source_run_json")
+              source_head_repository_id=$(jq -r '.head_repository.id | tostring' \
+                <<<"$source_run_json")
+              if ! jq -e \
+                --arg artifact_id "$package_input_artifact_id" \
+                --arg run_id "$source_run_id" \
+                --arg commit "$source_head_sha" \
+                --arg repository_id "$source_repository_id" \
+                --arg head_repository_id "$source_head_repository_id" \
+                --argjson maximum_size 536870912 \
+                '(.id | type) == "number" and .id > 0 and
+                  (.id | tostring) == $artifact_id and .expired == false and
+                  (.size_in_bytes | type) == "number" and .size_in_bytes > 0 and
+                  .size_in_bytes <= $maximum_size and
+                  (.workflow_run.id | type) == "number" and
+                  (.workflow_run.id | tostring) == $run_id and
+                  .workflow_run.head_branch == "main" and
+                  .workflow_run.head_sha == $commit and
+                  (.workflow_run.repository_id | type) == "number" and
+                  (.workflow_run.head_repository_id | type) == "number" and
+                  (.workflow_run.repository_id | tostring) == $repository_id and
+                  (.workflow_run.head_repository_id | tostring) == $head_repository_id' \
+                <<<"$artifact_json" >/dev/null; then
+                echo "The recovery artifact does not belong to the authorized release run" >&2
+                exit 1
+              fi
+              artifact_name=$(jq -r '.name' <<<"$artifact_json")
+              artifact_prefix="linux-package-inputs-v${version}-attempt-"
+              artifact_attempt=${artifact_name#"$artifact_prefix"}
+              if [[ "$artifact_name" != "${artifact_prefix}${artifact_attempt}" ||
+                ! "$artifact_attempt" =~ ^[1-9][0-9]*$ ]]; then
+                echo "The recovery artifact name is invalid" >&2
+                exit 1
+              fi
+              release_commit=$source_head_sha
             fi
+
             source_date_epoch=$(git show --no-patch --format=%ct "v$version^{commit}")
             if [[ ! "$source_date_epoch" =~ ^[1-9][0-9]*$ ]]; then
               echo "Unable to derive a valid repository source date" >&2
@@ -178,6 +375,9 @@ jobs:
             echo "version=$version"
             echo "validate_only=$validate_only"
             echo "refresh=$refresh"
+            echo "recovery=$recovery"
+            echo "source_run_id=$source_run_id"
+            echo "release_commit=$release_commit"
             echo "source_date_epoch=$source_date_epoch"
             echo "publication_epoch=$publication_epoch"
             echo "bundle_name=$bundle_name"
@@ -251,10 +451,22 @@ jobs:
 
       - name: Download immutable same-run Linux package inputs
         id: release
-        if: steps.target.outputs.refresh != 'true' && steps.target.outputs.validate_only != 'true'
+        if: steps.target.outputs.refresh != 'true' && steps.target.outputs.validate_only != 'true' && steps.target.outputs.recovery != 'true'
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           artifact-ids: ${{ inputs.package_input_artifact_id }}
+          path: ${{ runner.temp }}/dotenc-release-${{ steps.target.outputs.version }}
+          merge-multiple: true
+
+      - name: Download reviewed recovery Linux package inputs
+        id: recovery_release
+        if: steps.target.outputs.recovery == 'true'
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          artifact-ids: ${{ inputs.package_input_artifact_id }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.target.outputs.source_run_id }}
           path: ${{ runner.temp }}/dotenc-release-${{ steps.target.outputs.version }}
           merge-multiple: true
 
@@ -353,7 +565,11 @@ jobs:
         if: steps.target.outputs.refresh != 'true' && steps.target.outputs.validate_only != 'true'
         shell: bash
         env:
-          DOWNLOAD_DIR: ${{ steps.release.outputs.download-path }}
+          DOWNLOAD_DIR: ${{ steps.release.outputs.download-path || steps.recovery_release.outputs.download-path }}
+          GH_TOKEN: ${{ github.token }}
+          RECOVERY: ${{ steps.target.outputs.recovery }}
+          RELEASE_COMMIT: ${{ steps.target.outputs.release_commit }}
+          SOURCE_RUN_ID: ${{ steps.target.outputs.source_run_id }}
         run: |
           set -euo pipefail
 
@@ -363,6 +579,96 @@ jobs:
             dotenc-linux-x64-musl.tar.gz
             dotenc-linux-arm64-musl.tar.gz
           )
+
+          if [[ "$RECOVERY" == "true" ]]; then
+            tag_ref_json=$(gh api \
+              "repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSION")
+            if ! jq -e \
+              --arg ref "refs/tags/v$VERSION" \
+              '.ref == $ref and .object.type == "tag" and
+                (.object.sha | test("^[0-9a-f]{40}$"))' \
+              <<<"$tag_ref_json" >/dev/null; then
+              echo "The annotated release reservation changed after recovery authorization" >&2
+              exit 1
+            fi
+            tag_object_sha=$(jq -r '.object.sha' <<<"$tag_ref_json")
+            tag_object_json=$(gh api \
+              "repos/$GITHUB_REPOSITORY/git/tags/$tag_object_sha")
+            expected_marker=$(printf '%s\n%s\n%s\n%s' \
+              'dotenc-release-reservation:v1' \
+              "version=$VERSION" \
+              "commit=$RELEASE_COMMIT" \
+              "run-id=$SOURCE_RUN_ID")
+            if ! jq -e \
+              --arg object_sha "$tag_object_sha" \
+              --arg tag "v$VERSION" \
+              --arg commit "$RELEASE_COMMIT" \
+              --arg marker "$expected_marker" \
+              '.sha == $object_sha and .tag == $tag and .message == $marker and
+                .object.type == "commit" and .object.sha == $commit' \
+              <<<"$tag_object_json" >/dev/null; then
+              echo "The release reservation changed after recovery authorization" >&2
+              exit 1
+            fi
+
+            release_api_json=$(gh api \
+              "repos/$GITHUB_REPOSITORY/releases/latest")
+            if ! jq -e \
+              --arg tag "v$VERSION" \
+              --arg commit "$RELEASE_COMMIT" \
+              '.tag_name == $tag and .draft == false and .prerelease == false and
+                .published_at != null and .target_commitish == $commit and
+                ([.assets[] | select(
+                  .state != "uploaded" or
+                  (.size | type) != "number" or .size <= 0 or
+                  (.digest | type) != "string" or
+                  (.digest | test("^sha256:[0-9a-f]{64}$") | not)
+                )] | length) == 0' \
+              <<<"$release_api_json" >/dev/null; then
+              echo "The GitHub release changed after recovery authorization" >&2
+              exit 1
+            fi
+            expected_release_assets=(
+              SHA256SUMS
+              dotenc-darwin-arm64.tar.gz
+              dotenc-darwin-x64.tar.gz
+              dotenc-linux-arm64-musl.tar.gz
+              dotenc-linux-arm64.tar.gz
+              dotenc-linux-x64-musl.tar.gz
+              dotenc-linux-x64.tar.gz
+              dotenc-windows-x64.zip
+            )
+            mapfile -t expected_release_assets < <(
+              printf '%s\n' "${expected_release_assets[@]}" | LC_ALL=C sort
+            )
+            mapfile -t actual_release_assets < <(
+              jq -r '.assets[].name' <<<"$release_api_json" | LC_ALL=C sort
+            )
+            if [[ "${actual_release_assets[*]}" != "${expected_release_assets[*]}" ]]; then
+              echo "The base GitHub release asset set changed after recovery authorization" >&2
+              exit 1
+            fi
+            recovery_assets=(SHA256SUMS "${archives[@]}")
+            for asset in "${recovery_assets[@]}"; do
+              mapfile -t release_digests < <(
+                jq -r --arg name "$asset" \
+                  '.assets[] | select(.name == $name) | .digest' \
+                  <<<"$release_api_json"
+              )
+              if [[ "${#release_digests[@]}" -ne 1 ||
+                ! "${release_digests[0]}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+                echo "The GitHub release has invalid digest evidence for $asset" >&2
+                exit 1
+              fi
+              artifact_sha256=$(sha256sum "$DOWNLOAD_DIR/$asset")
+              artifact_sha256=${artifact_sha256%% *}
+              if [[ "sha256:$artifact_sha256" != "${release_digests[0]}" ]]; then
+                echo "Recovery artifact $asset does not match the published release" >&2
+                exit 1
+              fi
+            done
+          fi
+
           checksum_file="$RUNNER_TEMP/linux-SHA256SUMS"
           : > "$checksum_file"
 
@@ -1068,7 +1374,11 @@ jobs:
                   dnf install --assumeyes \
                     "/repo/rpm/$RPM_ARCH/dotenc-$EXPECTED_VERSION-1.$RPM_ARCH.rpm" \
                     >/dev/null
-                  cmp /repo/keys/dotenc-rpm.asc /etc/pki/rpm-gpg/dotenc.asc
+                  canonical_key_sha256=$(sha256sum /repo/keys/dotenc-rpm.asc)
+                  canonical_key_sha256=${canonical_key_sha256%% *}
+                  installed_key_sha256=$(sha256sum /etc/pki/rpm-gpg/dotenc.asc)
+                  installed_key_sha256=${installed_key_sha256%% *}
+                  test "$installed_key_sha256" = "$canonical_key_sha256"
                   grep -Fx "baseurl=https://packages.dotenc.org/rpm/\$basearch" \
                     /etc/yum.repos.d/dotenc.repo >/dev/null
                   grep -Fx "gpgkey=file:///etc/pki/rpm-gpg/dotenc.asc" \
