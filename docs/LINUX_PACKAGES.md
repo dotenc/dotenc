@@ -25,8 +25,11 @@ The delivery path has five distinct responsibilities:
 
 1. The dotenc release workflow builds the standalone CLI binaries from a tagged
    source revision and seals the four Linux archives plus `SHA256SUMS` in an
-   immutable Actions artifact for the same workflow run. The first package
-   signing accepts only that artifact, not mutable GitHub release assets.
+   immutable Actions artifact for the same workflow run. First package signing
+   normally accepts only that same-run artifact. The narrow reviewed recovery
+   path accepts the exact immutable artifact from its failed release run only
+   after binding it to the annotated tag and published release digests; mutable
+   GitHub release assets are never used as package-build inputs.
 2. Dedicated signing keys authenticate the repository metadata and, where the
    package format supports it, the package files themselves. APT authenticates
    `InRelease` and the package hashes reachable from it; dotenc `.deb` files do
@@ -123,9 +126,11 @@ post-launch record on 2026-07-20:
   version. It must policy-check the production keys, build and sign all package
   variants, verify the signed roots, and complete every clean local repository
   install without uploading an artifact, release asset, or R2 object.
-- Verify that a first publication can consume only the immutable Linux-input
-  artifact produced in the same release run. Manual and scheduled invocations
-  must remain refresh-only.
+- Verify that a normal first publication can consume only the immutable
+  Linux-input artifact produced in the same release run. Manual and scheduled
+  invocations must remain validation- or refresh-only except for the documented,
+  environment-protected recovery of that exact artifact from a failed release
+  run before the canonical bundle exists.
 - Produce the first signed publication without exposing private key material in
   logs, artifacts, caches, or repository history.
 - Install and run `dotenc --version` from each repository in clean Debian,
@@ -216,22 +221,38 @@ Rules for object metadata:
 Build and verify the complete repository tree before changing any public
 metadata root. Publication order is part of the consistency model:
 
-The initial publication runs only as the release workflow's `push`-triggered
-same-run job and consumes the exact artifact ID emitted for its immutable
-`linux-package-inputs-v<version>-attempt-<run-attempt>` Actions artifact.
-`workflow_dispatch` and scheduled runs refuse to perform a first publication.
-The manual dispatch defaults to `validate_only=true`: it builds the four Linux
+The initial publication normally runs as the release workflow's
+`push`-triggered same-run job and consumes the exact artifact ID emitted for its
+immutable `linux-package-inputs-v<version>-attempt-<run-attempt>` Actions
+artifact. A reviewed exception handles a release whose protected Linux job
+failed before it uploaded the canonical bundle and whose original workflow SHA
+cannot acquire a later workflow-only fix through a rerun. A manual dispatch may
+then set `validate_only=false` and provide the exact failed release workflow run
+ID plus its immutable Linux input artifact ID. This exception is accepted only
+while the requested version is the latest stable release and no canonical
+bundle exists. The workflow proves that the source is a completed failed
+`push`-triggered `main` release run, that its revision and repository match the
+annotated release reservation marker and published release, and that the
+non-expired, bounded artifact belongs to that run with the expected name. After
+cross-run download, the checked-out package-generation inputs must still match
+the release commit, the reservation and exact base-release asset set are
+revalidated, and the artifact's `SHA256SUMS` and all four Linux archives must
+match the GitHub Release asset digests before signing begins.
+
+All other manual and scheduled runs refuse to perform a first publication. The
+manual dispatch defaults to `validate_only=true`: it builds the four Linux
 binaries from the checked-out `main` revision, exercises the complete
 production-key signing and clean-install path, and skips release-asset upload,
 Actions artifact retention, R2 publication, cache purge, and public-edge
-verification. This is a credential and builder preflight, not a release input;
-it cannot create the canonical bundle or make a repository public. After the
-first publication, the canonical GitHub release bundle contains the exact six
-signed packages, a package digest manifest, and that manifest's detached
-APT-subkey signature. Every refresh verifies that detached signature and all
-package hashes before preserving the package set byte for byte and rebuilding
-only repository metadata. The adjacent bundle checksum is a transport-integrity
-check; the detached OpenPGP signature is the durable refresh trust input. New
+verification. This is a credential and builder preflight, not a release input.
+After the first publication, the canonical GitHub release bundle contains the
+exact six signed packages, a package digest manifest, and that manifest's
+detached APT-subkey signature. Every refresh verifies that detached signature
+and all package hashes before preserving the package set byte for byte and
+rebuilding only repository metadata. Recovery inputs are rejected once that
+bundle exists, so all later retries use the signed refresh path. The adjacent
+bundle checksum is a transport-integrity check; the detached OpenPGP signature
+is the durable refresh trust input. New
 DEB and RPM builds embed only their validated public certificate and a
 signature-enforcing update-channel configuration. After public-edge checks, the
 workflow exposes those exact package bytes as `dotenc-amd64.deb`,
@@ -284,6 +305,27 @@ has a mismatched detached signature and RPM clients fail closed. Restore or
 finish that exact pair immediately and purge both URLs. If publication fails
 after any root changes, use the rollback procedure; do not continue publishing
 unrelated roots.
+
+When the first protected Linux job fails before creating the canonical bundle,
+merge the reviewed workflow-only correction first; rerunning the old release run
+would still execute its original workflow SHA. Confirm the failed release run
+and its non-expired immutable input artifact through the Actions API, then use
+the environment-protected recovery dispatch:
+
+```bash
+gh workflow run publish-linux-packages.yml \
+  --repo dotenc/dotenc \
+  --ref main \
+  --field version=X.Y.Z \
+  --field validate_only=false \
+  --field source_run_id=SOURCE_RUN_ID \
+  --field package_input_artifact_id=ARTIFACT_ID
+```
+
+This is not a generic rebuild or rollback mechanism. The dispatch fails if the
+source run, annotated reservation, tag target, release assets, artifact
+metadata, or archive digests disagree, and it is no longer available after the
+canonical bundle exists.
 
 ## GitHub `linux-packages` environment
 

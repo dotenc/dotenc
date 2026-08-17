@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto"
+import { spawnSync } from "node:child_process"
 import {
 	mkdtempSync,
 	mkdirSync,
 	readFileSync,
 	rmSync,
+	symlinkSync,
 	writeFileSync,
 } from "node:fs"
 import { tmpdir } from "node:os"
@@ -23,6 +25,17 @@ const immutableCacheControl =
 const mutableCacheControl =
 	"public, max-age=60, s-maxage=300, must-revalidate, no-transform"
 
+const baseReleaseAssetNames = [
+	"SHA256SUMS",
+	"dotenc-darwin-arm64.tar.gz",
+	"dotenc-darwin-x64.tar.gz",
+	"dotenc-linux-arm64-musl.tar.gz",
+	"dotenc-linux-arm64.tar.gz",
+	"dotenc-linux-x64-musl.tar.gz",
+	"dotenc-linux-x64.tar.gz",
+	"dotenc-windows-x64.zip",
+] as const
+
 const temporaryDirectories: string[] = []
 
 const workflowJob = (workflow: string, jobName: string) => {
@@ -35,6 +48,253 @@ const workflowJob = (workflow: string, jobName: string) => {
 		(line, index) => index > start && /^  [A-Za-z0-9_-]+:$/.test(line),
 	)
 	return lines.slice(start, nextJob === -1 ? undefined : nextJob).join("\n")
+}
+
+const workflowStep = (workflow: string, stepName: string) => {
+	const lines = workflow.split("\n")
+	const start = lines.indexOf(`      - name: ${stepName}`)
+	if (start === -1) {
+		throw new Error(`Workflow step ${stepName} was not found`)
+	}
+	const nextStep = lines.findIndex(
+		(line, index) => index > start && line.startsWith("      - name: "),
+	)
+	return lines.slice(start, nextStep === -1 ? undefined : nextStep).join("\n")
+}
+
+const workflowStepScript = (workflow: string, stepName: string) => {
+	const step = workflowStep(workflow, stepName)
+	const lines = step.split("\n")
+	const run = lines.indexOf("        run: |")
+	if (run === -1) {
+		throw new Error(`Workflow step ${stepName} does not contain a run script`)
+	}
+	return lines
+		.slice(run + 1)
+		.map((line) => (line.startsWith("          ") ? line.slice(10) : line))
+		.join("\n")
+}
+
+const createRecoveryWorkflowFixture = () => {
+	const root = mkdtempSync(path.join(tmpdir(), "dotenc-recovery-workflow-"))
+	temporaryDirectories.push(root)
+	const fixtureDirectory = path.join(root, "fixtures")
+	const toolDirectory = path.join(root, "bin")
+	mkdirSync(fixtureDirectory)
+	mkdirSync(toolDirectory)
+
+	const version = "0.14.0"
+	const sourceRunId = "32057702020"
+	const artifactId = "9296974042"
+	const sourceCommit = "95393260d445c8d11f9131027625a25ddbc85907"
+	const checkoutCommit = "f".repeat(40)
+	const tagObjectSha = "a".repeat(40)
+	const repositoryId = 8675309
+	const sourceRun = {
+		id: Number(sourceRunId),
+		event: "push",
+		status: "completed",
+		conclusion: "failure",
+		head_branch: "main",
+		head_sha: sourceCommit,
+		path: ".github/workflows/release.yml",
+		repository: { id: repositoryId, full_name: "dotenc/dotenc" },
+		head_repository: { id: repositoryId, full_name: "dotenc/dotenc" },
+	}
+	const tagRef = {
+		ref: `refs/tags/v${version}`,
+		object: { type: "tag", sha: tagObjectSha },
+	}
+	const tagObject = {
+		sha: tagObjectSha,
+		tag: `v${version}`,
+		message: [
+			"dotenc-release-reservation:v1",
+			`version=${version}`,
+			`commit=${sourceCommit}`,
+			`run-id=${sourceRunId}`,
+		].join("\n"),
+		object: { type: "commit", sha: sourceCommit },
+	}
+	const release = {
+		tag_name: `v${version}`,
+		draft: false,
+		prerelease: false,
+		published_at: "2026-08-17T18:59:00Z",
+		target_commitish: sourceCommit,
+		assets: baseReleaseAssetNames.map((name) => ({
+			name,
+			state: "uploaded",
+			size: 128,
+			digest: `sha256:${createHash("sha256").update(name).digest("hex")}`,
+		})),
+	}
+	const artifact = {
+		id: Number(artifactId),
+		name: `linux-package-inputs-v${version}-attempt-1`,
+		expired: false,
+		size_in_bytes: 4096,
+		workflow_run: {
+			id: Number(sourceRunId),
+			head_branch: "main",
+			head_sha: sourceCommit,
+			repository_id: repositoryId,
+			head_repository_id: repositoryId,
+		},
+	}
+
+	writeFileSync(
+		path.join(toolDirectory, "gh"),
+		[
+			"#!/bin/sh",
+			"set -eu",
+			'request="$*"',
+			'if [ "$request" = "release view --repo $GITHUB_REPOSITORY --json isDraft,publishedAt,tagName" ]; then',
+			'  exec /bin/cat "$RECOVERY_FIXTURE_DIR/latest-release.json"',
+			"fi",
+			'if [ "$request" = "release view v$VERSION --repo $GITHUB_REPOSITORY --json isDraft,publishedAt,tagName" ]; then',
+			'  exec /bin/cat "$RECOVERY_FIXTURE_DIR/target-release.json"',
+			"fi",
+			'if [ "$request" = "release view v$VERSION --repo $GITHUB_REPOSITORY --json assets --jq .assets[].name" ]; then',
+			'  exec /bin/cat "$RECOVERY_FIXTURE_DIR/asset-names.txt"',
+			"fi",
+			'if [ "$request" = "api repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" ]; then',
+			'  exec /bin/cat "$RECOVERY_FIXTURE_DIR/source-run.json"',
+			"fi",
+			'if [ "$request" = "api repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSION" ]; then',
+			'  exec /bin/cat "$RECOVERY_FIXTURE_DIR/tag-ref.json"',
+			"fi",
+			'if [ "$request" = "api repos/$GITHUB_REPOSITORY/git/tags/$RECOVERY_TAG_OBJECT_SHA" ]; then',
+			'  exec /bin/cat "$RECOVERY_FIXTURE_DIR/tag-object.json"',
+			"fi",
+			'if [ "$request" = "api repos/$GITHUB_REPOSITORY/releases/tags/v$VERSION" ]; then',
+			'  exec /bin/cat "$RECOVERY_FIXTURE_DIR/release.json"',
+			"fi",
+			'if [ "$request" = "api repos/$GITHUB_REPOSITORY/releases/latest" ]; then',
+			'  exec /bin/cat "$RECOVERY_FIXTURE_DIR/release.json"',
+			"fi",
+			'if [ "$request" = "api repos/$GITHUB_REPOSITORY/actions/artifacts/$PACKAGE_INPUT_ARTIFACT_ID" ]; then',
+			'  exec /bin/cat "$RECOVERY_FIXTURE_DIR/artifact.json"',
+			"fi",
+			'printf "%s\\n" "unexpected gh invocation: $request" >&2',
+			"exit 97",
+			"",
+		].join("\n"),
+		{ mode: 0o755 },
+	)
+	writeFileSync(
+		path.join(toolDirectory, "git"),
+		[
+			"#!/bin/sh",
+			"set -eu",
+			'request="$*"',
+			'if [ "$request" = "fetch --force --no-tags --depth=1 origin refs/tags/v$VERSION:refs/tags/v$VERSION" ]; then',
+			"  exit 0",
+			"fi",
+			'if [ "$request" = "rev-parse HEAD^{commit}" ]; then',
+			'  printf "%s\\n" "$RECOVERY_CHECKOUT_COMMIT"',
+			"  exit 0",
+			"fi",
+			'if [ "$request" = "rev-parse v$VERSION^{commit}" ]; then',
+			'  printf "%s\\n" "$RECOVERY_SOURCE_COMMIT"',
+			"  exit 0",
+			"fi",
+			'if [ "${request#--no-pager diff --quiet --no-ext-diff --no-textconv }" != "$request" ]; then',
+			"  exit 0",
+			"fi",
+			'if [ "$request" = "show --no-patch --format=%ct v$VERSION^{commit}" ]; then',
+			'  printf "%s\\n" "1768737600"',
+			"  exit 0",
+			"fi",
+			'printf "%s\\n" "unexpected git invocation: $request" >&2',
+			"exit 98",
+			"",
+		].join("\n"),
+		{ mode: 0o755 },
+	)
+
+	const outputPath = path.join(root, "github-output")
+	const environmentPath = path.join(root, "github-env")
+	const writeFixtures = (bundlePresent = false) => {
+		const releaseSummary = {
+			isDraft: release.draft,
+			publishedAt: release.published_at,
+			tagName: release.tag_name,
+		}
+		for (const [name, value] of [
+			["latest-release.json", releaseSummary],
+			["target-release.json", releaseSummary],
+			["source-run.json", sourceRun],
+			["tag-ref.json", tagRef],
+			["tag-object.json", tagObject],
+			["release.json", release],
+			["artifact.json", artifact],
+		] as const) {
+			writeFileSync(path.join(fixtureDirectory, name), JSON.stringify(value))
+		}
+		const assetNames: string[] = release.assets.map(({ name }) => name)
+		if (bundlePresent) {
+			assetNames.push(
+				`dotenc-linux-packages-${version}.tar.gz`,
+				`dotenc-linux-packages-${version}.tar.gz.sha256`,
+			)
+		}
+		writeFileSync(path.join(fixtureDirectory, "asset-names.txt"), `${assetNames.join("\n")}\n`)
+		writeFileSync(outputPath, "")
+		writeFileSync(environmentPath, "")
+	}
+
+	type RunOptions = {
+		artifactId?: string
+		bundlePresent?: boolean
+		eventName?: string
+		extraEnvironment?: Record<string, string>
+		sourceRunId?: string
+		validateOnly?: string
+	}
+	const runScript = (script: string, options: RunOptions = {}) => {
+		writeFixtures(options.bundlePresent)
+		const bashPath = Bun.which("bash")
+		if (!bashPath) {
+			throw new Error("bash is required for publisher tests")
+		}
+		return spawnSync(bashPath, ["-c", script], {
+			cwd: path.resolve(import.meta.dir, "../.."),
+			encoding: "utf8",
+			env: {
+				...process.env,
+				GITHUB_ENV: environmentPath,
+				GITHUB_EVENT_NAME: options.eventName ?? "workflow_dispatch",
+				GITHUB_OUTPUT: outputPath,
+				GITHUB_REPOSITORY: "dotenc/dotenc",
+				GITHUB_SHA: checkoutCommit,
+				PACKAGE_INPUT_ARTIFACT_ID: options.artifactId ?? artifactId,
+				PATH: `${toolDirectory}:${process.env.PATH ?? ""}`,
+				RECOVERY_CHECKOUT_COMMIT: checkoutCommit,
+				RECOVERY_FIXTURE_DIR: fixtureDirectory,
+				RECOVERY_SOURCE_COMMIT: sourceCommit,
+				RECOVERY_TAG_OBJECT_SHA: tagObjectSha,
+				SOURCE_RUN_ID: options.sourceRunId ?? sourceRunId,
+				VALIDATE_ONLY: options.validateOnly ?? "false",
+				VERSION: version,
+				...options.extraEnvironment,
+			},
+		})
+	}
+
+	return {
+		artifact,
+		artifactId,
+		fixtureDirectory,
+		outputPath,
+		release,
+		runScript,
+		sourceCommit,
+		sourceRun,
+		sourceRunId,
+		tagObject,
+		version,
+	}
 }
 
 const fixture = () => {
@@ -225,6 +485,71 @@ describe("Linux package publication manifest", () => {
 		expect(workflow).not.toContain("almalinux:9-minimal")
 	})
 
+	test("compares the AlmaLinux-installed RPM key by SHA-256 without cmp", () => {
+		const workflow = readFileSync(
+			path.resolve(
+				import.meta.dir,
+				"../../.github/workflows/publish-linux-packages.yml",
+			),
+			"utf8",
+		)
+		const directInstallerBlocks = [
+			...workflow.matchAll(
+				/if \[ "\$TEST_DIRECT_INSTALLERS" = "true" \]; then\n([\s\S]*?)\n\s+fi/g,
+			),
+		].map((match) => match[1] ?? "")
+		const rpmDirectInstallerBlock = directInstallerBlocks[1]
+		if (!rpmDirectInstallerBlock) {
+			throw new Error("RPM direct-installer block was not found")
+		}
+		const keyComparison = [
+			"canonical_key_sha256=$(sha256sum /repo/keys/dotenc-rpm.asc)",
+			"                  canonical_key_sha256=${canonical_key_sha256%% *}",
+			"                  installed_key_sha256=$(sha256sum /etc/pki/rpm-gpg/dotenc.asc)",
+			"                  installed_key_sha256=${installed_key_sha256%% *}",
+			'                  test "$installed_key_sha256" = "$canonical_key_sha256"',
+		].join("\n")
+
+		expect(rpmDirectInstallerBlock).toContain(keyComparison)
+		expect(rpmDirectInstallerBlock).not.toMatch(/(^|\s)cmp(?:\s|$)/m)
+
+		const root = mkdtempSync(path.join(tmpdir(), "dotenc-rpm-key-check-"))
+		temporaryDirectories.push(root)
+		const canonicalKeyPath = path.join(root, "canonical.asc")
+		const installedKeyPath = path.join(root, "installed.asc")
+		const toolDirectory = path.join(root, "bin")
+		mkdirSync(toolDirectory)
+		writeFileSync(canonicalKeyPath, "same public RPM key\n")
+		writeFileSync(installedKeyPath, "same public RPM key\n")
+		const sha256sumPath = Bun.which("sha256sum")
+		if (!sha256sumPath) {
+			throw new Error("sha256sum is required for publisher tests")
+		}
+		symlinkSync(sha256sumPath, path.join(toolDirectory, "sha256sum"))
+		const runnableComparison = keyComparison
+			.replace(
+				"/repo/keys/dotenc-rpm.asc",
+				'"$CANONICAL_RPM_KEY_PATH"',
+			)
+			.replace(
+				"/etc/pki/rpm-gpg/dotenc.asc",
+				'"$INSTALLED_RPM_KEY_PATH"',
+			)
+		const runComparison = () =>
+			spawnSync("/bin/sh", ["-euc", runnableComparison], {
+				env: {
+					...process.env,
+					CANONICAL_RPM_KEY_PATH: canonicalKeyPath,
+					INSTALLED_RPM_KEY_PATH: installedKeyPath,
+					PATH: toolDirectory,
+				},
+			})
+
+		expect(runComparison().status).toBe(0)
+		writeFileSync(installedKeyPath, "different public RPM key\n")
+		expect(runComparison().status).not.toBe(0)
+	})
+
 	test("keeps direct installer verification on local repositories", () => {
 		const workflow = readFileSync(
 			path.resolve(
@@ -346,6 +671,350 @@ describe("Linux package publication manifest", () => {
 				),
 			)
 		}
+	})
+
+	test("allows manual dispatch to publish with validate_only explicitly false", () => {
+		const workflow = readFileSync(
+			path.resolve(
+				import.meta.dir,
+				"../../.github/workflows/publish-linux-packages.yml",
+			),
+			"utf8",
+		)
+		const dispatchBlock = workflow.match(
+			/  workflow_dispatch:\n[\s\S]*?\n  schedule:/,
+		)?.[0]
+		if (!dispatchBlock) {
+			throw new Error("workflow_dispatch inputs were not found")
+		}
+		expect(dispatchBlock).toMatch(
+			/validate_only:\n\s+description:[^\n]+\n\s+required: true\n\s+type: boolean\n\s+default: true/,
+		)
+		expect(workflow).toContain(
+			"if: inputs.validate_only == true || vars.LINUX_PACKAGES_ENABLED == 'true'",
+		)
+		expect(workflow).toContain("      VALIDATE_ONLY: ${{ inputs.validate_only }}")
+		expect(workflow).toMatch(
+			/elif \[\[ "\$bundle_present" == "true" \]\]; then[\s\S]*?\n\s+refresh=true/,
+		)
+
+		const validationGuard = [
+			"validate_only=${VALIDATE_ONLY:-false}",
+			'if [[ "$validate_only" != "true" && "$validate_only" != "false" ]]; then',
+			'  echo "validate_only must be a boolean" >&2',
+			"  exit 1",
+			"fi",
+			'if [[ "$validate_only" == "true" && "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]]; then',
+			'  echo "Non-publishing signing-key validation is restricted to manual workflow dispatch" >&2',
+			"  exit 1",
+			"fi",
+		].join("\n")
+		expect(workflow).toContain(
+			validationGuard
+				.split("\n")
+				.map((line) => `          ${line}`)
+				.join("\n"),
+		)
+		const guardResult = spawnSync("/bin/bash", ["-euc", validationGuard], {
+			env: {
+				...process.env,
+				GITHUB_EVENT_NAME: "workflow_dispatch",
+				VALIDATE_ONLY: "false",
+			},
+		})
+		expect(guardResult.status).toBe(0)
+
+		for (const stepName of [
+			"Upload canonical signed package bundle to the GitHub release",
+			"Publish repository objects to R2",
+			"Verify the public edge and signed repository roots",
+		]) {
+			const escapedStepName = stepName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+			expect(workflow).toMatch(
+				new RegExp(
+					`- name: ${escapedStepName}\\n\\s+if: [^\\n]*validate_only != 'true'`,
+				),
+			)
+		}
+	})
+
+	test("authorizes an exact reviewed cross-run initial-publication recovery", () => {
+		const workflow = readFileSync(
+			path.resolve(
+				import.meta.dir,
+				"../../.github/workflows/publish-linux-packages.yml",
+			),
+			"utf8",
+		)
+		const resolveScript = workflowStepScript(
+			workflow,
+			"Resolve publication target",
+		)
+		const fixture = createRecoveryWorkflowFixture()
+		const result = fixture.runScript(resolveScript)
+		if (result.status !== 0) {
+			throw new Error(`Valid recovery fixture failed: ${result.stderr}`)
+		}
+		const outputs = readFileSync(fixture.outputPath, "utf8")
+
+		expect(outputs).toContain("validate_only=false\n")
+		expect(outputs).toContain("refresh=false\n")
+		expect(outputs).toContain("recovery=true\n")
+		expect(outputs).toContain(`source_run_id=${fixture.sourceRunId}\n`)
+		expect(outputs).toContain(`release_commit=${fixture.sourceCommit}\n`)
+		for (const packageGenerationInput of [
+			"bun.lockb",
+			"cli/package.json",
+			"cli/packaging",
+			"package.json",
+			"scripts/alpine-package-tool.sh",
+			"scripts/publish-linux-packages.ts",
+			"scripts/verify-packages-edge.sh",
+		]) {
+			expect(resolveScript).toContain(packageGenerationInput)
+		}
+	})
+
+	test.each([
+		[
+			"signing-key validation inputs",
+			{ validateOnly: "true" },
+			"Signing-key validation does not accept recovery artifact inputs",
+		],
+		[
+			"recovery inputs after the canonical bundle exists",
+			{ bundlePresent: true },
+			"Recovery artifact inputs are invalid after the canonical Linux bundle exists",
+		],
+		[
+			"an incomplete recovery input pair",
+			{ sourceRunId: "" },
+			"Manual initial recovery requires canonical source run and artifact IDs",
+		],
+		[
+			"a push-triggered source-run override",
+			{ eventName: "push" },
+			"Push-triggered initial signing does not accept a source release run override",
+		],
+	] as const)("rejects %s", (_name, options, expectedError) => {
+		const workflow = readFileSync(
+			path.resolve(
+				import.meta.dir,
+				"../../.github/workflows/publish-linux-packages.yml",
+			),
+			"utf8",
+		)
+		const fixture = createRecoveryWorkflowFixture()
+		const result = fixture.runScript(
+			workflowStepScript(workflow, "Resolve publication target"),
+			options,
+		)
+
+		expect(result.status).not.toBe(0)
+		expect(result.stderr).toContain(expectedError)
+	})
+
+	test.each(
+		[
+			[
+				"source run",
+				(fixture: ReturnType<typeof createRecoveryWorkflowFixture>) => {
+					fixture.sourceRun.id += 1
+				},
+				"The recovery source is not an exact failed main release workflow run",
+			],
+			[
+				"annotated reservation",
+				(fixture: ReturnType<typeof createRecoveryWorkflowFixture>) => {
+					fixture.tagObject.message = "reservation for a different run"
+				},
+				"The release reservation does not authorize this recovery source run",
+			],
+			[
+				"published release",
+				(fixture: ReturnType<typeof createRecoveryWorkflowFixture>) => {
+					fixture.release.target_commitish = "b".repeat(40)
+				},
+				"The published release is not valid for manual initial recovery",
+			],
+			[
+				"artifact workflow run",
+				(fixture: ReturnType<typeof createRecoveryWorkflowFixture>) => {
+					fixture.artifact.workflow_run.id += 1
+				},
+				"The recovery artifact does not belong to the authorized release run",
+			],
+			[
+				"artifact name",
+				(fixture: ReturnType<typeof createRecoveryWorkflowFixture>) => {
+					fixture.artifact.name = "linux-package-inputs-unbound"
+				},
+				"The recovery artifact name is invalid",
+			],
+		] as const,
+	)("rejects a mismatched %s binding", (_name, mutate, expectedError) => {
+		const workflow = readFileSync(
+			path.resolve(
+				import.meta.dir,
+				"../../.github/workflows/publish-linux-packages.yml",
+			),
+			"utf8",
+		)
+		const fixture = createRecoveryWorkflowFixture()
+		mutate(fixture)
+		const result = fixture.runScript(
+			workflowStepScript(workflow, "Resolve publication target"),
+		)
+
+		expect(result.status).not.toBe(0)
+		expect(result.stderr).toContain(expectedError)
+	})
+
+	test("pins and binds the cross-run artifact download", () => {
+		const workflow = readFileSync(
+			path.resolve(
+				import.meta.dir,
+				"../../.github/workflows/publish-linux-packages.yml",
+			),
+			"utf8",
+		)
+		const sameRunDownload = workflowStep(
+			workflow,
+			"Download immutable same-run Linux package inputs",
+		)
+		const recoveryDownload = workflowStep(
+			workflow,
+			"Download reviewed recovery Linux package inputs",
+		)
+
+		expect(workflow).toContain(
+			"concurrency:\n  group: linux-packages-production\n  cancel-in-progress: false\n  queue: max",
+		)
+		expect(sameRunDownload).toContain(
+			"steps.target.outputs.recovery != 'true'",
+		)
+		expect(recoveryDownload).toContain("id: recovery_release")
+		expect(recoveryDownload).toContain(
+			"uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7",
+		)
+		expect(recoveryDownload).toContain(
+			"          artifact-ids: ${{ inputs.package_input_artifact_id }}",
+		)
+		expect(recoveryDownload).toContain(
+			"          github-token: ${{ github.token }}",
+		)
+		expect(recoveryDownload).toContain(
+			"          repository: ${{ github.repository }}",
+		)
+		expect(recoveryDownload).toContain(
+			"          run-id: ${{ steps.target.outputs.source_run_id }}",
+		)
+		expect(recoveryDownload).toContain("          merge-multiple: true")
+	})
+
+	test("revalidates recovery identity and asset digests before signing", () => {
+		const workflow = readFileSync(
+			path.resolve(
+				import.meta.dir,
+				"../../.github/workflows/publish-linux-packages.yml",
+			),
+			"utf8",
+		)
+		const verifyScript = workflowStepScript(
+			workflow,
+			"Verify checksums and extract Linux binaries",
+		)
+		const checksumStart = verifyScript.indexOf(
+			'checksum_file="$RUNNER_TEMP/linux-SHA256SUMS"',
+		)
+		if (checksumStart === -1) {
+			throw new Error("Linux checksum verification boundary was not found")
+		}
+		const recoveryVerification = verifyScript.slice(0, checksumStart)
+		expect(recoveryVerification).toContain(
+			'"repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSION"',
+		)
+		expect(recoveryVerification).toContain(
+			'"repos/$GITHUB_REPOSITORY/git/tags/$tag_object_sha"',
+		)
+		expect(recoveryVerification).toContain(
+			'"repos/$GITHUB_REPOSITORY/releases/latest"',
+		)
+		expect(recoveryVerification).toContain(
+			"The base GitHub release asset set changed after recovery authorization",
+		)
+		expect(recoveryVerification).toContain(
+			'artifact_sha256=$(sha256sum "$DOWNLOAD_DIR/$asset")',
+		)
+		expect(
+			workflow.indexOf("      - name: Verify checksums and extract Linux binaries"),
+		).toBeLessThan(
+			workflow.indexOf("      - name: Build and sign repository payload"),
+		)
+
+		const fixture = createRecoveryWorkflowFixture()
+		const downloadDirectory = path.join(
+			path.dirname(fixture.fixtureDirectory),
+			"download",
+		)
+		mkdirSync(downloadDirectory)
+		const recoveryAssets = [
+			"SHA256SUMS",
+			"dotenc-linux-x64.tar.gz",
+			"dotenc-linux-arm64.tar.gz",
+			"dotenc-linux-x64-musl.tar.gz",
+			"dotenc-linux-arm64-musl.tar.gz",
+		]
+		for (const assetName of recoveryAssets) {
+			const contents = Buffer.from(`immutable recovery bytes for ${assetName}`)
+			writeFileSync(path.join(downloadDirectory, assetName), contents)
+			const releaseAsset = fixture.release.assets.find(
+				({ name }) => name === assetName,
+			)
+			if (!releaseAsset) {
+				throw new Error(`Release fixture is missing ${assetName}`)
+			}
+			releaseAsset.size = contents.length
+			releaseAsset.digest = `sha256:${createHash("sha256")
+				.update(contents)
+				.digest("hex")}`
+		}
+		const recoveryEnvironment = {
+			DOWNLOAD_DIR: downloadDirectory,
+			RECOVERY: "true",
+			RELEASE_COMMIT: fixture.sourceCommit,
+			RUNNER_TEMP: path.dirname(fixture.fixtureDirectory),
+		}
+		const validResult = fixture.runScript(recoveryVerification, {
+			extraEnvironment: recoveryEnvironment,
+		})
+		if (validResult.status !== 0) {
+			throw new Error(
+				`Valid pre-sign recovery verification failed: ${validResult.stderr}`,
+			)
+		}
+
+		fixture.release.tag_name = "v0.15.0"
+		const staleReleaseResult = fixture.runScript(recoveryVerification, {
+			extraEnvironment: recoveryEnvironment,
+		})
+		expect(staleReleaseResult.status).not.toBe(0)
+		expect(staleReleaseResult.stderr).toContain(
+			"The GitHub release changed after recovery authorization",
+		)
+		fixture.release.tag_name = `v${fixture.version}`
+
+		writeFileSync(
+			path.join(downloadDirectory, "dotenc-linux-x64.tar.gz"),
+			"mutated cross-run artifact",
+		)
+		const mismatchedResult = fixture.runScript(recoveryVerification, {
+			extraEnvironment: recoveryEnvironment,
+		})
+		expect(mismatchedResult.status).not.toBe(0)
+		expect(mismatchedResult.stderr).toContain(
+			"Recovery artifact dotenc-linux-x64.tar.gz does not match the published release",
+		)
 	})
 
 	test("publishes stable native installer assets after edge verification", () => {
