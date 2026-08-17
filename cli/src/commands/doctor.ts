@@ -13,13 +13,23 @@ export type DoctorCommandOptions = Omit<DoctorOptions, "invocationDir"> & {
 	json?: boolean
 }
 
-const shellArgument = (argument: string) => {
+const posixShellArgument = (argument: string) => {
 	if (/^[a-zA-Z0-9_@%+=:,./-]+$/.test(argument)) return argument
 	return `'${argument.replace(/'/g, `'"'"'`)}'`
 }
 
-export const formatDoctorCommand = (argv: string[]) =>
-	argv.map(shellArgument).join(" ")
+const powershellArgument = (argument: string) => {
+	if (/^[a-zA-Z0-9_+=:,./-]+$/.test(argument)) return argument
+	return `'${argument.replace(/'/g, "''")}'`
+}
+
+export const formatDoctorCommand = (
+	argv: string[],
+	platform: NodeJS.Platform = process.platform,
+) =>
+	argv
+		.map(platform === "win32" ? powershellArgument : posixShellArgument)
+		.join(" ")
 
 const symbolForFinding = (finding: DoctorFinding) => {
 	if (finding.severity === "error") return chalk.red("✗")
@@ -30,7 +40,10 @@ const symbolForFinding = (finding: DoctorFinding) => {
 const plural = (count: number, singular: string, pluralForm = `${singular}s`) =>
 	`${count} ${count === 1 ? singular : pluralForm}`
 
-export const renderDoctorHuman = (report: DoctorReport): string => {
+export const renderDoctorHuman = (
+	report: DoctorReport,
+	platform: NodeJS.Platform = process.platform,
+): string => {
 	const subjects = [
 		...report.passed.map((check) => check.subject),
 		...report.findings.map((finding) => finding.subject),
@@ -58,7 +71,8 @@ export const renderDoctorHuman = (report: DoctorReport): string => {
 			lines.push(`  Paths: ${entry.paths.join(", ")}`)
 		}
 		for (const command of entry.commands ?? []) {
-			lines.push(`  Run: ${formatDoctorCommand(command)}`)
+			const label = platform === "win32" ? "Run (PowerShell)" : "Run"
+			lines.push(`  ${label}: ${formatDoctorCommand(command, platform)}`)
 		}
 	}
 

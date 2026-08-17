@@ -257,6 +257,45 @@ describe("createDoctorReport edge diagnostics", () => {
 		expect(serialized).not.toContain(providerErrorSentinel)
 	})
 
+	test("keeps the report when an unexpected legacy access probe fails", async () => {
+		const fixture = await makeFixture()
+		const legacyProbeMarker = "legacy-probe-failure"
+		const rawErrorSentinel = "raw legacy provider account"
+		const legacyEnvironment = JSON.parse(
+			await fs.readFile(
+				path.join(fixture.root, ".env.development.enc"),
+				"utf8",
+			),
+		) as Environment
+		legacyEnvironment.keys[0].encryptedDataKey =
+			Buffer.from(legacyProbeMarker).toString("base64")
+		await fs.writeFile(
+			path.join(fixture.root, ".env.alice.enc"),
+			JSON.stringify(legacyEnvironment),
+		)
+
+		const report = await createDoctorReport(
+			{ invocationDir: fixture.root },
+			dependencies(fixture, {
+				probeEnvironmentAccess: async (environment) => {
+					const marker = Buffer.from(
+						environment.keys[0].encryptedDataKey,
+						"base64",
+					).toString("utf8")
+					if (marker === legacyProbeMarker) throw new Error(rawErrorSentinel)
+					return { status: "accessible" }
+				},
+			}),
+		)
+		const serialized = JSON.stringify(report)
+
+		expect(report.complete).toBe(false)
+		expect(report.exitCode).toBe(2)
+		expect(findingIds(report)).toContain("scan.incomplete")
+		expect(findingIds(report)).not.toContain("legacy.candidate")
+		expect(serialized).not.toContain(rawErrorSentinel)
+	})
+
 	test("bounds aggregate recursive entries across individually bounded directories", async () => {
 		const fixture = await makeFixture()
 		const originalOpendir = fs.opendir.bind(fs)
@@ -318,7 +357,7 @@ describe("createDoctorReport edge diagnostics", () => {
 		)
 	})
 
-	test("resolves a recursive DT_UNKNOWN directory or marks the scan incomplete", async () => {
+	test("resolves a recursive DT_UNKNOWN directory through bounded lstat", async () => {
 		const fixture = await makeFixture()
 		const unknownDirectoryName = "unknown-entry"
 		const unknownDirectory = path.join(fixture.root, unknownDirectoryName)
@@ -376,20 +415,14 @@ describe("createDoctorReport edge diagnostics", () => {
 				entry.id === "repository.envelope-valid" &&
 				entry.paths?.includes(relativeEnvelopePath),
 		)
+		const passedIds = report.passed.map((entry) => entry.id)
 
 		expect(returnedUnknownEntry).toBe(true)
-		if (envelopeInspected) {
-			expect(report.complete).toBe(true)
-		} else {
-			expect(report.complete).toBe(false)
-			expect(report.exitCode).toBe(2)
-			expect(findingIds(report)).toContain("scan.incomplete")
-			expect(report.passed.map((entry) => entry.id)).not.toContain(
-				"git.attributes",
-			)
-			expect(report.passed.map((entry) => entry.id)).not.toContain(
-				"plaintext.clean",
-			)
-		}
+		expect(envelopeInspected).toBe(true)
+		expect(report.complete).toBe(true)
+		expect(report.exitCode).toBe(0)
+		expect(findingIds(report)).not.toContain("scan.incomplete")
+		expect(passedIds).toContain("git.attributes")
+		expect(passedIds).toContain("plaintext.clean")
 	})
 })

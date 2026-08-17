@@ -215,7 +215,7 @@ const MAX_DIAGNOSTIC_SSH_FILES = 4096
 const MAX_DIAGNOSTIC_PRIVATE_KEY_BYTES = 10 * 1024 * 1024
 
 type DiagnosticPrivateKeyRead =
-	| { status: "ok"; content: string }
+	| { status: "ok"; content: string; bytesRead: number }
 	| { status: "skip" }
 	| { status: "too-large" }
 	| { status: "incomplete" }
@@ -272,7 +272,11 @@ const readDiagnosticPrivateKey = async (
 			return { status: "incomplete" }
 		}
 		if (offset > maximumBytes) return { status: "too-large" }
-		return { status: "ok", content: input.subarray(0, offset).toString("utf8") }
+		return {
+			status: "ok",
+			content: input.subarray(0, offset).toString("utf8"),
+			bytesRead: offset,
+		}
 	} finally {
 		input.fill(0)
 		await handle.close().catch(() => {})
@@ -527,7 +531,7 @@ export const getPrivateKeys = async (
 				continue
 			}
 			keyContent = diagnosticRead.content
-			diagnosticBytesRead += Buffer.byteLength(keyContent, "utf8")
+			diagnosticBytesRead += diagnosticRead.bytesRead
 		} else {
 			let stat: Awaited<ReturnType<typeof fs.stat>>
 			try {

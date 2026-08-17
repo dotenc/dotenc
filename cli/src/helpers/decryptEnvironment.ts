@@ -398,10 +398,7 @@ const unwrapEnvironmentDataKey = async (
 		if (mode === "probe" && unavailableProviderAccountLabels.length > 0) {
 			throw new EnvironmentProviderInconclusiveError("account-unavailable")
 		}
-		if (mode === "probe" && corruptMatchingLocalWrap) {
-			throw new EnvironmentDataKeyCorruptError()
-		}
-		if (mode === "decrypt" && corruptMatchingLocalWrap) {
+		if (corruptMatchingLocalWrap) {
 			throw new EnvironmentDataKeyCorruptError()
 		}
 		if (availablePrivateKeys.length === 0 && providerKeyNames.length === 0) {

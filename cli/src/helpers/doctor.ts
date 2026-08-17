@@ -1617,13 +1617,25 @@ const inspectLegacyCandidates = async (
 				verified = false
 				break
 			}
-			const access = await probeOfflineAccess(
-				inspection.environment,
-				privateFingerprints,
-				privateInventoryComplete,
-				context,
-				deps,
-			)
+			let access: EnvironmentAccessProbeResult
+			try {
+				access = await probeOfflineAccess(
+					inspection.environment,
+					privateFingerprints,
+					privateInventoryComplete,
+					context,
+					deps,
+				)
+			} catch {
+				const relative = normalizeRelativePath(projectRoot, sourcePath)
+				markIncomplete(
+					state,
+					"A possible legacy environment access check could not complete.",
+					relative ? [relative] : undefined,
+				)
+				verified = false
+				break
+			}
 			if (access.status !== "accessible") {
 				verified = false
 				break

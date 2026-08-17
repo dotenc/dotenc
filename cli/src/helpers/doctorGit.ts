@@ -102,6 +102,12 @@ const splitNul = (stdout: Buffer): string[] =>
 		.split("\0")
 		.filter((value) => value.length > 0)
 
+const splitTerminatedNul = (stdout: Buffer): string[] | undefined => {
+	const values = stdout.toString("utf8").split("\0")
+	if (values.pop() !== "") return undefined
+	return values
+}
+
 const encodeNulPaths = (filePaths: string[]): Buffer | undefined => {
 	const paths = [...new Set(filePaths)].sort((left, right) =>
 		left.localeCompare(right),
@@ -370,6 +376,7 @@ export class DoctorGitInspector {
 	configValues(key: string): string[] | undefined {
 		const result = this.#execute([
 			"config",
+			"--null",
 			"--includes",
 			"--local",
 			"--get-all",
@@ -379,15 +386,13 @@ export class DoctorGitInspector {
 			return undefined
 		}
 		if (result.status === 1) return []
-		return result.stdout
-			.toString("utf8")
-			.split(/\r?\n/)
-			.filter((value) => value.length > 0)
+		return splitTerminatedNul(result.stdout)
 	}
 
 	configBooleanValues(key: string): boolean[] | undefined {
 		const result = this.#execute([
 			"config",
+			"--null",
 			"--includes",
 			"--local",
 			"--bool",
@@ -398,10 +403,8 @@ export class DoctorGitInspector {
 			return undefined
 		}
 		if (result.status === 1) return []
-		const values = result.stdout
-			.toString("utf8")
-			.split(/\r?\n/)
-			.filter((value) => value.length > 0)
+		const values = splitTerminatedNul(result.stdout)
+		if (!values) return undefined
 		if (values.some((value) => value !== "true" && value !== "false")) {
 			return undefined
 		}
@@ -446,6 +449,8 @@ export class DoctorGitInspector {
 	}
 
 	trackedPaths(filePaths: string[]): Set<string> | undefined {
+		// This encoding is used only to validate, deduplicate, and bound the
+		// requested paths. The index listing below does not consume path input.
 		const input = encodeNulPaths(filePaths)
 		if (!input) return undefined
 		input.fill(0)
@@ -519,6 +524,7 @@ export class DoctorGitInspector {
 				"--literal-pathspecs",
 				"diff-tree",
 				"--stdin",
+				"-m",
 				"--root",
 				"-r",
 				"--raw",
@@ -534,7 +540,7 @@ export class DoctorGitInspector {
 		if (!successful(modeResult)) return { status: "incomplete" }
 		const modeFields = splitNul(modeResult.stdout)
 		const requestedRevisions = new Set(boundedRevisions)
-		const regularRevisions: string[] = []
+		const regularModes = new Map<string, boolean>()
 		for (let index = 0; index < modeFields.length; ) {
 			const revision = modeFields[index]
 			index += 1
@@ -549,13 +555,19 @@ export class DoctorGitInspector {
 			if (!match || changedPath !== repositoryPath) {
 				return { status: "incomplete" }
 			}
-			if (match[2] === "100644" || match[2] === "100755") {
-				regularRevisions.push(revision)
+			const regular = match[2] === "100644" || match[2] === "100755"
+			const previous = regularModes.get(revision)
+			if (previous !== undefined && previous !== regular) {
+				return { status: "incomplete" }
 			}
+			regularModes.set(revision, regular)
 		}
-		if (modeFields.length !== boundedRevisions.length * 3) {
+		if (regularModes.size !== boundedRevisions.length) {
 			return { status: "incomplete" }
 		}
+		const regularRevisions = boundedRevisions.filter(
+			(revision) => regularModes.get(revision) === true,
+		)
 		if (regularRevisions.length === 0) {
 			return revisionLines.length > MAX_HISTORY_REVISIONS
 				? { status: "incomplete" }

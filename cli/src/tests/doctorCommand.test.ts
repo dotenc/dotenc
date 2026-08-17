@@ -115,6 +115,23 @@ describe("doctor command renderers", () => {
 		expect(formatDoctorCommand(["git", "restore", "--", "a/b.env"])).toBe(
 			"git restore -- a/b.env",
 		)
+		expect(
+			formatDoctorCommand(
+				[
+					"dotenc",
+					"env",
+					"rename",
+					"old profile",
+					"personal.o'hara",
+					"$HOME/profile",
+					"--all-layers",
+					"",
+				],
+				"win32",
+			),
+		).toBe(
+			"dotenc env rename 'old profile' 'personal.o''hara' '$HOME/profile' --all-layers ''",
+		)
 	})
 
 	test("renders passed checks, findings, paths, recovery commands, and summary", () => {
@@ -167,6 +184,13 @@ describe("doctor command renderers", () => {
 			`Run: git restore -- '.env.personal o'"'"'hara.enc'`,
 		)
 		expect(rendered).toEndWith("1 error · 1 warning · 1 check passed")
+
+		const windowsRendered = stripAnsi(
+			renderDoctorHuman(report as never, "win32"),
+		)
+		expect(windowsRendered).toContain(
+			"Run (PowerShell): git restore -- '.env.personal o''hara.enc'",
+		)
 	})
 
 	test("renders the report as stable one-line JSON", () => {

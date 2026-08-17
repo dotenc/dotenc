@@ -13,6 +13,7 @@ import {
 } from "node:fs"
 import os from "node:os"
 import path from "node:path"
+import { pathToFileURL } from "node:url"
 import {
 	DoctorGitInspector,
 	isSafeDoctorRelativePath,
@@ -30,6 +31,7 @@ const runGit = (root: string, args: string[]): string =>
 		encoding: "utf-8",
 		env: {
 			...process.env,
+			GIT_CONFIG_GLOBAL: os.devNull,
 			GIT_CONFIG_NOSYSTEM: "1",
 			GIT_DEFAULT_HASH: "sha1",
 			GIT_TERMINAL_PROMPT: "0",
@@ -122,6 +124,34 @@ describe("DoctorGitInspector", () => {
 				worktreeDeleted: true,
 			},
 		])
+	})
+
+	test("reports shallow, non-shallow, and unparsable repository states", () => {
+		const root = createRepository()
+		writeRepositoryFile(root, "README.md", "shallow fixture\n")
+		commitAll(root, "add shallow fixture")
+		expect(new DoctorGitInspector(root).isShallow()).toBe(false)
+
+		const cloneContainer = mkdtempSync(
+			path.join(os.tmpdir(), "dotenc-doctor-shallow-"),
+		)
+		temporaryRepositories.add(cloneContainer)
+		const shallowRoot = path.join(cloneContainer, "repository")
+		runGit(root, [
+			"clone",
+			"--quiet",
+			"--depth=1",
+			pathToFileURL(root).href,
+			shallowRoot,
+		])
+		expect(new DoctorGitInspector(shallowRoot).isShallow()).toBe(true)
+
+		const unparsable = new DoctorGitInspector(root, () => ({
+			status: 0,
+			stdout: Buffer.from("unknown\n"),
+			failed: false,
+		}))
+		expect(unparsable.isShallow()).toBeUndefined()
 	})
 
 	test("distinguishes staged and unstaged tracked deletions", () => {
@@ -324,11 +354,23 @@ describe("DoctorGitInspector", () => {
 			"diff.dotenc.textconv",
 			"dotenc textconv --strict",
 		])
+		runGit(root, ["config", "--local", "--add", "doctor.boundary", ""])
+		runGit(root, [
+			"config",
+			"--local",
+			"--add",
+			"doctor.boundary",
+			"line one\nline two",
+		])
 
 		const inspector = new DoctorGitInspector(root)
 		expect(inspector.configValues("diff.dotenc.textconv")).toEqual([
 			"dotenc textconv",
 			"dotenc textconv --strict",
+		])
+		expect(inspector.configValues("doctor.boundary")).toEqual([
+			"",
+			"line one\nline two",
 		])
 		expect(inspector.configValues("doctor.missing")).toEqual([])
 	})
@@ -449,6 +491,38 @@ describe("DoctorGitInspector", () => {
 
 		expect(revision).toEqual({ status: "found", revision: validRevision })
 		expect(inspectedSources).toEqual([invalidEnvelope, validEnvelope])
+	})
+
+	test("returns a valid personal envelope created by a merge resolution", () => {
+		const root = createRepository()
+		const filePath = ".env.personal.alice.enc"
+		const validEnvelope = '{"version":2,"valid":true}\n'
+		writeRepositoryFile(root, filePath, '{"version":2,"state":"base"}\n')
+		commitAll(root, "add merge base")
+		const originalBranch = runGit(root, ["branch", "--show-current"])
+
+		runGit(root, ["checkout", "--quiet", "-b", "doctor-incoming"])
+		writeRepositoryFile(root, filePath, '{"version":2,"state":"incoming"}\n')
+		commitAll(root, "change incoming profile")
+
+		runGit(root, ["checkout", "--quiet", originalBranch])
+		writeRepositoryFile(root, filePath, '{"version":2,"state":"current"}\n')
+		commitAll(root, "change current profile")
+		expect(() =>
+			runGit(root, ["merge", "--no-edit", "--no-verify", "doctor-incoming"]),
+		).toThrow()
+		writeRepositoryFile(root, filePath, validEnvelope)
+		const mergeRevision = commitAll(root, "resolve profile merge")
+		expect(
+			runGit(root, ["rev-list", "--parents", "-1", "HEAD"]).split(" "),
+		).toHaveLength(3)
+
+		expect(
+			new DoctorGitInspector(root).latestValidRevision(
+				filePath,
+				(source) => source === validEnvelope,
+			),
+		).toEqual({ status: "found", revision: mergeRevision })
 	})
 
 	test("finds a valid personal envelope commit reachable only from reflog", () => {

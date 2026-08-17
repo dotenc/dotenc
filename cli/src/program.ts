@@ -438,12 +438,17 @@ try {
 		if (error.exitCode === 0) process.exit(0)
 		if (process.argv[2] === "doctor") {
 			if (doctorJsonRequested) {
+				const doctorArgs = process.argv.slice(3)
+				const profileIndex = doctorArgs.indexOf("--profile")
+				const profile =
+					profileIndex === -1 ? undefined : doctorArgs[profileIndex + 1]
 				console.log(
 					renderDoctorJson(
 						createDoctorFailureReport(
 							{
-								all: process.argv.slice(3).includes("--all"),
-								localOnly: process.argv.slice(3).includes("--local-only"),
+								all: doctorArgs.includes("--all"),
+								localOnly: doctorArgs.includes("--local-only"),
+								...(profile ? { profile } : {}),
 								json: true,
 							},
 							"invocation.invalid",

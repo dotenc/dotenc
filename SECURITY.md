@@ -436,7 +436,7 @@ The `--local-only` flag narrows decryption scope to the current directory only, 
 `.env.personal.<profile>.enc` files along the effective ancestor chain, groups
 same-named layers, and tests every layer with the existing fingerprint-based
 private-key decryption context. Public-key aliases are display metadata and
-never select a profile.
+never select a namespaced `personal.<profile>` profile.
 
 One accessible profile is selected automatically. Several accessible profiles
 prompt in a TTY and require `--profile <name>` in non-interactive use; an
@@ -449,9 +449,12 @@ required `development` environment is always fatal.
 This namespace transition is deliberately not inferred from public-key names.
 When no namespaced profile is selected, `dev` may emit a read-only warning for
 an accessible unprefixed environment that matches the former convention. It
-never loads or mutates that candidate. Unprefixed environments remain valid
-explicit environments—for example, `dotenc run -e alice` continues to load an
-environment genuinely named `alice`.
+never loads or mutates that candidate. The legacy hint requires the exact
+project-root `.dotenc/<name>.pub` alias to parse and validate, its fingerprint
+to appear as a recipient in every effective `.env.<name>.enc` layer, and every
+layer to decrypt and authenticate successfully. Unprefixed environments remain
+valid explicit environments—for example, `dotenc run -e alice` continues to
+load an environment genuinely named `alice`.
 
 Migration is explicit:
 
@@ -525,6 +528,11 @@ authorization prompt, or write/remove provider locator-cache entries. Recovery
 commands are inert argv arrays in the report; doctor never executes them.
 Local Git subprocesses inspect only the existing worktree, configuration,
 attributes, and object database.
+
+Human recovery rendering uses POSIX literal quoting on Unix-like systems and
+explicitly labeled PowerShell literal quoting on Windows. Versioned JSON keeps
+the canonical command as an argv array so automation never has to parse or
+execute a rendered shell string.
 
 For access checks, doctor parses bounded envelopes and tries every matching
 local recipient/private-key fingerprint pair until one unwraps a 32-byte data
@@ -656,6 +664,40 @@ Alternatively, follow the [installation guide](docs/INSTALLATION.md) to install
 a native release package, configure APT or RPM manually, or use APK, AUR,
 Homebrew, Scoop, npm, the `ghcr.io/dotenc/cli` OCI image, or a standalone
 binary. Those paths do not execute the install script.
+
+Standalone binary publication is gated by the exact forward `main` transition,
+not by the independently timed npm publication. The workflow validates the
+triggering and previous commit identities and ancestry, requires the current
+stable CLI version on a version-changing transition to exceed every stable
+version found in a bounded first-parent history. An unchanged follow-up commit
+may inherit an unpublished version only after the same bounded history and
+remote-state checks. The highest prior distinct stable version itself must
+already be a published stable GitHub release; a draft, prerelease, or orphan
+reservation therefore blocks a later version from publishing past incomplete
+state.
+
+Before publisher jobs start, the workflow proves that the triggering revision
+is the exact current `main` head and that no newer CLI version has superseded
+it. It then creates an annotated `v<version>` tag object whose bounded marker
+binds the version, triggering commit, and stable GitHub workflow run ID, and
+atomically points the release tag at that object. Production binary runs are
+serialized without cancelling queued version bumps. A rerun may reuse only its
+own exact reservation; another run cannot reuse or replace it. An unchanged
+descendant that finds the valid earlier reservation skips publication and
+leaves it to the owning run, while a conflicting run, lightweight tag, or
+mismatched marker fails closed for explicit reconciliation. If `main` advances
+after reservation, the owning run may finish because the tag has already fixed
+the release target.
+
+Immediately before release creation, the binary job requires that authenticated
+reservation and proves that no draft or published release already uses it. The
+release action receives the triggering commit explicitly and cannot move the
+pre-existing annotated tag. Before Homebrew, Scoop, or native-package
+publication can continue, the workflow peels and authenticates the reservation,
+then verifies that the published stable release contains exactly the expected
+base archives with matching sizes and SHA-256 digests. Existing release assets
+are never overwritten; partial state remains reserved and blocks automatic
+reuse until it is reconciled deliberately.
 
 ---
 

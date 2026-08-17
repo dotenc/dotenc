@@ -1211,30 +1211,32 @@ describe("createDoctorReport", () => {
 		expect(report.exitCode).toBe(2)
 	})
 
-	test("reports unsafe home configuration without changing its permissions", async () => {
-		if (process.platform === "win32") return
-		const fixture = await makeFixture()
-		await writeEnvironment(fixture, fixture.root, "development")
-		const configDir = path.join(fixture.home, ".dotenc")
-		const configPath = path.join(configDir, "config.json")
-		await fs.mkdir(configDir, { mode: 0o755 })
-		await fs.writeFile(configPath, "[]", { mode: 0o644 })
-		await fs.chmod(configDir, 0o755)
-		await fs.chmod(configPath, 0o644)
+	testPosix(
+		"reports unsafe home configuration without changing its permissions",
+		async () => {
+			const fixture = await makeFixture()
+			await writeEnvironment(fixture, fixture.root, "development")
+			const configDir = path.join(fixture.home, ".dotenc")
+			const configPath = path.join(configDir, "config.json")
+			await fs.mkdir(configDir, { mode: 0o755 })
+			await fs.writeFile(configPath, "[]", { mode: 0o644 })
+			await fs.chmod(configDir, 0o755)
+			await fs.chmod(configPath, 0o644)
 
-		const report = await createDoctorReport(
-			{ invocationDir: fixture.root },
-			dependencies(fixture),
-		)
-		const directoryMode = (await fs.stat(configDir)).mode & 0o777
-		const fileMode = (await fs.stat(configPath)).mode & 0o777
+			const report = await createDoctorReport(
+				{ invocationDir: fixture.root },
+				dependencies(fixture),
+			)
+			const directoryMode = (await fs.stat(configDir)).mode & 0o777
+			const fileMode = (await fs.stat(configPath)).mode & 0o777
 
-		expect(findingIds(report)).toContain("config.permissions")
-		expect(findingIds(report)).toContain("config.invalid")
-		expect(directoryMode).toBe(0o755)
-		expect(fileMode).toBe(0o644)
-		expect(JSON.stringify(report)).not.toContain(fixture.home)
-	})
+			expect(findingIds(report)).toContain("config.permissions")
+			expect(findingIds(report)).toContain("config.invalid")
+			expect(directoryMode).toBe(0o755)
+			expect(fileMode).toBe(0o644)
+			expect(JSON.stringify(report)).not.toContain(fixture.home)
+		},
+	)
 
 	test("returns a known project-not-found error without exposing the invocation path", async () => {
 		const fixture = await makeFixture()

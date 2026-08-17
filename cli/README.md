@@ -70,6 +70,10 @@ Human output stays compact and copyable:
 0 errors · 1 warning · 4 checks passed
 ```
 
+On Windows, recovery lines are labeled `Run (PowerShell)` and use PowerShell
+literal quoting. JSON recovery commands remain shell-neutral argv arrays on
+every platform.
+
 Exit codes are stable:
 
 - `0` — the scan completed without errors; warnings are allowed unless
@@ -334,7 +338,8 @@ dotenc dev node app.js
 Personal profiles are discovered only along the effective ancestor chain (or
 only in the current directory with `--local-only`). Access is tested by the
 recipient fingerprint against your available private keys; `.dotenc/*.pub`
-filenames are human-readable aliases and do not choose a profile.
+filenames are human-readable aliases and do not choose a namespaced
+`personal.<profile>` profile.
 
 - One accessible profile is selected automatically.
 - Several accessible profiles prompt in an interactive terminal. In
@@ -357,7 +362,10 @@ environments named directly after a key alias. When no namespaced personal
 profile is selected, `dotenc dev` may print a read-only warning about an
 accessible environment that matches the former convention. The warning is only
 a migration hint: `dev` never auto-loads or modifies the candidate, because an
-unprefixed environment may be legitimate. For example, this remains valid:
+unprefixed environment may be legitimate. This legacy hint requires the exact
+`.dotenc/<name>.pub` alias to exist and validate, its fingerprint to be a
+recipient in every effective `.env.<name>.enc` layer, and every layer to decrypt
+and authenticate successfully. For example, this remains valid:
 
 ```bash
 dotenc run -e alice bun run test

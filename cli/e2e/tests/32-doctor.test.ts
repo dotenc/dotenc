@@ -130,10 +130,19 @@ describe("doctor", () => {
 	}, TIMEOUT)
 
 	test("uses exit 2 and versioned JSON for invalid invocations", () => {
-		for (const args of [
-			["doctor", "--json", "--all", "--profile", "alice"],
-			["doctor", "--json", "--profile"],
-			["doctor", "--json", "--unknown-option"],
+		for (const { args, scope } of [
+			{
+				args: ["doctor", "--json", "--all", "--profile", "alice"],
+				scope: { mode: "all", profile: "personal.alice" },
+			},
+			{
+				args: ["doctor", "--json", "--profile"],
+				scope: { mode: "effective" },
+			},
+			{
+				args: ["doctor", "--json", "--unknown-option"],
+				scope: { mode: "effective" },
+			},
 		]) {
 			const result = runCli(home, nested, args)
 			expect(result.exitCode).toBe(2)
@@ -142,6 +151,7 @@ describe("doctor", () => {
 				schemaVersion: 1,
 				command: "doctor",
 				complete: false,
+				scope,
 				exitCode: 2,
 				findings: [{ id: "invocation.invalid" }],
 			})

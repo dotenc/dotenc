@@ -31,9 +31,16 @@ const deps = (
 	invalidPublicKeys = new Set<string>(),
 ) => {
 	const readdir = mock(async (dir: string) => filesByDir[dir] ?? [])
-	const readFile = mock(async (filePath: string) =>
-		path.basename(filePath, ".pub"),
-	)
+	const readFile = mock(async (filePath: string) => {
+		const directory = path.dirname(filePath)
+		const fileName = path.basename(filePath)
+		if (!(filesByDir[directory] ?? []).includes(fileName)) {
+			const error = new Error(`ENOENT: ${filePath}`) as NodeJS.ErrnoException
+			error.code = "ENOENT"
+			throw error
+		}
+		return path.basename(filePath, ".pub")
+	})
 	const decryptEnvironmentDataMock = mock(async (name: string) => {
 		if (inaccessibleNames.has(name)) throw new Error("inaccessible")
 		return "decrypted"
@@ -269,6 +276,7 @@ describe("legacy personal profile discovery", () => {
 		const testDeps = deps({
 			[ROOT]: [".env.alice.enc"],
 			[SUBDIR]: [".env.alice.enc"],
+			[path.join(ROOT, ".dotenc")]: ["alice.pub"],
 		})
 
 		const result = await discoverLegacyProfile(
@@ -291,6 +299,29 @@ describe("legacy personal profile discovery", () => {
 				(call) => call[0] === "alice",
 			),
 		).toBe(true)
+	})
+
+	test("does not hint an explicit legacy profile without its public alias", async () => {
+		const testDeps = deps({
+			[ROOT]: [".env.alice.enc"],
+			[SUBDIR]: [],
+			[path.join(ROOT, ".dotenc")]: [],
+		})
+
+		const result = await discoverLegacyProfile(
+			"alice",
+			{
+				invocationDir: SUBDIR,
+				decryptionContext: context,
+			},
+			testDeps,
+		)
+
+		expect(result).toBeUndefined()
+		expect(testDeps.readFile).toHaveBeenCalledWith(
+			path.join(ROOT, ".dotenc", "alice.pub"),
+		)
+		expect(testDeps.decryptEnvironmentData).not.toHaveBeenCalled()
 	})
 
 	test("does not advertise legacy profiles when ciphertext authentication fails after key unwrap", async () => {
@@ -456,6 +487,7 @@ describe("legacy personal profile discovery", () => {
 		const testDeps = deps({
 			[ROOT]: [".env.alice.enc"],
 			[SUBDIR]: [],
+			[path.join(ROOT, ".dotenc")]: ["alice.pub"],
 		})
 
 		const result = await discoverLegacyProfile(
