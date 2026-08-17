@@ -21485,7 +21485,11 @@ var readDiagnosticPrivateKey = async (filePath, maximumBytes) => {
     }
     if (offset > maximumBytes)
       return { status: "too-large" };
-    return { status: "ok", content: input.subarray(0, offset).toString("utf8") };
+    return {
+      status: "ok",
+      content: input.subarray(0, offset).toString("utf8"),
+      bytesRead: offset
+    };
   } finally {
     input.fill(0);
     await handle.close().catch(() => {});
@@ -21678,7 +21682,7 @@ var getPrivateKeys = async (options = {}) => {
         continue;
       }
       keyContent = diagnosticRead.content;
-      diagnosticBytesRead += Buffer.byteLength(keyContent, "utf8");
+      diagnosticBytesRead += diagnosticRead.bytesRead;
     } else {
       let stat;
       try {
@@ -22734,10 +22738,7 @@ var unwrapEnvironmentDataKey = async (environment, deps, mode = "decrypt") => {
     if (mode === "probe" && unavailableProviderAccountLabels.length > 0) {
       throw new EnvironmentProviderInconclusiveError("account-unavailable");
     }
-    if (mode === "probe" && corruptMatchingLocalWrap) {
-      throw new EnvironmentDataKeyCorruptError;
-    }
-    if (mode === "decrypt" && corruptMatchingLocalWrap) {
+    if (corruptMatchingLocalWrap) {
       throw new EnvironmentDataKeyCorruptError;
     }
     if (availablePrivateKeys.length === 0 && providerKeyNames.length === 0) {
