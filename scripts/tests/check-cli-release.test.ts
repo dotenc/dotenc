@@ -1,3 +1,4 @@
+import { afterEach, describe, expect, test } from "bun:test"
 import { execFileSync } from "node:child_process"
 import { createHash } from "node:crypto"
 import {
@@ -9,11 +10,10 @@ import {
 } from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { afterEach, describe, expect, test } from "bun:test"
 import {
-	CLI_RELEASE_ASSETS,
 	assertReleaseTargetMissing,
 	assertReservedReleaseTarget,
+	CLI_RELEASE_ASSETS,
 	createCliReleaseDependencies,
 	createReleaseReservationMessage,
 	evaluateCliReleaseGate,
@@ -66,13 +66,41 @@ type ApiRequest = {
 }
 type ApiFixtures = Record<string, ApiFixture | ApiFixture[]>
 
-const releaseInventoryPath =
-	"/repos/dotenc/dotenc/releases?per_page=100&page=1"
+const releaseInventoryPath = "/graphql"
+const graphqlUrl = "https://api.github.test/graphql"
 const mainRefPath = "/repos/dotenc/dotenc/git/ref/heads/main"
 const tagRefPath = (version: string) =>
 	`/repos/dotenc/dotenc/git/ref/tags/v${version}`
-const tagObjectPath = (sha: string) =>
-	`/repos/dotenc/dotenc/git/tags/${sha}`
+const tagObjectPath = (sha: string) => `/repos/dotenc/dotenc/git/tags/${sha}`
+
+type ReleaseNodeFixture = {
+	id?: string
+	isDraft: boolean
+	isPrerelease: boolean
+	tagName: string
+}
+
+const releaseInventoryPage = (
+	nodes: ReleaseNodeFixture[],
+	pageInfo: { endCursor: string | null; hasNextPage: boolean } = {
+		endCursor: null,
+		hasNextPage: false,
+	},
+	totalCount = nodes.length,
+) => ({
+	data: {
+		repository: {
+			releases: {
+				nodes: nodes.map(({ id, ...node }) => ({
+					id: id ?? `release-${node.tagName}`,
+					...node,
+				})),
+				pageInfo,
+				totalCount,
+			},
+		},
+	},
+})
 
 const reservationFixture = (
 	version: string,
@@ -106,6 +134,7 @@ const dependencies = (
 		root,
 		repository: "dotenc/dotenc",
 		apiUrl: "https://api.github.test",
+		graphqlUrl,
 		token: "test-token",
 		fetchImpl: async (input, init) => {
 			const url = String(input)
@@ -122,7 +151,8 @@ const dependencies = (
 			const fixture = Array.isArray(configured)
 				? (configured.shift() ?? { status: 404 })
 				: (configured ?? { status: 404 })
-			const body = fixture.value === undefined ? "" : JSON.stringify(fixture.value)
+			const body =
+				fixture.value === undefined ? "" : JSON.stringify(fixture.value)
 			return new Response(body, {
 				status: fixture.status,
 				headers: { "content-length": String(Buffer.byteLength(body)) },
@@ -155,13 +185,13 @@ describe("CLI release gate", () => {
 						},
 						[releaseInventoryPath]: {
 							status: 200,
-							value: [
+							value: releaseInventoryPage([
 								{
-									tag_name: "v0.13.0",
-									draft: false,
-									prerelease: false,
+									tagName: "v0.13.0",
+									isDraft: false,
+									isPrerelease: false,
 								},
-							],
+							]),
 						},
 					},
 					requests,
@@ -169,10 +199,288 @@ describe("CLI release gate", () => {
 			),
 		).toEqual({ version: "0.14.0", bumped: true })
 		expect(requests.map(({ url }) => url)).toEqual([
-			"https://api.github.test/repos/dotenc/dotenc/releases?per_page=100&page=1",
+			graphqlUrl,
 			"https://api.github.test/repos/dotenc/dotenc/git/ref/tags/v0.14.0",
 			"https://api.github.test/repos/dotenc/dotenc/git/ref/heads/main",
 		])
+	})
+
+	test("follows authoritative release pagination through an empty first page", async () => {
+		const root = createRepository()
+		const beforeSha = commitVersion(root, "0.13.0")
+		const currentSha = commitVersion(root, "0.14.0")
+		const requests: ApiRequest[] = []
+
+		expect(
+			await evaluateCliReleaseGate(
+				{ eventName: "push", beforeSha, currentSha, runId: RUN_ID },
+				dependencies(
+					root,
+					{
+						[mainRefPath]: {
+							status: 200,
+							value: { object: { type: "commit", sha: currentSha } },
+						},
+						[releaseInventoryPath]: [
+							{
+								status: 200,
+								value: releaseInventoryPage(
+									[],
+									{
+										hasNextPage: true,
+										endCursor: "cursor-1",
+									},
+									1,
+								),
+							},
+							{
+								status: 200,
+								value: releaseInventoryPage([
+									{
+										tagName: "v0.13.0",
+										isDraft: false,
+										isPrerelease: false,
+									},
+								]),
+							},
+						],
+					},
+					requests,
+				),
+			),
+		).toEqual({ version: "0.14.0", bumped: true })
+
+		const graphqlRequests = requests.filter(({ url }) => url === graphqlUrl)
+		expect(graphqlRequests.every(({ method }) => method === "POST")).toBeTrue()
+		const variables = graphqlRequests.map(
+			({ body }) => (body as { variables: unknown }).variables,
+		)
+		expect(variables).toEqual([
+			{ owner: "dotenc", name: "dotenc", cursor: null },
+			{ owner: "dotenc", name: "dotenc", cursor: "cursor-1" },
+		])
+		const query = (graphqlRequests[0].body as { query: unknown }).query
+		expect(query).toBeString()
+		for (const field of [
+			"totalCount",
+			"id",
+			"tagName",
+			"isDraft",
+			"isPrerelease",
+		]) {
+			expect(query).toContain(field)
+		}
+	})
+
+	test("rejects missing and non-progressing release cursors", async () => {
+		const root = createRepository()
+		const currentSha = commitVersion(root, "0.14.0")
+		const mainFixture = {
+			[mainRefPath]: {
+				status: 200,
+				value: { object: { type: "commit", sha: currentSha } },
+			},
+		} satisfies Record<string, ApiFixture>
+
+		await expect(
+			assertReleaseTargetMissing(
+				currentSha,
+				"0.14.0",
+				dependencies(root, {
+					...mainFixture,
+					[releaseInventoryPath]: {
+						status: 200,
+						value: releaseInventoryPage([], {
+							hasNextPage: true,
+							endCursor: null,
+						}),
+					},
+				}),
+			),
+		).rejects.toThrow("release inventory pagination is invalid")
+
+		await expect(
+			assertReleaseTargetMissing(
+				currentSha,
+				"0.14.0",
+				dependencies(root, {
+					...mainFixture,
+					[releaseInventoryPath]: [
+						{
+							status: 200,
+							value: releaseInventoryPage([], {
+								hasNextPage: true,
+								endCursor: "cursor-1",
+							}),
+						},
+						{
+							status: 200,
+							value: releaseInventoryPage([], {
+								hasNextPage: true,
+								endCursor: "cursor-1",
+							}),
+						},
+					],
+				}),
+			),
+		).rejects.toThrow("release inventory pagination is invalid")
+	})
+
+	test("rejects false terminal totals and duplicate release evidence", async () => {
+		const root = createRepository()
+		const currentSha = commitVersion(root, "0.14.0")
+		const mainFixture = {
+			[mainRefPath]: {
+				status: 200,
+				value: { object: { type: "commit", sha: currentSha } },
+			},
+		} satisfies Record<string, ApiFixture>
+
+		await expect(
+			assertReleaseTargetMissing(
+				currentSha,
+				"0.14.0",
+				dependencies(root, {
+					...mainFixture,
+					[releaseInventoryPath]: {
+						status: 200,
+						value: releaseInventoryPage([], undefined, 1),
+					},
+				}),
+			),
+		).rejects.toThrow("release inventory is incomplete")
+
+		const release = {
+			tagName: "v0.13.0",
+			isDraft: false,
+			isPrerelease: false,
+		}
+		await expect(
+			assertReleaseTargetMissing(
+				currentSha,
+				"0.14.0",
+				dependencies(root, {
+					...mainFixture,
+					[releaseInventoryPath]: [
+						{
+							status: 200,
+							value: releaseInventoryPage(
+								[release],
+								{ hasNextPage: true, endCursor: "cursor-1" },
+								2,
+							),
+						},
+						{
+							status: 200,
+							value: releaseInventoryPage([release], undefined, 2),
+						},
+					],
+				}),
+			),
+		).rejects.toThrow("release inventory is invalid")
+	})
+
+	test("rejects a release total that changes between pages", async () => {
+		const root = createRepository()
+		const currentSha = commitVersion(root, "0.14.0")
+
+		await expect(
+			assertReleaseTargetMissing(
+				currentSha,
+				"0.14.0",
+				dependencies(root, {
+					[mainRefPath]: {
+						status: 200,
+						value: { object: { type: "commit", sha: currentSha } },
+					},
+					[releaseInventoryPath]: [
+						{
+							status: 200,
+							value: releaseInventoryPage(
+								[],
+								{ hasNextPage: true, endCursor: "cursor-1" },
+								1,
+							),
+						},
+						{
+							status: 200,
+							value: releaseInventoryPage([], undefined, 2),
+						},
+					],
+				}),
+			),
+		).rejects.toThrow("release inventory total is invalid")
+	})
+
+	test("rejects GraphQL errors and release totals above the global bound", async () => {
+		const root = createRepository()
+		const currentSha = commitVersion(root, "0.14.0")
+		const mainFixture = {
+			[mainRefPath]: {
+				status: 200,
+				value: { object: { type: "commit", sha: currentSha } },
+			},
+		} satisfies Record<string, ApiFixture>
+
+		await expect(
+			assertReleaseTargetMissing(
+				currentSha,
+				"0.14.0",
+				dependencies(root, {
+					...mainFixture,
+					[releaseInventoryPath]: {
+						status: 200,
+						value: { errors: [{ message: "unavailable" }] },
+					},
+				}),
+			),
+		).rejects.toThrow("release inventory could not be verified")
+
+		await expect(
+			assertReleaseTargetMissing(
+				currentSha,
+				"0.14.0",
+				dependencies(root, {
+					...mainFixture,
+					[releaseInventoryPath]: {
+						status: 200,
+						value: releaseInventoryPage([], undefined, 1_001),
+					},
+				}),
+			),
+		).rejects.toThrow("release inventory total is invalid")
+	})
+
+	test("bounds release inventory pagination independently of page contents", async () => {
+		const root = createRepository()
+		const currentSha = commitVersion(root, "0.14.0")
+		const requests: ApiRequest[] = []
+		const pages = Array.from({ length: 10 }, (_, index) => ({
+			status: 200,
+			value: releaseInventoryPage([], {
+				hasNextPage: true,
+				endCursor: `cursor-${index + 1}`,
+			}),
+		}))
+
+		await expect(
+			assertReleaseTargetMissing(
+				currentSha,
+				"0.14.0",
+				dependencies(
+					root,
+					{
+						[mainRefPath]: {
+							status: 200,
+							value: { object: { type: "commit", sha: currentSha } },
+						},
+						[releaseInventoryPath]: pages,
+					},
+					requests,
+				),
+			),
+		).rejects.toThrow("release inventory exceeded its bound")
+		expect(requests.filter(({ url }) => url === graphqlUrl)).toHaveLength(10)
 	})
 
 	test("treats an unchanged unreleased version as a pending release", async () => {
@@ -195,14 +503,17 @@ describe("CLI release gate", () => {
 							status: 200,
 							value: { object: { type: "commit", sha: currentSha } },
 						},
-						[releaseInventoryPath]: { status: 200, value: [] },
+						[releaseInventoryPath]: {
+							status: 200,
+							value: releaseInventoryPage([]),
+						},
 					},
 					requests,
 				),
 			),
 		).toEqual({ version: "0.14.0", bumped: true })
 		expect(requests.map(({ url }) => url)).toEqual([
-			"https://api.github.test/repos/dotenc/dotenc/releases?per_page=100&page=1",
+			graphqlUrl,
 			"https://api.github.test/repos/dotenc/dotenc/git/ref/tags/v0.14.0",
 			"https://api.github.test/repos/dotenc/dotenc/git/ref/heads/main",
 		])
@@ -259,8 +570,6 @@ describe("CLI release gate", () => {
 		const mainRefPath = "/repos/dotenc/dotenc/git/ref/heads/main"
 		const comparePath = `/repos/dotenc/dotenc/compare/${currentSha}...${remoteSha}`
 		const contentsPath = `/repos/dotenc/dotenc/contents/cli/package.json?ref=${remoteSha}`
-		const releasesPath =
-			"/repos/dotenc/dotenc/releases?per_page=100&page=1"
 		const remotePackage = Buffer.from(
 			JSON.stringify({ name: "@dotenc/cli", version: "0.15.0" }),
 		).toString("base64")
@@ -288,15 +597,15 @@ describe("CLI release gate", () => {
 							content: remotePackage,
 						},
 					},
-					[releasesPath]: {
+					[releaseInventoryPath]: {
 						status: 200,
-						value: [
+						value: releaseInventoryPage([
 							{
-								tag_name: "v0.13.0",
-								draft: false,
-								prerelease: false,
+								tagName: "v0.13.0",
+								isDraft: false,
+								isPrerelease: false,
 							},
-						],
+						]),
 					},
 				}),
 			),
@@ -311,8 +620,6 @@ describe("CLI release gate", () => {
 		const mainRefPath = "/repos/dotenc/dotenc/git/ref/heads/main"
 		const comparePath = `/repos/dotenc/dotenc/compare/${currentSha}...${remoteSha}`
 		const contentsPath = `/repos/dotenc/dotenc/contents/cli/package.json?ref=${remoteSha}`
-		const releasesPath =
-			"/repos/dotenc/dotenc/releases?per_page=100&page=1"
 		const remotePackage = readFileSync(
 			path.resolve(import.meta.dir, "../../cli/package.json"),
 		).toString("base64")
@@ -341,15 +648,15 @@ describe("CLI release gate", () => {
 							content: remotePackage,
 						},
 					},
-					[releasesPath]: {
+					[releaseInventoryPath]: {
 						status: 200,
-						value: [
+						value: releaseInventoryPage([
 							{
-								tag_name: "v0.13.0",
-								draft: false,
-								prerelease: false,
+								tagName: "v0.13.0",
+								isDraft: false,
+								isPrerelease: false,
 							},
-						],
+						]),
 					},
 				}),
 			),
@@ -384,8 +691,6 @@ describe("CLI release gate", () => {
 				value: { object: { type: "commit", sha: currentSha } },
 			},
 		} satisfies Record<string, ApiFixture>
-		const releasesPath =
-			"/repos/dotenc/dotenc/releases?per_page=100&page=1"
 		const tagPath = "/repos/dotenc/dotenc/git/ref/tags/v0.14.0"
 
 		await expect(
@@ -394,11 +699,11 @@ describe("CLI release gate", () => {
 				"0.14.0",
 				dependencies(root, {
 					...mainFixture,
-					[releasesPath]: {
+					[releaseInventoryPath]: {
 						status: 200,
-						value: [
-							{ tag_name: "v0.14.0", draft: true, prerelease: false },
-						],
+						value: releaseInventoryPage([
+							{ tagName: "v0.14.0", isDraft: true, isPrerelease: false },
+						]),
 					},
 				}),
 			),
@@ -409,11 +714,11 @@ describe("CLI release gate", () => {
 				{ eventName: "push", beforeSha, currentSha, runId: RUN_ID },
 				dependencies(root, {
 					...mainFixture,
-					[releasesPath]: {
+					[releaseInventoryPath]: {
 						status: 200,
-						value: [
-							{ tag_name: "v0.14.0", draft: true, prerelease: false },
-						],
+						value: releaseInventoryPage([
+							{ tagName: "v0.14.0", isDraft: true, isPrerelease: false },
+						]),
 					},
 				}),
 			),
@@ -425,11 +730,11 @@ describe("CLI release gate", () => {
 				"0.14.0",
 				dependencies(root, {
 					...mainFixture,
-					[releasesPath]: {
+					[releaseInventoryPath]: {
 						status: 200,
-						value: [
-							{ tag_name: "v0.15.0", draft: false, prerelease: false },
-						],
+						value: releaseInventoryPage([
+							{ tagName: "v0.15.0", isDraft: false, isPrerelease: false },
+						]),
 					},
 				}),
 			),
@@ -441,7 +746,10 @@ describe("CLI release gate", () => {
 				"0.14.0",
 				dependencies(root, {
 					...mainFixture,
-					[releasesPath]: { status: 200, value: [] },
+					[releaseInventoryPath]: {
+						status: 200,
+						value: releaseInventoryPage([]),
+					},
 					[tagPath]: { status: 200, value: {} },
 				}),
 			),
@@ -453,7 +761,7 @@ describe("CLI release gate", () => {
 				"0.14.0",
 				dependencies(root, {
 					...mainFixture,
-					[releasesPath]: { status: 500 },
+					[releaseInventoryPath]: { status: 500 },
 				}),
 			),
 		).rejects.toThrow("could not be inspected")
@@ -472,7 +780,10 @@ describe("CLI release gate", () => {
 			dependencies(
 				root,
 				{
-					[releaseInventoryPath]: { status: 200, value: [] },
+					[releaseInventoryPath]: {
+						status: 200,
+						value: releaseInventoryPage([]),
+					},
 					[mainRefPath]: {
 						status: 200,
 						value: { object: { type: "commit", sha: currentSha } },
@@ -490,7 +801,11 @@ describe("CLI release gate", () => {
 			),
 		)
 
-		expect(requests.filter(({ method }) => method === "POST")).toEqual([
+		expect(
+			requests.filter(
+				({ url }) => url.endsWith("/git/tags") || url.endsWith("/git/refs"),
+			),
+		).toEqual([
 			{
 				method: "POST",
 				url: "https://api.github.test/repos/dotenc/dotenc/git/tags",
@@ -523,13 +838,13 @@ describe("CLI release gate", () => {
 			{
 				[releaseInventoryPath]: {
 					status: 200,
-					value: [
+					value: releaseInventoryPage([
 						{
-							tag_name: "v0.13.0",
-							draft: false,
-							prerelease: false,
+							tagName: "v0.13.0",
+							isDraft: false,
+							isPrerelease: false,
 						},
-					],
+					]),
 				},
 				[tagRefPath("0.14.0")]: {
 					status: 200,
@@ -550,7 +865,11 @@ describe("CLI release gate", () => {
 			),
 		).toEqual({ version: "0.14.0", bumped: true })
 		await reserveCliReleaseTag(currentSha, "0.14.0", RUN_ID, deps)
-		expect(requests.some(({ method }) => method === "POST")).toBeFalse()
+		expect(
+			requests.some(
+				({ url }) => url.endsWith("/git/tags") || url.endsWith("/git/refs"),
+			),
+		).toBeFalse()
 	})
 
 	test("fails closed when the same workflow run already published", async () => {
@@ -565,18 +884,18 @@ describe("CLI release gate", () => {
 				dependencies(root, {
 					[releaseInventoryPath]: {
 						status: 200,
-						value: [
+						value: releaseInventoryPage([
 							{
-								tag_name: "v0.13.0",
-								draft: false,
-								prerelease: false,
+								tagName: "v0.13.0",
+								isDraft: false,
+								isPrerelease: false,
 							},
 							{
-								tag_name: "v0.14.0",
-								draft: false,
-								prerelease: false,
+								tagName: "v0.14.0",
+								isDraft: false,
+								isPrerelease: false,
 							},
-						],
+						]),
 					},
 					[tagRefPath("0.14.0")]: {
 						status: 200,
@@ -604,7 +923,10 @@ describe("CLI release gate", () => {
 			dependencies(
 				root,
 				{
-					[releaseInventoryPath]: { status: 200, value: [] },
+					[releaseInventoryPath]: {
+						status: 200,
+						value: releaseInventoryPage([]),
+					},
 					[tagRefPath("0.14.0")]: [
 						{ status: 404 },
 						{ status: 200, value: reservation.tagRef },
@@ -643,11 +965,7 @@ describe("CLI release gate", () => {
 		runGit(root, ["add", "README.md"])
 		runGit(root, ["commit", "--quiet", "--no-verify", "-m", "docs"])
 		const currentSha = runGit(root, ["rev-parse", "HEAD"])
-		const reservation = reservationFixture(
-			"0.14.0",
-			reservedSha,
-			OTHER_RUN_ID,
-		)
+		const reservation = reservationFixture("0.14.0", reservedSha, OTHER_RUN_ID)
 		const requests: ApiRequest[] = []
 
 		expect(
@@ -663,13 +981,13 @@ describe("CLI release gate", () => {
 					{
 						[releaseInventoryPath]: {
 							status: 200,
-							value: [
+							value: releaseInventoryPage([
 								{
-									tag_name: "v0.13.0",
-									draft: false,
-									prerelease: false,
+									tagName: "v0.13.0",
+									isDraft: false,
+									isPrerelease: false,
 								},
-							],
+							]),
 						},
 						[tagRefPath("0.14.0")]: {
 							status: 200,
@@ -688,7 +1006,11 @@ describe("CLI release gate", () => {
 				),
 			),
 		).toEqual({ version: "0.14.0", bumped: false })
-		expect(requests.some(({ method }) => method === "POST")).toBeFalse()
+		expect(
+			requests.some(
+				({ url }) => url.endsWith("/git/tags") || url.endsWith("/git/refs"),
+			),
+		).toBeFalse()
 	})
 
 	test("rejects a reservation marker that does not match its target", async () => {
@@ -707,13 +1029,13 @@ describe("CLI release gate", () => {
 				dependencies(root, {
 					[releaseInventoryPath]: {
 						status: 200,
-						value: [
+						value: releaseInventoryPage([
 							{
-								tag_name: "v0.13.0",
-								draft: false,
-								prerelease: false,
+								tagName: "v0.13.0",
+								isDraft: false,
+								isPrerelease: false,
 							},
-						],
+						]),
 					},
 					[tagRefPath("0.14.0")]: {
 						status: 200,
@@ -741,13 +1063,13 @@ describe("CLI release gate", () => {
 				dependencies(root, {
 					[releaseInventoryPath]: {
 						status: 200,
-						value: [
+						value: releaseInventoryPage([
 							{
-								tag_name: "v0.14.0",
-								draft: true,
-								prerelease: false,
+								tagName: "v0.14.0",
+								isDraft: true,
+								isPrerelease: false,
 							},
-						],
+						]),
 					},
 					[tagRefPath("0.14.0")]: {
 						status: 200,
@@ -770,18 +1092,18 @@ describe("CLI release gate", () => {
 				dependencies(root, {
 					[releaseInventoryPath]: {
 						status: 200,
-						value: [
+						value: releaseInventoryPage([
 							{
-								tag_name: "v0.13.0",
-								draft: false,
-								prerelease: false,
+								tagName: "v0.13.0",
+								isDraft: false,
+								isPrerelease: false,
 							},
 							{
-								tag_name: "v0.14.0",
-								draft: true,
-								prerelease: false,
+								tagName: "v0.14.0",
+								isDraft: true,
+								isPrerelease: false,
 							},
-						],
+						]),
 					},
 				}),
 			),
@@ -800,17 +1122,19 @@ describe("CLI release gate", () => {
 				dependencies(root, {
 					[releaseInventoryPath]: {
 						status: 200,
-						value: [
+						value: releaseInventoryPage([
 							{
-								tag_name: "v0.14.1",
-								draft: false,
-								prerelease: false,
+								tagName: "v0.14.1",
+								isDraft: false,
+								isPrerelease: false,
 							},
-						],
+						]),
 					},
 				}),
 			),
-		).rejects.toThrow("Previous CLI version v0.14.0 is not a published stable release")
+		).rejects.toThrow(
+			"Previous CLI version v0.14.0 is not a published stable release",
+		)
 	})
 
 	test("accepts an exact target reservation after main advances", async () => {
@@ -826,7 +1150,10 @@ describe("CLI release gate", () => {
 			dependencies(
 				root,
 				{
-					[releaseInventoryPath]: { status: 200, value: [] },
+					[releaseInventoryPath]: {
+						status: 200,
+						value: releaseInventoryPage([]),
+					},
 					[tagRefPath("0.14.0")]: {
 						status: 200,
 						value: reservation.tagRef,
@@ -855,6 +1182,7 @@ describe("CLI release gate", () => {
 			root,
 			repository: "dotenc/dotenc",
 			apiUrl: "https://api.github.test",
+			graphqlUrl,
 			token: "test-token",
 			fetchImpl: async () =>
 				new Response(
@@ -874,6 +1202,10 @@ describe("CLI release gate", () => {
 		await expect(deps.github("releases?per_page=100&page=1")).rejects.toThrow(
 			"exceeded its bound",
 		)
+		expect(cancelled).toBeTrue()
+
+		cancelled = false
+		await expect(deps.releasePage()).rejects.toThrow("exceeded its bound")
 		expect(cancelled).toBeTrue()
 	})
 

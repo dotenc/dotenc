@@ -671,10 +671,13 @@ triggering and previous commit identities and ancestry, requires the current
 stable CLI version on a version-changing transition to exceed every stable
 version found in a bounded first-parent history. An unchanged follow-up commit
 may inherit an unpublished version only after the same bounded history and
-remote-state checks. The highest prior distinct stable version itself must
-already be a published stable GitHub release; a draft, prerelease, or orphan
-reservation therefore blocks a later version from publishing past incomplete
-state.
+remote-state checks. Remote release state comes from an authenticated,
+cursor-paginated GraphQL inventory with fixed page, response-byte, and total-page
+bounds. It cross-checks the declared total against unique release identities;
+missing, duplicate, or non-progressing pagination evidence fails closed. The
+highest prior distinct stable version itself must already be a published stable
+GitHub release; a draft, prerelease, or orphan reservation therefore blocks a
+later version from publishing past incomplete state.
 
 Before publisher jobs start, the workflow proves that the triggering revision
 is the exact current `main` head and that no newer CLI version has superseded
@@ -690,14 +693,14 @@ after reservation, the owning run may finish because the tag has already fixed
 the release target.
 
 Immediately before release creation, the binary job requires that authenticated
-reservation and proves that no draft or published release already uses it. The
-release action receives the triggering commit explicitly and cannot move the
-pre-existing annotated tag. Before Homebrew, Scoop, or native-package
-publication can continue, the workflow peels and authenticates the reservation,
-then verifies that the published stable release contains exactly the expected
-base archives with matching sizes and SHA-256 digests. Existing release assets
-are never overwritten; partial state remains reserved and blocks automatic
-reuse until it is reconciled deliberately.
+reservation and proves that no draft, prerelease, or published release already
+uses it. The release action receives the triggering commit explicitly and
+cannot move the pre-existing annotated tag. Before Homebrew, Scoop, or
+native-package publication can continue, the workflow peels and authenticates
+the reservation, then verifies that the published stable release contains
+exactly the expected base archives with matching sizes and SHA-256 digests.
+Existing release assets are never overwritten; partial state remains reserved
+and blocks automatic reuse until it is reconciled deliberately.
 
 ---
 

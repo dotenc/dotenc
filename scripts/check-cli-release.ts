@@ -28,6 +28,24 @@ export const CLI_RELEASE_ASSETS = [
 	"SHA256SUMS",
 ] as const
 
+const RELEASE_INVENTORY_QUERY = `query DotencReleaseInventory($owner: String!, $name: String!, $cursor: String) {
+	repository(owner: $owner, name: $name) {
+		releases(first: ${RELEASES_PER_PAGE}, after: $cursor, orderBy: { field: CREATED_AT, direction: DESC }) {
+			totalCount
+			nodes {
+				id
+				tagName
+				isDraft
+				isPrerelease
+			}
+			pageInfo {
+				hasNextPage
+				endCursor
+			}
+		}
+	}
+}`
+
 type GitHubResult =
 	| { status: "missing" }
 	| { status: "present"; value: unknown }
@@ -39,6 +57,7 @@ type CreateReferenceResult =
 export type CliReleaseDependencies = {
 	git(args: readonly string[]): string
 	github(pathname: string): Promise<GitHubResult>
+	releasePage(cursor?: string): Promise<unknown>
 	createTag(tag: string, message: string, object: string): Promise<unknown>
 	createReference(ref: string, sha: string): Promise<CreateReferenceResult>
 	fileDigest(filePath: string): Promise<string>
@@ -282,46 +301,80 @@ const inspectReleaseInventory = async (
 	let partialStable: ReleaseInventory["partialStable"]
 	const publishedStable = new Set<string>()
 	let releaseInventoryComplete = false
+	let cursor: string | undefined
+	let totalCount: number | undefined
+	const cursors = new Set<string>()
+	const releaseIds = new Set<string>()
+	const releaseTags = new Set<string>()
 	for (let page = 1; page <= MAX_RELEASE_PAGES; page += 1) {
-		const result = await deps.github(
-			`releases?per_page=${RELEASES_PER_PAGE}&page=${page}`,
+		const response = objectValue(
+			await deps.releasePage(cursor),
+			"GitHub release inventory",
 		)
-		if (result.status !== "present" || !Array.isArray(result.value)) {
+		if (response.errors !== undefined) {
 			releaseError("The GitHub release inventory could not be verified.")
 		}
-		for (const rawRelease of result.value) {
+		const data = objectValue(response.data, "GitHub release inventory data")
+		const repository = objectValue(
+			data.repository,
+			"GitHub release inventory repository",
+		)
+		const releases = objectValue(
+			repository.releases,
+			"GitHub release inventory connection",
+		)
+		if (
+			typeof releases.totalCount !== "number" ||
+			!Number.isSafeInteger(releases.totalCount) ||
+			releases.totalCount < 0 ||
+			releases.totalCount > MAX_RELEASE_PAGES * RELEASES_PER_PAGE ||
+			(totalCount !== undefined && releases.totalCount !== totalCount)
+		) {
+			releaseError("The GitHub release inventory total is invalid.")
+		}
+		totalCount = releases.totalCount
+		if (
+			!Array.isArray(releases.nodes) ||
+			releases.nodes.length > RELEASES_PER_PAGE
+		) {
+			releaseError("The GitHub release inventory is invalid.")
+		}
+		for (const rawRelease of releases.nodes) {
 			const release = objectValue(rawRelease, "release listing")
-			if (typeof release.tag_name !== "string") {
+			if (
+				typeof release.id !== "string" ||
+				release.id.length === 0 ||
+				release.id.length > 256 ||
+				releaseIds.has(release.id) ||
+				typeof release.tagName !== "string" ||
+				release.tagName.length === 0 ||
+				release.tagName.length > 256 ||
+				releaseTags.has(release.tagName) ||
+				typeof release.isDraft !== "boolean" ||
+				typeof release.isPrerelease !== "boolean"
+			) {
 				releaseError("The GitHub release inventory is invalid.")
 			}
-			if (release.tag_name === tag) {
-				if (
-					typeof release.draft !== "boolean" ||
-					typeof release.prerelease !== "boolean" ||
-					exact !== "missing"
-				) {
+			releaseIds.add(release.id)
+			releaseTags.add(release.tagName)
+			if (release.tagName === tag) {
+				if (exact !== "missing") {
 					releaseError("The GitHub release inventory is ambiguous.")
 				}
 				exact =
-					release.draft === false && release.prerelease === false
+					release.isDraft === false && release.isPrerelease === false
 						? "published"
 						: "draft"
 			}
 			if (
-				release.tag_name.startsWith("v") &&
-				STABLE_VERSION.test(release.tag_name.slice(1))
+				release.tagName.startsWith("v") &&
+				STABLE_VERSION.test(release.tagName.slice(1))
 			) {
-				if (
-					typeof release.draft !== "boolean" ||
-					typeof release.prerelease !== "boolean"
-				) {
-					releaseError("The GitHub release inventory is invalid.")
-				}
 				const releaseVersion = parseStableVersion(
-					release.tag_name.slice(1),
+					release.tagName.slice(1),
 					"existing release",
 				)
-				if (release.draft === false && release.prerelease === false) {
+				if (release.isDraft === false && release.isPrerelease === false) {
 					publishedStable.add(releaseVersion.value)
 					if (
 						!maximum ||
@@ -337,10 +390,30 @@ const inspectReleaseInventory = async (
 				}
 			}
 		}
-		if (result.value.length < RELEASES_PER_PAGE) {
+		const pageInfo = objectValue(
+			releases.pageInfo,
+			"GitHub release inventory page information",
+		)
+		if (typeof pageInfo.hasNextPage !== "boolean") {
+			releaseError("The GitHub release inventory pagination is invalid.")
+		}
+		if (!pageInfo.hasNextPage) {
+			if (totalCount !== releaseIds.size) {
+				releaseError("The GitHub release inventory is incomplete.")
+			}
 			releaseInventoryComplete = true
 			break
 		}
+		if (
+			typeof pageInfo.endCursor !== "string" ||
+			pageInfo.endCursor.length === 0 ||
+			pageInfo.endCursor.length > 1024 ||
+			cursors.has(pageInfo.endCursor)
+		) {
+			releaseError("The GitHub release inventory pagination is invalid.")
+		}
+		cursors.add(pageInfo.endCursor)
+		cursor = pageInfo.endCursor
 	}
 	if (!releaseInventoryComplete) {
 		releaseError("The GitHub release inventory exceeded its bound.")
@@ -972,6 +1045,7 @@ export const createCliReleaseDependencies = (options: {
 	root: string
 	repository: string
 	apiUrl: string
+	graphqlUrl: string
 	token: string
 	fetchImpl?: (
 		input: string | URL | Request,
@@ -985,8 +1059,13 @@ export const createCliReleaseDependencies = (options: {
 	if (apiUrl.protocol !== "https:") {
 		releaseError("The GitHub API URL must use HTTPS.")
 	}
+	const graphqlUrl = new URL(options.graphqlUrl)
+	if (graphqlUrl.protocol !== "https:") {
+		releaseError("The GitHub GraphQL URL must use HTTPS.")
+	}
 	if (!options.token) releaseError("The GitHub release token is unavailable.")
 	const baseUrl = apiUrl.toString().replace(/\/$/, "")
+	const [repositoryOwner, repositoryName] = options.repository.split("/")
 	const fetchImpl = options.fetchImpl ?? fetch
 	const gitEnvironment = { ...process.env }
 	for (const key of Object.keys(gitEnvironment)) {
@@ -1037,6 +1116,49 @@ export const createCliReleaseDependencies = (options: {
 				return releaseError("The GitHub release target could not be inspected.")
 			}
 			return { status: "present", value: await readBoundedJsonResponse(response) }
+		},
+		releasePage: async (cursor) => {
+			if (
+				cursor !== undefined &&
+				(typeof cursor !== "string" ||
+					cursor.length === 0 ||
+					cursor.length > 1024)
+			) {
+				releaseError("The GitHub release inventory cursor is invalid.")
+			}
+			let response: Response
+			try {
+				response = await fetchImpl(graphqlUrl, {
+					method: "POST",
+					headers: {
+						Accept: "application/vnd.github+json",
+						Authorization: `Bearer ${options.token}`,
+						"Content-Type": "application/json",
+						"X-GitHub-Api-Version": "2022-11-28",
+					},
+					body: JSON.stringify({
+						query: RELEASE_INVENTORY_QUERY,
+						variables: {
+							owner: repositoryOwner,
+							name: repositoryName,
+							cursor: cursor ?? null,
+						},
+					}),
+					redirect: "error",
+					signal: AbortSignal.timeout(10_000),
+				})
+			} catch {
+				return releaseError(
+					"The GitHub release inventory could not be inspected.",
+				)
+			}
+			if (response.status !== 200) {
+				await cancelResponseBody(response.body)
+				return releaseError(
+					"The GitHub release inventory could not be inspected.",
+				)
+			}
+			return readBoundedJsonResponse(response)
 		},
 		createTag: async (tag, message, object) => {
 			if (!/^v[0-9]+\.[0-9]+\.[0-9]+$/.test(tag)) {
@@ -1131,6 +1253,7 @@ const main = async () => {
 		root,
 		repository: requiredEnvironment("GITHUB_REPOSITORY"),
 		apiUrl: requiredEnvironment("GITHUB_API_URL"),
+		graphqlUrl: requiredEnvironment("GITHUB_GRAPHQL_URL"),
 		token: requiredEnvironment("GITHUB_TOKEN"),
 	})
 	const currentSha = requiredEnvironment("GITHUB_SHA")
