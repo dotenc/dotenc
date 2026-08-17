@@ -679,6 +679,16 @@ highest prior distinct stable version itself must already be a published stable
 GitHub release; a draft, prerelease, or orphan reservation therefore blocks a
 later version from publishing past incomplete state.
 
+Read-only GitHub REST inspections and GraphQL queries retry only transport
+failures and HTTP 408, 500, 502, 503, or 504 on a fixed one-, two-, and
+four-second schedule. Every attempt receives a fresh timeout, discarded response
+bodies are cancelled, numeric `Retry-After` guidance is honored within a
+30-second cumulative wait ceiling, and exhaustion still fails closed. Exhausted
+rate limits and malformed or over-budget retry guidance are not retried.
+Tag-object and reference creation are never automatically retried; their
+existing exact-object and conflict checks remain the only mutation recovery
+path.
+
 Before publisher jobs start, the workflow proves that the triggering revision
 is the exact current `main` head and that no newer CLI version has superseded
 it. It then creates an annotated `v<version>` tag object whose bounded marker
