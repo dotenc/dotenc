@@ -58,7 +58,9 @@ const commitVersion = (root: string, version: string) => {
 	return runGit(root, ["rev-parse", "HEAD"])
 }
 
-type ApiFixture = { status: number; value?: unknown }
+type ApiFixture =
+	| { error: Error }
+	| { headers?: Record<string, string>; status: number; value?: unknown }
 type ApiRequest = {
 	body?: unknown
 	method: string
@@ -129,6 +131,7 @@ const dependencies = (
 	root: string,
 	fixtures: ApiFixtures = {},
 	requests: ApiRequest[] = [],
+	delays: number[] = [],
 ) =>
 	createCliReleaseDependencies({
 		root,
@@ -151,14 +154,31 @@ const dependencies = (
 			const fixture = Array.isArray(configured)
 				? (configured.shift() ?? { status: 404 })
 				: (configured ?? { status: 404 })
+			if ("error" in fixture) throw fixture.error
 			const body =
 				fixture.value === undefined ? "" : JSON.stringify(fixture.value)
 			return new Response(body, {
 				status: fixture.status,
-				headers: { "content-length": String(Buffer.byteLength(body)) },
+				headers: {
+					"content-length": String(Buffer.byteLength(body)),
+					...fixture.headers,
+				},
 			})
 		},
+		sleepImpl: async (milliseconds) => {
+			delays.push(milliseconds)
+		},
 	})
+
+const expectedRetryDelays = [1_000, 2_000, 4_000]
+const transientReadFailures: [string, ApiFixture][] = [
+	["network failure", { error: new Error("simulated network failure") }],
+	["HTTP 408", { status: 408 }],
+	["HTTP 500", { status: 500 }],
+	["HTTP 502", { status: 502 }],
+	["HTTP 503", { status: 503 }],
+	["HTTP 504", { status: 504 }],
+]
 
 afterEach(() => {
 	for (const root of temporaryDirectories.splice(0)) {
@@ -1173,6 +1193,353 @@ describe("CLI release gate", () => {
 		expect(requests.map(({ url }) => url)).not.toContain(
 			"https://api.github.test/repos/dotenc/dotenc/git/ref/heads/main",
 		)
+	})
+
+	for (const [label, failure] of transientReadFailures) {
+		test(`retries a transient REST read after ${label}`, async () => {
+			const root = createRepository()
+			const requests: ApiRequest[] = []
+			const delays: number[] = []
+			const deps = dependencies(
+				root,
+				{
+					[tagRefPath("0.14.0")]: [
+						failure,
+						{ status: 200, value: { ok: true } },
+					],
+				},
+				requests,
+				delays,
+			)
+
+			expect(await deps.github("git/ref/tags/v0.14.0")).toEqual({
+				status: "present",
+				value: { ok: true },
+			})
+			expect(requests).toHaveLength(2)
+			expect(delays).toEqual([expectedRetryDelays[0]])
+		})
+
+		test(`retries a transient GraphQL read after ${label}`, async () => {
+			const root = createRepository()
+			const requests: ApiRequest[] = []
+			const delays: number[] = []
+			const page = releaseInventoryPage([])
+			const deps = dependencies(
+				root,
+				{
+					[releaseInventoryPath]: [failure, { status: 200, value: page }],
+				},
+				requests,
+				delays,
+			)
+
+			expect(await deps.releasePage()).toEqual(page)
+			expect(requests).toHaveLength(2)
+			expect(delays).toEqual([expectedRetryDelays[0]])
+		})
+	}
+
+	test("cancels transient bodies before waiting and refreshes attempt deadlines", async () => {
+		const root = createRepository()
+		const events: string[] = []
+		const signals: (AbortSignal | null | undefined)[] = []
+		let attempt = 0
+		const page = releaseInventoryPage([])
+		const deps = createCliReleaseDependencies({
+			root,
+			repository: "dotenc/dotenc",
+			apiUrl: "https://api.github.test",
+			graphqlUrl,
+			token: "test-token",
+			fetchImpl: async (_input, init) => {
+				signals.push(init?.signal)
+				attempt += 1
+				if (attempt === 1) {
+					return new Response(
+						new ReadableStream<Uint8Array>({
+							cancel() {
+								events.push("cancel")
+							},
+						}),
+						{ status: 503 },
+					)
+				}
+				const body = JSON.stringify(page)
+				return new Response(body, {
+					status: 200,
+					headers: { "content-length": String(Buffer.byteLength(body)) },
+				})
+			},
+			sleepImpl: async (milliseconds) => {
+				events.push(`sleep:${milliseconds}`)
+			},
+		})
+
+		expect(await deps.releasePage()).toEqual(page)
+		expect(events).toEqual(["cancel", "sleep:1000"])
+		expect(signals).toHaveLength(2)
+		expect(signals[0]).toBeInstanceOf(AbortSignal)
+		expect(signals[1]).toBeInstanceOf(AbortSignal)
+		expect(signals[0]).not.toBe(signals[1])
+	})
+
+	test("stops retrying REST and GraphQL reads after four attempts", async () => {
+		const root = createRepository()
+		const restRequests: ApiRequest[] = []
+		const restDelays: number[] = []
+		const restDeps = dependencies(
+			root,
+			{ [tagRefPath("0.14.0")]: { status: 503 } },
+			restRequests,
+			restDelays,
+		)
+
+		await expect(restDeps.github("git/ref/tags/v0.14.0")).rejects.toThrow(
+			"could not be inspected",
+		)
+		expect(restRequests).toHaveLength(4)
+		expect(restDelays).toEqual(expectedRetryDelays)
+
+		const graphqlRequests: ApiRequest[] = []
+		const graphqlDelays: number[] = []
+		const graphqlDeps = dependencies(
+			root,
+			{
+				[releaseInventoryPath]: {
+					error: new Error("persistent network failure"),
+				},
+			},
+			graphqlRequests,
+			graphqlDelays,
+		)
+
+		await expect(graphqlDeps.releasePage()).rejects.toThrow(
+			"could not be inspected",
+		)
+		expect(graphqlRequests).toHaveLength(4)
+		expect(graphqlDelays).toEqual(expectedRetryDelays)
+	})
+
+	for (const status of [403, 404, 429]) {
+		test(`does not retry HTTP ${status} read responses`, async () => {
+			const root = createRepository()
+			const restRequests: ApiRequest[] = []
+			const restDelays: number[] = []
+			const restDeps = dependencies(
+				root,
+				{ [tagRefPath("0.14.0")]: { status } },
+				restRequests,
+				restDelays,
+			)
+
+			if (status === 404) {
+				expect(await restDeps.github("git/ref/tags/v0.14.0")).toEqual({
+					status: "missing",
+				})
+			} else {
+				await expect(restDeps.github("git/ref/tags/v0.14.0")).rejects.toThrow(
+					"could not be inspected",
+				)
+			}
+			expect(restRequests).toHaveLength(1)
+			expect(restDelays).toEqual([])
+
+			const graphqlRequests: ApiRequest[] = []
+			const graphqlDelays: number[] = []
+			const graphqlDeps = dependencies(
+				root,
+				{ [releaseInventoryPath]: { status } },
+				graphqlRequests,
+				graphqlDelays,
+			)
+			await expect(graphqlDeps.releasePage()).rejects.toThrow(
+				"could not be inspected",
+			)
+			expect(graphqlRequests).toHaveLength(1)
+			expect(graphqlDelays).toEqual([])
+		})
+	}
+
+	test("honors bounded numeric Retry-After delays for retryable reads", async () => {
+		const root = createRepository()
+		const restDelays: number[] = []
+		const restDeps = dependencies(
+			root,
+			{
+				[tagRefPath("0.14.0")]: [
+					{ status: 503, headers: { "retry-after": "2" } },
+					{ status: 200, value: { ok: true } },
+				],
+			},
+			[],
+			restDelays,
+		)
+		expect(await restDeps.github("git/ref/tags/v0.14.0")).toEqual({
+			status: "present",
+			value: { ok: true },
+		})
+		expect(restDelays).toEqual([2_000])
+
+		const graphqlDelays: number[] = []
+		const page = releaseInventoryPage([])
+		const graphqlDeps = dependencies(
+			root,
+			{
+				[releaseInventoryPath]: [
+					{ status: 503, headers: { "retry-after": "0" } },
+					{ status: 200, value: page },
+				],
+			},
+			[],
+			graphqlDelays,
+		)
+		expect(await graphqlDeps.releasePage()).toEqual(page)
+		expect(graphqlDelays).toEqual([expectedRetryDelays[0]])
+	})
+
+	test("fails closed on malformed or over-budget Retry-After values", async () => {
+		const root = createRepository()
+		for (const retryAfter of ["1.5", "31"]) {
+			const requests: ApiRequest[] = []
+			const delays: number[] = []
+			const deps = dependencies(
+				root,
+				{
+					[releaseInventoryPath]: [
+						{ status: 503, headers: { "retry-after": retryAfter } },
+						{ status: 200, value: releaseInventoryPage([]) },
+					],
+				},
+				requests,
+				delays,
+			)
+
+			await expect(deps.releasePage()).rejects.toThrow("could not be inspected")
+			expect(requests).toHaveLength(1)
+			expect(delays).toEqual([])
+		}
+	})
+
+	test("caps cumulative Retry-After sleep at thirty seconds", async () => {
+		const root = createRepository()
+		const overBudgetRequests: ApiRequest[] = []
+		const overBudgetDelays: number[] = []
+		const overBudgetDeps = dependencies(
+			root,
+			{
+				[tagRefPath("0.14.0")]: [
+					{ status: 503, headers: { "retry-after": "20" } },
+					{ status: 503, headers: { "retry-after": "20" } },
+					{ status: 200, value: { ok: true } },
+				],
+			},
+			overBudgetRequests,
+			overBudgetDelays,
+		)
+		await expect(overBudgetDeps.github("git/ref/tags/v0.14.0")).rejects.toThrow(
+			"could not be inspected",
+		)
+		expect(overBudgetRequests).toHaveLength(2)
+		expect(overBudgetDelays).toEqual([20_000])
+
+		const exactBudgetDelays: number[] = []
+		const page = releaseInventoryPage([])
+		const exactBudgetDeps = dependencies(
+			root,
+			{
+				[releaseInventoryPath]: [
+					{ status: 503, headers: { "retry-after": "20" } },
+					{ status: 503, headers: { "retry-after": "10" } },
+					{ status: 200, value: page },
+				],
+			},
+			[],
+			exactBudgetDelays,
+		)
+		expect(await exactBudgetDeps.releasePage()).toEqual(page)
+		expect(exactBudgetDelays).toEqual([20_000, 10_000])
+	})
+
+	test("does not retry when GitHub reports no remaining rate limit", async () => {
+		const root = createRepository()
+		const requests: ApiRequest[] = []
+		const delays: number[] = []
+		const deps = dependencies(
+			root,
+			{
+				[tagRefPath("0.14.0")]: [
+					{
+						status: 503,
+						headers: { "x-ratelimit-remaining": "0" },
+					},
+					{ status: 200, value: { ok: true } },
+				],
+			},
+			requests,
+			delays,
+		)
+
+		await expect(deps.github("git/ref/tags/v0.14.0")).rejects.toThrow(
+			"could not be inspected",
+		)
+		expect(requests).toHaveLength(1)
+		expect(delays).toEqual([])
+	})
+
+	test("does not retry GraphQL HTTP-200 errors", async () => {
+		const root = createRepository()
+		const requests: ApiRequest[] = []
+		const delays: number[] = []
+		const response = {
+			errors: [{ type: "RATE_LIMITED", message: "redacted" }],
+		}
+		const deps = dependencies(
+			root,
+			{
+				[releaseInventoryPath]: [
+					{ status: 200, value: response },
+					{ status: 200, value: releaseInventoryPage([]) },
+				],
+			},
+			requests,
+			delays,
+		)
+
+		expect(await deps.releasePage()).toEqual(response)
+		expect(requests).toHaveLength(1)
+		expect(delays).toEqual([])
+	})
+
+	test("keeps release reservation mutations single-attempt", async () => {
+		const root = createRepository()
+		const currentSha = commitVersion(root, "0.14.0")
+		const requests: ApiRequest[] = []
+		const delays: number[] = []
+		const deps = dependencies(
+			root,
+			{
+				"/repos/dotenc/dotenc/git/tags": [
+					{ status: 503 },
+					{ status: 201, value: {} },
+				],
+				"/repos/dotenc/dotenc/git/refs": [
+					{ status: 503 },
+					{ status: 201, value: {} },
+				],
+			},
+			requests,
+			delays,
+		)
+
+		await expect(
+			deps.createTag("v0.14.0", "reservation", currentSha),
+		).rejects.toThrow("could not be created")
+		await expect(
+			deps.createReference("refs/tags/v0.14.0", "a".repeat(40)),
+		).rejects.toThrow("could not be reserved")
+		expect(requests).toHaveLength(2)
+		expect(delays).toEqual([])
 	})
 
 	test("bounds streamed GitHub responses without a Content-Length", async () => {
