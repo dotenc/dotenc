@@ -171,6 +171,7 @@ const dependencies = (
 	})
 
 const expectedRetryDelays = [1_000, 2_000, 4_000]
+const readKinds = ["REST", "GraphQL"] as const
 const transientReadFailures: [string, ApiFixture][] = [
 	["network failure", { error: new Error("simulated network failure") }],
 	["HTTP 408", { status: 408 }],
@@ -179,6 +180,59 @@ const transientReadFailures: [string, ApiFixture][] = [
 	["HTTP 503", { status: 503 }],
 	["HTTP 504", { status: 504 }],
 ]
+
+const jsonResponse = (value: unknown) => {
+	const body = JSON.stringify(value)
+	return new Response(body, {
+		status: 200,
+		headers: { "content-length": String(Buffer.byteLength(body)) },
+	})
+}
+
+const trackedBodyResponse = (
+	body: ReadableStream<Uint8Array>,
+	onCancel: () => void,
+	headers: Record<string, string> = {},
+	status = 200,
+) => {
+	const cancel = body.cancel.bind(body)
+	body.cancel = async (reason) => {
+		onCancel()
+		return cancel(reason)
+	}
+	return new Response(body, { status, headers })
+}
+
+const unreadableBodyResponse = (
+	onCancel: () => void,
+	headers: Record<string, string> = {},
+	status = 200,
+) =>
+	trackedBodyResponse(
+		new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.error(new Error("simulated response body failure"))
+			},
+		}),
+		onCancel,
+		headers,
+		status,
+	)
+
+const stalledBodyResponse = (signal: AbortSignal, onCancel: () => void) =>
+	trackedBodyResponse(
+		new ReadableStream<Uint8Array>({
+			start(controller) {
+				const abort = () =>
+					controller.error(
+						signal.reason ?? new DOMException("Aborted", "AbortError"),
+					)
+				if (signal.aborted) abort()
+				else signal.addEventListener("abort", abort, { once: true })
+			},
+		}),
+		onCancel,
+	)
 
 afterEach(() => {
 	for (const root of temporaryDirectories.splice(0)) {
@@ -1240,6 +1294,294 @@ describe("CLI release gate", () => {
 		})
 	}
 
+	for (const kind of readKinds) {
+		test(`retries a ${kind} read after a 200 response body failure`, async () => {
+			const root = createRepository()
+			const delays: number[] = []
+			const signals: (AbortSignal | null | undefined)[] = []
+			let attempts = 0
+			let cancellations = 0
+			const page = releaseInventoryPage([])
+			const deps = createCliReleaseDependencies({
+				root,
+				repository: "dotenc/dotenc",
+				apiUrl: "https://api.github.test",
+				graphqlUrl,
+				token: "test-token",
+				fetchImpl: async (_input, init) => {
+					signals.push(init?.signal)
+					attempts += 1
+					if (attempts === 1) {
+						return unreadableBodyResponse(() => {
+							cancellations += 1
+						})
+					}
+					return jsonResponse(kind === "REST" ? { ok: true } : page)
+				},
+				readTimeoutSignalImpl: () => new AbortController().signal,
+				sleepImpl: async (milliseconds) => {
+					delays.push(milliseconds)
+				},
+			})
+
+			if (kind === "REST") {
+				expect(await deps.github("git/ref/tags/v0.14.0")).toEqual({
+					status: "present",
+					value: { ok: true },
+				})
+			} else {
+				expect(await deps.releasePage()).toEqual(page)
+			}
+			expect(attempts).toBe(2)
+			expect(cancellations).toBe(1)
+			expect(delays).toEqual([expectedRetryDelays[0]])
+			expect(new Set(signals).size).toBe(2)
+		})
+
+		test(`retries a ${kind} read after a stalled 200 response body aborts`, async () => {
+			const root = createRepository()
+			const controllers: AbortController[] = []
+			const delays: number[] = []
+			const signals: (AbortSignal | null | undefined)[] = []
+			let attempts = 0
+			let cancellations = 0
+			const page = releaseInventoryPage([])
+			const deps = createCliReleaseDependencies({
+				root,
+				repository: "dotenc/dotenc",
+				apiUrl: "https://api.github.test",
+				graphqlUrl,
+				token: "test-token",
+				fetchImpl: async (_input, init) => {
+					signals.push(init?.signal)
+					attempts += 1
+					if (attempts === 1) {
+						const signal = init?.signal
+						if (!(signal instanceof AbortSignal)) {
+							throw new Error("missing read timeout signal")
+						}
+						const response = stalledBodyResponse(signal, () => {
+							cancellations += 1
+						})
+						const controller = controllers.at(-1)
+						setTimeout(
+							() =>
+								controller?.abort(
+									new DOMException("Timed out", "TimeoutError"),
+								),
+							0,
+						)
+						return response
+					}
+					return jsonResponse(kind === "REST" ? { ok: true } : page)
+				},
+				readTimeoutSignalImpl: () => {
+					const controller = new AbortController()
+					controllers.push(controller)
+					return controller.signal
+				},
+				sleepImpl: async (milliseconds) => {
+					delays.push(milliseconds)
+				},
+			})
+
+			if (kind === "REST") {
+				expect(await deps.github("git/ref/tags/v0.14.0")).toEqual({
+					status: "present",
+					value: { ok: true },
+				})
+			} else {
+				expect(await deps.releasePage()).toEqual(page)
+			}
+			expect(attempts).toBe(2)
+			expect(cancellations).toBe(1)
+			expect(delays).toEqual([expectedRetryDelays[0]])
+			expect(controllers).toHaveLength(2)
+			expect(controllers[0].signal.aborted).toBeTrue()
+			expect(new Set(signals).size).toBe(2)
+		})
+
+		test(`exhausts ${kind} 200 response body failures deterministically`, async () => {
+			const root = createRepository()
+			const delays: number[] = []
+			const signals: (AbortSignal | null | undefined)[] = []
+			let attempts = 0
+			let cancellations = 0
+			const deps = createCliReleaseDependencies({
+				root,
+				repository: "dotenc/dotenc",
+				apiUrl: "https://api.github.test",
+				graphqlUrl,
+				token: "test-token",
+				fetchImpl: async (_input, init) => {
+					signals.push(init?.signal)
+					attempts += 1
+					return unreadableBodyResponse(() => {
+						cancellations += 1
+					})
+				},
+				readTimeoutSignalImpl: () => new AbortController().signal,
+				sleepImpl: async (milliseconds) => {
+					delays.push(milliseconds)
+				},
+			})
+
+			const read =
+				kind === "REST"
+					? deps.github("git/ref/tags/v0.14.0")
+					: deps.releasePage()
+			await expect(read).rejects.toThrow("could not be inspected")
+			expect(attempts).toBe(4)
+			expect(cancellations).toBe(4)
+			expect(delays).toEqual(expectedRetryDelays)
+			expect(signals).toHaveLength(4)
+			expect(
+				signals.every((signal) => signal instanceof AbortSignal),
+			).toBeTrue()
+			expect(new Set(signals).size).toBe(4)
+		})
+	}
+
+	test("applies Retry-After and rate-limit policy to 200 body retries", async () => {
+		const root = createRepository()
+		let graphqlAttempts = 0
+		let graphqlCancellations = 0
+		const graphqlDelays: number[] = []
+		const page = releaseInventoryPage([])
+		const graphqlDeps = createCliReleaseDependencies({
+			root,
+			repository: "dotenc/dotenc",
+			apiUrl: "https://api.github.test",
+			graphqlUrl,
+			token: "test-token",
+			fetchImpl: async () => {
+				graphqlAttempts += 1
+				if (graphqlAttempts === 1) {
+					return unreadableBodyResponse(
+						() => {
+							graphqlCancellations += 1
+						},
+						{ "retry-after": "2" },
+					)
+				}
+				return jsonResponse(page)
+			},
+			readTimeoutSignalImpl: () => new AbortController().signal,
+			sleepImpl: async (milliseconds) => {
+				graphqlDelays.push(milliseconds)
+			},
+		})
+		expect(await graphqlDeps.releasePage()).toEqual(page)
+		expect(graphqlAttempts).toBe(2)
+		expect(graphqlCancellations).toBe(1)
+		expect(graphqlDelays).toEqual([2_000])
+
+		let restAttempts = 0
+		let restCancellations = 0
+		const restDelays: number[] = []
+		const restDeps = createCliReleaseDependencies({
+			root,
+			repository: "dotenc/dotenc",
+			apiUrl: "https://api.github.test",
+			graphqlUrl,
+			token: "test-token",
+			fetchImpl: async () => {
+				restAttempts += 1
+				if (restAttempts === 1) {
+					return unreadableBodyResponse(
+						() => {
+							restCancellations += 1
+						},
+						{ "x-ratelimit-remaining": "0" },
+					)
+				}
+				return jsonResponse({ ok: true })
+			},
+			readTimeoutSignalImpl: () => new AbortController().signal,
+			sleepImpl: async (milliseconds) => {
+				restDelays.push(milliseconds)
+			},
+		})
+		await expect(restDeps.github("git/ref/tags/v0.14.0")).rejects.toThrow(
+			"could not be inspected",
+		)
+		expect(restAttempts).toBe(1)
+		expect(restCancellations).toBe(1)
+		expect(restDelays).toEqual([])
+	})
+
+	test("fails closed on malformed or over-budget body Retry-After values", async () => {
+		const root = createRepository()
+		for (const retryAfter of ["1.5", "31"]) {
+			let attempts = 0
+			let cancellations = 0
+			const delays: number[] = []
+			const deps = createCliReleaseDependencies({
+				root,
+				repository: "dotenc/dotenc",
+				apiUrl: "https://api.github.test",
+				graphqlUrl,
+				token: "test-token",
+				fetchImpl: async () => {
+					attempts += 1
+					return unreadableBodyResponse(
+						() => {
+							cancellations += 1
+						},
+						{ "retry-after": retryAfter },
+					)
+				},
+				readTimeoutSignalImpl: () => new AbortController().signal,
+				sleepImpl: async (milliseconds) => {
+					delays.push(milliseconds)
+				},
+			})
+
+			await expect(deps.releasePage()).rejects.toThrow("could not be inspected")
+			expect(attempts).toBe(1)
+			expect(cancellations).toBe(1)
+			expect(delays).toEqual([])
+		}
+	})
+
+	for (const kind of readKinds) {
+		test(`does not retry malformed ${kind} 200 response content`, async () => {
+			const root = createRepository()
+			const delays: number[] = []
+			let attempts = 0
+			const deps = createCliReleaseDependencies({
+				root,
+				repository: "dotenc/dotenc",
+				apiUrl: "https://api.github.test",
+				graphqlUrl,
+				token: "test-token",
+				fetchImpl: async () => {
+					attempts += 1
+					return attempts === 1
+						? new Response("{", {
+								status: 200,
+								headers: { "content-length": "1" },
+							})
+						: jsonResponse(
+								kind === "REST" ? { ok: true } : releaseInventoryPage([]),
+							)
+				},
+				readTimeoutSignalImpl: () => new AbortController().signal,
+				sleepImpl: async (milliseconds) => {
+					delays.push(milliseconds)
+				},
+			})
+
+			const read =
+				kind === "REST"
+					? deps.github("git/ref/tags/v0.14.0")
+					: deps.releasePage()
+			await expect(read).rejects.toThrow("response is invalid")
+			expect(attempts).toBe(1)
+			expect(delays).toEqual([])
+		})
+	}
+
 	test("cancels transient bodies before waiting and refreshes attempt deadlines", async () => {
 		const root = createRepository()
 		const events: string[] = []
@@ -1542,17 +1884,61 @@ describe("CLI release gate", () => {
 		expect(delays).toEqual([])
 	})
 
-	test("bounds streamed GitHub responses without a Content-Length", async () => {
+	test("does not retry successful mutation headers with unreadable bodies", async () => {
 		const root = createRepository()
-		let cancelled = false
+		const currentSha = commitVersion(root, "0.14.0")
+		const delays: number[] = []
+		const signals: (AbortSignal | null | undefined)[] = []
+		let attempts = 0
+		let readTimeoutSignals = 0
 		const deps = createCliReleaseDependencies({
 			root,
 			repository: "dotenc/dotenc",
 			apiUrl: "https://api.github.test",
 			graphqlUrl,
 			token: "test-token",
-			fetchImpl: async () =>
-				new Response(
+			fetchImpl: async (_input, init) => {
+				attempts += 1
+				signals.push(init?.signal)
+				return unreadableBodyResponse(() => {}, {}, 201)
+			},
+			readTimeoutSignalImpl: () => {
+				readTimeoutSignals += 1
+				return new AbortController().signal
+			},
+			sleepImpl: async (milliseconds) => {
+				delays.push(milliseconds)
+			},
+		})
+
+		await expect(
+			deps.createTag("v0.14.0", "reservation", currentSha),
+		).rejects.toThrow("response could not be read")
+		await expect(
+			deps.createReference("refs/tags/v0.14.0", "a".repeat(40)),
+		).rejects.toThrow("response could not be read")
+		expect(attempts).toBe(2)
+		expect(signals).toHaveLength(2)
+		expect(signals.every((signal) => signal instanceof AbortSignal)).toBeTrue()
+		expect(new Set(signals).size).toBe(2)
+		expect(readTimeoutSignals).toBe(0)
+		expect(delays).toEqual([])
+	})
+
+	test("bounds streamed GitHub responses without a Content-Length", async () => {
+		const root = createRepository()
+		let cancelled = false
+		let attempts = 0
+		const delays: number[] = []
+		const deps = createCliReleaseDependencies({
+			root,
+			repository: "dotenc/dotenc",
+			apiUrl: "https://api.github.test",
+			graphqlUrl,
+			token: "test-token",
+			fetchImpl: async () => {
+				attempts += 1
+				return new Response(
 					new ReadableStream<Uint8Array>({
 						start(controller) {
 							controller.enqueue(new Uint8Array(700_000))
@@ -1563,17 +1949,25 @@ describe("CLI release gate", () => {
 						},
 					}),
 					{ status: 200 },
-				),
+				)
+			},
+			sleepImpl: async (milliseconds) => {
+				delays.push(milliseconds)
+			},
 		})
 
 		await expect(deps.github("releases?per_page=100&page=1")).rejects.toThrow(
 			"exceeded its bound",
 		)
 		expect(cancelled).toBeTrue()
+		expect(attempts).toBe(1)
+		expect(delays).toEqual([])
 
 		cancelled = false
 		await expect(deps.releasePage()).rejects.toThrow("exceeded its bound")
 		expect(cancelled).toBeTrue()
+		expect(attempts).toBe(2)
+		expect(delays).toEqual([])
 	})
 
 	test("verifies the exact published tag and base asset digests", async () => {
