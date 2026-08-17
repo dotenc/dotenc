@@ -83,6 +83,8 @@ function releaseError(message: string): never {
 	throw new Error(message)
 }
 
+class RetryableGitHubResponseReadError extends Error {}
+
 const requireCommitSha = (value: string, label: string) => {
 	if (!COMMIT_SHA.test(value) || /^0+$/.test(value)) {
 		releaseError(`The ${label} revision is invalid.`)
@@ -979,7 +981,10 @@ const cancelResponseBody = async (body: ReadableStream<Uint8Array> | null) => {
 	}
 }
 
-const readBoundedJsonResponse = async (response: Response) => {
+const readBoundedJsonResponse = async (
+	response: Response,
+	options: { retryBodyReadFailure?: boolean } = {},
+) => {
 	const declaredLength = response.headers.get("content-length")
 	if (declaredLength !== null) {
 		if (!/^(0|[1-9][0-9]*)$/.test(declaredLength)) {
@@ -1003,6 +1008,9 @@ const readBoundedJsonResponse = async (response: Response) => {
 		try {
 			return await reader.read()
 		} catch {
+			if (options.retryBodyReadFailure) {
+				throw new RetryableGitHubResponseReadError()
+			}
 			return releaseError("The GitHub release response could not be read.")
 		}
 	}
@@ -1054,6 +1062,7 @@ export const createCliReleaseDependencies = (options: {
 		input: string | URL | Request,
 		init?: RequestInit,
 	) => Promise<Response>
+	readTimeoutSignalImpl?: () => AbortSignal
 	sleepImpl?: (milliseconds: number) => Promise<void>
 }): CliReleaseDependencies => {
 	if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(options.repository)) {
@@ -1071,15 +1080,18 @@ export const createCliReleaseDependencies = (options: {
 	const baseUrl = apiUrl.toString().replace(/\/$/, "")
 	const [repositoryOwner, repositoryName] = options.repository.split("/")
 	const fetchImpl = options.fetchImpl ?? fetch
+	const readTimeoutSignalImpl =
+		options.readTimeoutSignalImpl ?? (() => AbortSignal.timeout(10_000))
 	const sleepImpl =
 		options.sleepImpl ??
 		((milliseconds: number) =>
 			new Promise<void>((resolve) => setTimeout(resolve, milliseconds)))
-	const fetchReadOnlyGitHub = async (
+	const fetchReadOnlyGitHub = async <Result>(
 		input: string | URL,
 		init: RequestInit,
 		errorMessage: string,
-	) => {
+		consumeResponse: (response: Response) => Promise<Result>,
+	): Promise<Result> => {
 		let totalSleepMilliseconds = 0
 		const waitForRetry = async (delayMilliseconds: number) => {
 			if (
@@ -1095,6 +1107,23 @@ export const createCliReleaseDependencies = (options: {
 				return releaseError(errorMessage)
 			}
 		}
+		const retryDelayForResponse = (response: Response, attempt: number) => {
+			let delayMilliseconds: number = GITHUB_READ_RETRY_DELAYS_MS[attempt]
+			const retryAfter = response.headers.get("retry-after")
+			if (retryAfter === null) return delayMilliseconds
+			if (!/^(0|[1-9][0-9]*)$/.test(retryAfter)) {
+				return releaseError(errorMessage)
+			}
+			const retryAfterMilliseconds = Number(retryAfter) * 1_000
+			if (!Number.isSafeInteger(retryAfterMilliseconds)) {
+				return releaseError(errorMessage)
+			}
+			delayMilliseconds = Math.max(
+				delayMilliseconds,
+				retryAfterMilliseconds,
+			)
+			return delayMilliseconds
+		}
 		for (
 			let attempt = 0;
 			attempt <= GITHUB_READ_RETRY_DELAYS_MS.length;
@@ -1104,7 +1133,7 @@ export const createCliReleaseDependencies = (options: {
 			try {
 				response = await fetchImpl(input, {
 					...init,
-					signal: AbortSignal.timeout(10_000),
+					signal: readTimeoutSignalImpl(),
 				})
 			} catch {
 				if (attempt === GITHUB_READ_RETRY_DELAYS_MS.length) {
@@ -1118,28 +1147,28 @@ export const createCliReleaseDependencies = (options: {
 				!retryable ||
 				response.headers.get("x-ratelimit-remaining") === "0"
 			) {
-				return response
+				try {
+					return await consumeResponse(response)
+				} catch (error) {
+					if (!(error instanceof RetryableGitHubResponseReadError)) {
+						throw error
+					}
+					await cancelResponseBody(response.body)
+					if (
+						attempt === GITHUB_READ_RETRY_DELAYS_MS.length ||
+						response.headers.get("x-ratelimit-remaining") === "0"
+					) {
+						return releaseError(errorMessage)
+					}
+					await waitForRetry(retryDelayForResponse(response, attempt))
+					continue
+				}
 			}
 			await cancelResponseBody(response.body)
 			if (attempt === GITHUB_READ_RETRY_DELAYS_MS.length) {
 				return releaseError(errorMessage)
 			}
-			let delayMilliseconds: number = GITHUB_READ_RETRY_DELAYS_MS[attempt]
-			const retryAfter = response.headers.get("retry-after")
-			if (retryAfter !== null) {
-				if (!/^(0|[1-9][0-9]*)$/.test(retryAfter)) {
-					return releaseError(errorMessage)
-				}
-				const retryAfterMilliseconds = Number(retryAfter) * 1_000
-				if (!Number.isSafeInteger(retryAfterMilliseconds)) {
-					return releaseError(errorMessage)
-				}
-				delayMilliseconds = Math.max(
-					delayMilliseconds,
-					retryAfterMilliseconds,
-				)
-			}
-			await waitForRetry(delayMilliseconds)
+			await waitForRetry(retryDelayForResponse(response, attempt))
 		}
 		return releaseError(errorMessage)
 	}
@@ -1166,32 +1195,36 @@ export const createCliReleaseDependencies = (options: {
 				stdio: ["ignore", "pipe", "pipe"],
 			}),
 		github: async (pathname) => {
-			let response: Response
-			try {
-				response = await fetchReadOnlyGitHub(
-					`${baseUrl}/repos/${options.repository}/${pathname}`,
-					{
-						headers: {
-							Accept: "application/vnd.github+json",
-							Authorization: `Bearer ${options.token}`,
-							"X-GitHub-Api-Version": "2022-11-28",
-						},
-						redirect: "error",
+			return fetchReadOnlyGitHub(
+				`${baseUrl}/repos/${options.repository}/${pathname}`,
+				{
+					headers: {
+						Accept: "application/vnd.github+json",
+						Authorization: `Bearer ${options.token}`,
+						"X-GitHub-Api-Version": "2022-11-28",
 					},
-					"The GitHub release target could not be inspected.",
-				)
-			} catch {
-				return releaseError("The GitHub release target could not be inspected.")
-			}
-			if (response.status === 404) {
-				await cancelResponseBody(response.body)
-				return { status: "missing" }
-			}
-			if (response.status !== 200) {
-				await cancelResponseBody(response.body)
-				return releaseError("The GitHub release target could not be inspected.")
-			}
-			return { status: "present", value: await readBoundedJsonResponse(response) }
+					redirect: "error",
+				},
+				"The GitHub release target could not be inspected.",
+				async (response): Promise<GitHubResult> => {
+					if (response.status === 404) {
+						await cancelResponseBody(response.body)
+						return { status: "missing" }
+					}
+					if (response.status !== 200) {
+						await cancelResponseBody(response.body)
+						return releaseError(
+							"The GitHub release target could not be inspected.",
+						)
+					}
+					return {
+						status: "present",
+						value: await readBoundedJsonResponse(response, {
+							retryBodyReadFailure: true,
+						}),
+					}
+				},
+			)
 		},
 		releasePage: async (cursor) => {
 			if (
@@ -1202,42 +1235,39 @@ export const createCliReleaseDependencies = (options: {
 			) {
 				releaseError("The GitHub release inventory cursor is invalid.")
 			}
-			let response: Response
-			try {
-				response = await fetchReadOnlyGitHub(
-					graphqlUrl,
-					{
-						method: "POST",
-						headers: {
-							Accept: "application/vnd.github+json",
-							Authorization: `Bearer ${options.token}`,
-							"Content-Type": "application/json",
-							"X-GitHub-Api-Version": "2022-11-28",
-						},
-						body: JSON.stringify({
-							query: RELEASE_INVENTORY_QUERY,
-							variables: {
-								owner: repositoryOwner,
-								name: repositoryName,
-								cursor: cursor ?? null,
-							},
-						}),
-						redirect: "error",
+			return fetchReadOnlyGitHub(
+				graphqlUrl,
+				{
+					method: "POST",
+					headers: {
+						Accept: "application/vnd.github+json",
+						Authorization: `Bearer ${options.token}`,
+						"Content-Type": "application/json",
+						"X-GitHub-Api-Version": "2022-11-28",
 					},
-					"The GitHub release inventory could not be inspected.",
-				)
-			} catch {
-				return releaseError(
-					"The GitHub release inventory could not be inspected.",
-				)
-			}
-			if (response.status !== 200) {
-				await cancelResponseBody(response.body)
-				return releaseError(
-					"The GitHub release inventory could not be inspected.",
-				)
-			}
-			return readBoundedJsonResponse(response)
+					body: JSON.stringify({
+						query: RELEASE_INVENTORY_QUERY,
+						variables: {
+							owner: repositoryOwner,
+							name: repositoryName,
+							cursor: cursor ?? null,
+						},
+					}),
+					redirect: "error",
+				},
+				"The GitHub release inventory could not be inspected.",
+				async (response) => {
+					if (response.status !== 200) {
+						await cancelResponseBody(response.body)
+						return releaseError(
+							"The GitHub release inventory could not be inspected.",
+						)
+					}
+					return readBoundedJsonResponse(response, {
+						retryBodyReadFailure: true,
+					})
+				},
+			)
 		},
 		createTag: async (tag, message, object) => {
 			if (!/^v[0-9]+\.[0-9]+\.[0-9]+$/.test(tag)) {

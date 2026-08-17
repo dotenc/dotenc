@@ -680,11 +680,14 @@ GitHub release; a draft, prerelease, or orphan reservation therefore blocks a
 later version from publishing past incomplete state.
 
 Read-only GitHub REST inspections and GraphQL queries retry only transport
-failures and HTTP 408, 500, 502, 503, or 504 on a fixed one-, two-, and
-four-second schedule. Every attempt receives a fresh timeout, discarded response
-bodies are cancelled, numeric `Retry-After` guidance is honored within a
-30-second cumulative wait ceiling, and exhaustion still fails closed. Exhausted
-rate limits and malformed or over-budget retry guidance are not retried.
+failures while establishing the response or reading its body, plus HTTP 408,
+500, 502, 503, or 504, on a fixed one-, two-, and four-second schedule. Every
+attempt receives a fresh timeout, discarded response bodies are cancelled,
+numeric `Retry-After` guidance is honored within a 30-second cumulative wait
+ceiling, and exhaustion still fails closed. Exhausted rate limits and malformed
+or over-budget retry guidance are not retried. Missing or oversized bodies,
+invalid UTF-8 or JSON, GraphQL errors, and schema or pagination failures remain
+single-attempt fail-closed evidence.
 Tag-object and reference creation are never automatically retried; their
 existing exact-object and conflict checks remain the only mutation recovery
 path.
