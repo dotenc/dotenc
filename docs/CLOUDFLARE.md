@@ -130,7 +130,7 @@ case "${DOTENC_ENVIRONMENT:-}" in
     ;;
 esac
 
-exec dotenc run --strict -e "$DOTENC_ENVIRONMENT" npm run build
+exec ./node_modules/.bin/dotenc run --strict -e "$DOTENC_ENVIRONMENT" npm run build
 ```
 
 Make it executable and set the Pages build command to:
@@ -168,7 +168,7 @@ if [ "${CLOUDFLARE_API_TOKEN+x}" = x ] || [ "${CLOUDFLARE_ACCOUNT_ID+x}" = x ]; 
   echo "Cloudflare credentials must not be present in the build step" >&2
   exit 1
 fi
-dotenc run --strict -e production-build npm run build
+./node_modules/.bin/dotenc run --strict -e production-build npm run build
 
 # Deploy step: only Cloudflare authentication is scoped here.
 if [ "${DOTENC_PRIVATE_KEY_BASE64+x}" = x ] || \
@@ -245,7 +245,7 @@ case "${DOTENC_ENVIRONMENT:-}" in
     ;;
 esac
 
-exec dotenc run --strict -e "$DOTENC_ENVIRONMENT" npm run build
+exec ./node_modules/.bin/dotenc run --strict -e "$DOTENC_ENVIRONMENT" npm run build
 ```
 
 Set that script as the Workers Build command. Cloudflare runs a separate deploy
@@ -306,7 +306,7 @@ if [ "${CLOUDFLARE_API_TOKEN+x}" = x ] || [ "${CLOUDFLARE_ACCOUNT_ID+x}" = x ]; 
   echo "Cloudflare credentials must not be present in the build step" >&2
   exit 1
 fi
-dotenc run --strict -e production-build npm run build
+./node_modules/.bin/dotenc run --strict -e production-build npm run build
 
 # Deploy step: expose Cloudflare credentials, not the dotenc bootstrap secret.
 if [ "${DOTENC_PRIVATE_KEY_BASE64+x}" = x ] || \
