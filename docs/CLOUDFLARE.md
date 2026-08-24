@@ -12,7 +12,7 @@ the path by the machine that runs the secret-dependent build:
 
 Keep identities separate across Pages, Workers, production, and preview when
 those paths execute code with different review guarantees. Never give a preview
-build key access to the production dotenc environment.
+build key access to the production build environment.
 
 A build secret is still readable by the build runner before `dotenc run`
 starts. Only attach a dotenc identity to builds whose branch authors,
@@ -32,9 +32,32 @@ project-pinned CLI:
 
 ```bash
 npm install --save-dev @dotenc/cli
+npm install --save-dev --save-exact wrangler@4.123.0
 ```
 
-Use the package manager that owns the project's lockfile if it is not npm.
+Commit the resulting manifest and lockfile. The examples call the installed
+Wrangler binary as `./node_modules/.bin/wrangler` so the deployment cannot make
+`npx` download an unreviewed version. Use the equivalent local-executable form
+for the package manager that owns the project. This runbook was checked against
+Wrangler 4.123.0. `wrangler versions upload` requires at least 3.40.0, and
+versions before 3.73.0 require Cloudflare's legacy `--x-versions` flag.
+
+Create dedicated `production-build` and `preview-build` environments as the
+explicit build allowlists:
+
+```bash
+dotenc env create production-build
+dotenc env edit production-build
+dotenc env create preview-build
+dotenc env edit preview-build
+```
+
+Put only values required by the build in these environments. Runtime-only
+credentials belong in Cloudflare runtime secrets and must not be copied into a
+build environment. For static sites, the generic path in this runbook supports
+only values that are safe to publish. A private build-only credential requires
+a project-specific artifact scanner as described under Direct Upload; without
+that gate, do not provide it to a static build.
 
 Create a dedicated key for each Cloudflare build boundary. This production
 Pages example uses a passwordless automation key; if you protect the key with a
@@ -47,9 +70,9 @@ ssh-keygen -t ed25519 \
   -C "cloudflare-pages-production"
 dotenc key add cloudflare-pages-production \
   --from-ssh ./cloudflare_pages_production_key
-dotenc auth grant production cloudflare-pages-production
-git add .dotenc .env.production.enc
-git commit -m "Grant Cloudflare Pages access to production environment"
+dotenc auth grant production-build cloudflare-pages-production
+git add .dotenc .env.production-build.enc
+git commit -m "Grant Cloudflare Pages access to production build environment"
 ```
 
 Encode the private key before placing it in the build provider's secret store:
@@ -82,14 +105,14 @@ configure these values separately for Production and Preview:
 
 | Name | Production | Preview | Type |
 | --- | --- | --- | --- |
-| `DOTENC_ENVIRONMENT` | `production` | `preview` | Plain text |
+| `DOTENC_ENVIRONMENT` | `production-build` | `preview-build` | Plain text |
 | `DOTENC_PRIVATE_KEY_BASE64` | Production Pages key | Preview Pages key | Secret / encrypted |
 | `DOTENC_PRIVATE_KEY_PASSPHRASE` | Only when required | Only when required | Secret / encrypted |
 
 The preview key must not be the production key and must not be granted to the
-production dotenc environment. Remember that code pushed to a connected branch
+production build environment. Remember that code pushed to a connected branch
 can run during the preview build. Omit the preview bootstrap key entirely when
-those branch authors are not trusted with the preview environment.
+those branch authors are not trusted with the preview build environment.
 
 ### 2. Wrap the existing build command
 
@@ -100,9 +123,9 @@ Add a small checked-in script such as `scripts/cloudflare-pages-build.sh`:
 set -eu
 
 case "${DOTENC_ENVIRONMENT:-}" in
-  production|preview) ;;
+  production-build|preview-build) ;;
   *)
-    echo "DOTENC_ENVIRONMENT must be production or preview" >&2
+    echo "DOTENC_ENVIRONMENT must be production-build or preview-build" >&2
     exit 64
     ;;
 esac
@@ -133,16 +156,28 @@ Use Direct Upload when an external CI runner or a developer machine builds the
 site. The runner gets the dotenc identity; Cloudflare receives only the already
 built output.
 
-Keep the two commands in separate CI steps so the build step receives only the
-dotenc bootstrap secret and the deploy step receives only
-`CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`:
+Use provider-supported step-scoped secrets or separate jobs on fresh runners. A
+different shell step in the same job is not isolation when Cloudflare
+credentials are configured at job scope. The build must not inherit
+`CLOUDFLARE_API_TOKEN` or `CLOUDFLARE_ACCOUNT_ID`; only the deploy step receives
+them. Conversely, the deploy step must not inherit the dotenc bootstrap key:
 
 ```bash
-# Build step: DOTENC_PRIVATE_KEY_BASE64 is available here.
-dotenc run --strict -e production npm run build
+# Build step: only DOTENC_PRIVATE_KEY_BASE64 and its optional passphrase are scoped here.
+if [ "${CLOUDFLARE_API_TOKEN+x}" = x ] || [ "${CLOUDFLARE_ACCOUNT_ID+x}" = x ]; then
+  echo "Cloudflare credentials must not be present in the build step" >&2
+  exit 1
+fi
+dotenc run --strict -e production-build npm run build
 
-# Deploy step: Cloudflare authentication is available here instead.
-npx wrangler pages deploy dist \
+# Deploy step: only Cloudflare authentication is scoped here.
+if [ "${DOTENC_PRIVATE_KEY_BASE64+x}" = x ] || \
+   [ "${DOTENC_PRIVATE_KEY+x}" = x ] || \
+   [ "${DOTENC_PRIVATE_KEY_PASSPHRASE+x}" = x ]; then
+  echo "dotenc bootstrap credentials must not be present in the deploy step" >&2
+  exit 1
+fi
+./node_modules/.bin/wrangler pages deploy dist \
   --project-name example-site \
   --branch main
 ```
@@ -151,11 +186,12 @@ Replace `dist`, the project name, branch, and environment with the project's
 actual values. Use `wrangler login` for an interactive developer deployment.
 For CI, create a narrowly scoped Cloudflare API token and keep it in the CI
 provider's secret store. Do not commit it or put it in the dotenc-backed build
-environment.
+environment. An interactive local build and Wrangler's stored login share one
+machine trust boundary, so run only reviewed build code in that mode.
 
 Before upload, inspect the publish directory for generated dotenv files,
-private-key headers, and bootstrap variable names. This check reports filenames
-only and is a minimum guard, not a substitute for a project-aware scanner:
+private-key headers, and bootstrap variable names. This baseline check reports
+filenames only:
 
 ```bash
 find dist -type f \( -name '.env' -o -name '.env.*' \) -print
@@ -164,10 +200,17 @@ rg -l \
   dist
 ```
 
-Stop the deployment and investigate if either command prints a path. A
-dedicated Cloudflare helper and artifact doctor remain tracked in the
+Stop the deployment and investigate if either command prints a path. This
+baseline cannot detect an opaque credential embedded as an ordinary string. If
+the build uses any private build-only value, add a required scanner that checks
+the output bytes against every such value, fails closed on a match, and reports
+only the variable name and repository-relative path. It must never print the
+value, matching text, or surrounding content. Without that project-specific
+gate, keep private values out of static builds.
+
+A dedicated Cloudflare helper and artifact doctor remain tracked in the
 [provider helpers roadmap](./PROVIDER_HELPERS_ROADMAP.md); this runbook does not
-claim that an automated runtime-secret sync exists.
+claim that an automated artifact or runtime-secret sync exists.
 
 ## Workers Builds
 
@@ -180,12 +223,12 @@ Configure production and non-production build triggers independently:
 
 | Name | Production trigger | Non-production trigger | Type |
 | --- | --- | --- | --- |
-| `DOTENC_ENVIRONMENT` | `production` | `preview` | Plain text |
+| `DOTENC_ENVIRONMENT` | `production-build` | `preview-build` | Plain text |
 | `DOTENC_PRIVATE_KEY_BASE64` | Production Workers key | Preview Workers key | Build secret |
 | `DOTENC_PRIVATE_KEY_PASSPHRASE` | Only when required | Only when required | Build secret |
 
 Leave the non-production bootstrap fields unset when non-production branches
-are not trusted with the preview environment.
+are not trusted with the preview build environment.
 
 Use the same environment-selection script shape as the Pages example, but name
 it for Workers and wrap the Worker's existing build command:
@@ -195,9 +238,9 @@ it for Workers and wrap the Worker's existing build command:
 set -eu
 
 case "${DOTENC_ENVIRONMENT:-}" in
-  production|preview) ;;
+  production-build|preview-build) ;;
   *)
-    echo "DOTENC_ENVIRONMENT must be production or preview" >&2
+    echo "DOTENC_ENVIRONMENT must be production-build or preview-build" >&2
     exit 64
     ;;
 esac
@@ -219,8 +262,8 @@ unset DOTENC_PRIVATE_KEY_PASSPHRASE
 unset DOTENC_ENV
 
 case "${1:-}" in
-  production) exec npx wrangler deploy ;;
-  preview) exec npx wrangler versions upload ;;
+  production) exec ./node_modules/.bin/wrangler deploy ;;
+  preview) exec ./node_modules/.bin/wrangler versions upload ;;
   *)
     echo "usage: $0 production|preview" >&2
     exit 64
@@ -243,7 +286,9 @@ Configure the non-production branch deploy command as:
 The wrapper limits which repository processes inherit the bootstrap key; it
 does not remove the key from Cloudflare's build runner itself. Treat dependency
 installation, build scripts, and repository write access as part of that trust
-boundary.
+boundary. Keep runtime credentials out of the build allowlist. If it contains a
+private build-only value, make the build command run the safe-metadata artifact
+gate described above before it succeeds.
 
 ## External Wrangler deployments
 
@@ -251,28 +296,34 @@ When an external CI runner owns a Workers build and deployment, give that runner
 a dedicated dotenc identity. Keep Cloudflare's account ID and narrowly scoped
 API token in the CI provider's secret store.
 
-Prefer a split build and deploy so the application build does not inherit the
-Cloudflare deployment token:
+Require provider-supported step-scoped secrets or separate jobs on fresh
+runners. Prefer a split build and deploy so the application build cannot
+inherit the Cloudflare deployment token:
 
 ```bash
 # Build step: expose the dotenc bootstrap secret, not Cloudflare credentials.
-dotenc run --strict -e production npm run build
+if [ "${CLOUDFLARE_API_TOKEN+x}" = x ] || [ "${CLOUDFLARE_ACCOUNT_ID+x}" = x ]; then
+  echo "Cloudflare credentials must not be present in the build step" >&2
+  exit 1
+fi
+dotenc run --strict -e production-build npm run build
 
 # Deploy step: expose Cloudflare credentials, not the dotenc bootstrap secret.
-npx wrangler deploy
+if [ "${DOTENC_PRIVATE_KEY_BASE64+x}" = x ] || \
+   [ "${DOTENC_PRIVATE_KEY+x}" = x ] || \
+   [ "${DOTENC_PRIVATE_KEY_PASSPHRASE+x}" = x ]; then
+  echo "dotenc bootstrap credentials must not be present in the deploy step" >&2
+  exit 1
+fi
+./node_modules/.bin/wrangler deploy
 ```
 
 Ensure `wrangler deploy` does not rerun the secret-dependent build. If Wrangler
-must own that build, the narrower available form is:
-
-```bash
-dotenc run --strict -e production npx wrangler deploy
-```
-
-In that form, Wrangler receives the decrypted build values and Cloudflare
-credentials, while dotenc strips its bootstrap variables before starting
-Wrangler. Use it only when the Worker configuration, dependencies, and build
-command are all trusted to share that process boundary.
+must own a build that needs private values, this generic external-runner path
+cannot isolate the application build from the deployment token. Refactor the
+build into a separate step or use Workers Builds; do not wrap that combined
+operation with `dotenc run`. When the separate build uses a private build-only
+value, run the safe-metadata artifact gate before the deploy job starts.
 
 ## Runtime secrets
 
@@ -288,11 +339,12 @@ There is no shipped `dotenc cloudflare secrets sync` command. Until an
 allowlisted helper exists, manage runtime secrets with Cloudflare's native
 controls rather than writing a decrypted `.env` or JSON file in CI.
 
-For one-off Worker changes, `npx wrangler secret put <KEY>` prompts for a value,
-but it also creates and immediately deploys a new Worker version. For gradual
-deployments, use Cloudflare's versioned secret workflow instead. Pages secrets
-can be entered as encrypted values in the dashboard or with
-`npx wrangler pages secret put <KEY> --project-name <PROJECT>`.
+For one-off Worker changes,
+`./node_modules/.bin/wrangler secret put <KEY>` prompts for a value, but it also
+creates and immediately deploys a new Worker version. For gradual deployments,
+use Cloudflare's versioned secret workflow instead. Pages secrets can be entered
+as encrypted values in the dashboard or with
+`./node_modules/.bin/wrangler pages secret put <KEY> --project-name <PROJECT>`.
 
 ## Rollback and revocation
 
@@ -300,9 +352,9 @@ can be entered as encrypted values in the dashboard or with
   successful production deployment. Preview deployments are not rollback
   targets.
 - **Workers:** use the dashboard deployment history or
-  `npx wrangler rollback [VERSION_ID]`. A rollback changes the active Worker
-  version but does not revert data stored in KV, D1, R2, queues, or other bound
-  resources.
+  `./node_modules/.bin/wrangler rollback [VERSION_ID]`. A rollback changes the
+  active Worker version but does not revert data stored in KV, D1, R2, queues,
+  or other bound resources.
 - **Compromised dotenc identity:** revoke its public key from every granted
   environment, commit the encrypted metadata changes, rotate affected values,
   replace the provider secret, and redeploy from reviewed code.
@@ -354,3 +406,4 @@ first, then restore a known-good deployment.
 - [External CI/CD authentication](https://developers.cloudflare.com/workers/ci-cd/external-cicd/github-actions/)
 - [Workers secrets](https://developers.cloudflare.com/workers/configuration/secrets/)
 - [Workers rollbacks](https://developers.cloudflare.com/workers/versions-and-deployments/rollbacks/)
+- [Wrangler Workers commands](https://developers.cloudflare.com/workers/wrangler/commands/workers/)
