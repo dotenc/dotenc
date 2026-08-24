@@ -241,10 +241,14 @@ References:
 
 ## Cloudflare helpers
 
-Cloudflare should get its own runbook after the Vercel and Netlify cloud-build
-docs land. The Cloudflare surface is broader and should be split by ownership:
-Pages Git builds, Pages Direct Upload, Workers Builds, external Wrangler
-deploys, and runtime secret sync.
+Supported today: the [Cloudflare runbook](./CLOUDFLARE.md) documents the
+existing CLI composition paths for static Pages Git builds, Pages Direct
+Upload, Workers Builds, and external Wrangler deployments. It keeps build-time
+decryption separate from provider-native runtime secrets and does not claim an
+automated secret sync.
+
+The remaining helper surface is split by ownership: Pages Direct Upload,
+external Wrangler deploys, runtime secret sync, and artifact inspection.
 
 Planned helpers:
 

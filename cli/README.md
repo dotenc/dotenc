@@ -769,6 +769,8 @@ resolution, or secret storage work differently from a generic shell pipeline.
   Vercel-owned cloud builds, then wrap the Vercel build command.
 - [Netlify](/docs/NETLIFY.md) — use a dedicated Netlify dotenc identity for
   Netlify-owned cloud builds, then wrap the Netlify build command.
+- [Cloudflare](/docs/CLOUDFLARE.md) — choose the trust boundary for Pages Git
+  builds, Pages Direct Upload, Workers Builds, or external Wrangler deploys.
 - [Coolify](https://github.com/dotenc/dotenc/blob/main/docs/COOLIFY.md) — add
   dotenc to the application's existing Dockerfile, Railpack, or Nixpacks image,
   then keep decryption at runtime when possible.
