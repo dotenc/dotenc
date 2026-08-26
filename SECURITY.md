@@ -927,7 +927,7 @@ implementation actions in `actions/`, which are thin wrappers around the dotenc
 CLI:
 
 - `actions/setup` installs `@dotenc/cli` through npm. Its default is the exact
-  CLI package version shipped with this repository (`0.14.0`), not npm's
+  CLI package version shipped with this repository (`0.14.1`), not npm's
   mutable `latest` tag. Pin the action ref to a commit when workflows also need
   an immutable action implementation.
 - `actions/run` writes the requested command to a temporary script and executes
