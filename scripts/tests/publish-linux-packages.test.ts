@@ -83,7 +83,16 @@ const createRecoveryWorkflowFixture = () => {
 	mkdirSync(fixtureDirectory)
 	mkdirSync(toolDirectory)
 
-	const version = "0.14.0"
+	const packageMetadata = JSON.parse(
+		readFileSync(
+			path.resolve(import.meta.dir, "../../cli/package.json"),
+			"utf8",
+		),
+	) as { version?: unknown }
+	if (typeof packageMetadata.version !== "string") {
+		throw new Error("CLI package fixture requires a string version")
+	}
+	const version = packageMetadata.version
 	const sourceRunId = "32057702020"
 	const artifactId = "9296974042"
 	const sourceCommit = "95393260d445c8d11f9131027625a25ddbc85907"

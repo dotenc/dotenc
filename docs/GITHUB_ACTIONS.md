@@ -394,7 +394,7 @@ repository, local workflow tests can use `./actions/<name>`.
 ```
 
 The setup action defaults to the exact CLI version shipped with this repository
-(`0.14.0`), not npm's mutable `latest` tag. Override it only when deliberately
+(`0.14.1`), not npm's mutable `latest` tag. Override it only when deliberately
 selecting another release:
 
 ```yaml

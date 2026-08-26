@@ -694,9 +694,11 @@ describe("CLI release gate", () => {
 		const mainRefPath = "/repos/dotenc/dotenc/git/ref/heads/main"
 		const comparePath = `/repos/dotenc/dotenc/compare/${currentSha}...${remoteSha}`
 		const contentsPath = `/repos/dotenc/dotenc/contents/cli/package.json?ref=${remoteSha}`
-		const remotePackage = readFileSync(
+		const remotePackageSource = readFileSync(
 			path.resolve(import.meta.dir, "../../cli/package.json"),
-		).toString("base64")
+			"utf8",
+		).replace(/^  "version": "[^"]+",$/m, '  "version": "0.14.0",')
+		const remotePackage = Buffer.from(remotePackageSource).toString("base64")
 		expect(remotePackage.length).toBeGreaterThan(4096)
 
 		expect(
