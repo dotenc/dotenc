@@ -84,6 +84,9 @@ VS Code extension (`vscode-extension/`):
 - `bun run typecheck`
 - `bun run test:integration` (heavier; only when extension integration behavior changes)
 - Integration tests do not run in sandboxed environments; run `bun run test:integration` on the host machine.
+- For branding changes, verify the packaged PNG listing icon and the 24x24
+  monochrome activity-bar SVG on light and dark themes. Both VS Code Marketplace
+  and Open VSX use the same extension assets; website branding is separate.
 
 Website (`website/`):
 
