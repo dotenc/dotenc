@@ -15,7 +15,7 @@ Never weaken security for convenience. Within those guarantees, treat avoidable 
 
 - `cli/` — Bun + TypeScript CLI published as `@dotenc/cli` (`dotenc` command)
 - `vscode-extension/` — VS Code extension that depends on the installed `dotenc` CLI
-- `website/` — marketing/docs website build
+- `website/` — marketing/docs website build; see `website/AGENTS.md` for design and validation guidance
 - `scripts/` — coverage merge/summary scripts used by root test coverage workflows
 - `docs/` — implementation references and deep dives (read only when relevant)
 

@@ -22,7 +22,7 @@ const cssWatcher = Bun.spawn(
 		join(SRC, "styles/main.css"),
 		"-o",
 		join(PUBLIC, "styles.css"),
-		"--watch",
+		"--watch=always",
 	],
 	{ stdout: "ignore", stderr: "ignore" },
 )
@@ -81,6 +81,7 @@ function isPageRoute(pathname: string): boolean {
 
 const server = Bun.serve({
 	port: 3000,
+	idleTimeout: 0,
 	async fetch(req) {
 		const url = new URL(req.url)
 		const pathname = url.pathname

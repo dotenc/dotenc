@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630"><rect width="1200" height="630" fill="#0749f5"/><g fill="#fff" font-family="Helvetica, Arial, sans-serif"><text x="65" y="100" font-size="33" font-weight="700">dotenc.</text><text x="65" y="270" font-size="88" font-weight="600" letter-spacing="-5">Your secrets.</text><text x="65" y="370" font-size="88" font-weight="600" letter-spacing="-5">Your repo<tspan fill="#36efb4">.</tspan></text><text x="65" y="453" font-size="22" fill="#e0e9ff">Encrypted in Git. Unlocked with your SSH key.</text></g><line x1="65" y1="535" x2="1135" y2="535" stroke="#ffffff" stroke-opacity=".25"/><g fill="#d2deff" font-family="monospace" font-size="14"><text x="65" y="574">OPEN SOURCE ENVIRONMENT ENCRYPTION</text><text x="1030" y="574">dotenc.org</text></g><svg xmlns="http://www.w3.org/2000/svg" x="765" y="150" width="350" height="350" viewBox="0 0 24 24">
+  <g fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 4.5 3.8 8.7v6.6L8 19.5"/>
+    <path d="m16 4.5 4.2 4.2v6.6L16 19.5"/>
+  </g>
+  <circle cx="12" cy="12" r="2.4" fill="#36efb4"/>
+</svg>
+</svg>

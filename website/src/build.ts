@@ -21,6 +21,10 @@ if (existsSync(DIST)) {
 }
 mkdirSync(DIST, { recursive: true })
 
+// Copy public assets before compiling so dev styles cannot overwrite production CSS.
+console.log("📁 Copying public assets...")
+cpSync(PUBLIC, DIST, { recursive: true })
+
 // Build + minify CSS with Tailwind
 console.log("🎨 Building CSS...")
 await $`bunx @tailwindcss/cli -i ${join(SRC, "styles/main.css")} -o ${join(DIST, "styles.css")} --minify`
@@ -38,9 +42,5 @@ writeFileSync(join(DIST, "index.html"), html)
 console.log("📦 Copying JS...")
 mkdirSync(join(DIST, "scripts"), { recursive: true })
 cpSync(join(SRC, "scripts"), join(DIST, "scripts"), { recursive: true })
-
-// Copy public assets
-console.log("📁 Copying public assets...")
-cpSync(PUBLIC, DIST, { recursive: true })
 
 console.log("✅ Build complete! Output in dist/")
