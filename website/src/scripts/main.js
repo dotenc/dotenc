@@ -3,6 +3,10 @@ document.documentElement.classList.add("js")
 // Native content remains available when JavaScript is disabled.
 const tabs = [...document.querySelectorAll('[role="tab"]')]
 const panels = [...document.querySelectorAll('[role="tabpanel"]')]
+/**
+ * Select an install method and synchronize panel visibility and keyboard focus order.
+ * @param {Element} selected The tab whose associated panel should be displayed.
+ */
 function selectTab(selected) {
 	for (const tab of tabs) {
 		const active = tab === selected
@@ -56,6 +60,7 @@ const menuToggle = document.getElementById("menu-toggle")
 const navigation = document.getElementById("primary-nav")
 if (menuToggle && navigation) {
 	menuToggle.hidden = false
+	/** Collapse mobile navigation and expose its closed state to assistive technology. */
 	function closeMenu() {
 		navigation.classList.remove("is-open")
 		menuToggle.setAttribute("aria-expanded", "false")
