@@ -126,6 +126,7 @@ h3 { font-size: 16px; line-height: 1.4; letter-spacing: -.03em; font-weight: 750
 .copy-button { font: 9px/1.7 var(--font-mono); border: 0; background: transparent; color: var(--mint); min-height: 24px; flex-shrink: 0; padding: 1px 0; }
 .copy-button:hover { color: white; }
 .small-link { font-size: 10px; color: var(--muted); text-decoration: underline; text-underline-offset: 3px; }
+.install-alternative { padding: 0 24px 24px; }
 .install-next { border-top: 1px solid var(--line); display: flex; align-items: center; gap: 24px; padding: 19px 24px; }
 .install-next > span { font: 8px/1.5 var(--font-mono); color: var(--muted); }
 .install-next code { font-size: 11px; color: var(--blue); }
@@ -271,6 +272,7 @@ h3 { font-size: 16px; line-height: 1.4; letter-spacing: -.03em; font-weight: 750
 	.command { padding: 16px 12px; gap: 9px; }
 	.command code { font-size: 10px; }
 	.copy-button { font-size: 8px; }
+	.install-alternative { padding: 0 16px 23px; }
 	.install-next { padding-inline: 16px; gap: 15px; }
 	.install-next > span { font-size: 7px; }
 	.closing { display: grid; grid-template-columns: 40px 1fr; gap: 15px; padding: 25px 21px; margin-bottom: 45px; }
