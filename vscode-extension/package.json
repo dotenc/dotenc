@@ -2,7 +2,7 @@
 	"name": "dotenc-vscode-extension",
 	"displayName": "dotenc",
 	"description": "Seamless editing for dotenc encrypted environment files.",
-	"version": "0.6.2",
+	"version": "0.6.3",
 	"publisher": "dotenc",
 	"icon": "assets/logo-square.png",
 	"license": "MIT",
