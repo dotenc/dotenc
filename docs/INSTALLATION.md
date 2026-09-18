@@ -2,14 +2,19 @@
 
 ## Recommended
 
-On macOS or Linux:
+On macOS, Linux, or Windows using Git Bash / MSYS2:
 
 ```sh
 curl -fsSL https://dotenc.org/install.sh | sh
 ```
 
-The installer chooses the native package manager when possible and falls back
-to Homebrew or npm when administrator access is unavailable.
+On macOS and Linux, the installer chooses an available package manager, preferring
+the native manager on Linux and falling back to Homebrew or npm when administrator
+access is unavailable.
+
+On Windows, run the script in Git Bash or MSYS2. It uses an existing Scoop
+installation, or falls back to npm if Scoop is unavailable. For PowerShell,
+use the direct [Scoop](#scoop) or [npm](#npm) commands below.
 
 To review it before running:
 
