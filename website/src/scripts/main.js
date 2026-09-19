@@ -58,32 +58,78 @@ for (const button of document.querySelectorAll(".copy-button")) {
 
 const menuToggle = document.getElementById("menu-toggle")
 const navigation = document.getElementById("primary-nav")
-if (menuToggle && navigation) {
+const mobileMenu = document.getElementById("mobile-menu")
+if (menuToggle && navigation && mobileMenu) {
+	const desktopParent = navigation.parentElement
+	const mobileSlot = mobileMenu.querySelector(".drawer-navigation")
+	const mobileLayout = window.matchMedia("(max-width: 900px)")
+	let scrollPosition = 0
+	let backdropPressed = false
 	menuToggle.hidden = false
-	/** Collapse mobile navigation and expose its closed state to assistive technology. */
-	function closeMenu() {
-		navigation.classList.remove("is-open")
+
+	/** Restore page scrolling and the toggle state when the native dialog closes. */
+	function restorePage() {
+		document.body.classList.remove("menu-open")
+		document.body.style.removeProperty("top")
+		window.scrollTo({ top: scrollPosition, behavior: "instant" })
 		menuToggle.setAttribute("aria-expanded", "false")
 	}
+
+	/** Close before link navigation so restoring scroll cannot override its destination. */
+	function closeMenu() {
+		if (!mobileMenu.open) return
+		mobileMenu.close()
+		restorePage()
+	}
+
+	/** Reuse the same navigation links across desktop and the mobile modal. */
+	function syncNavigation() {
+		closeMenu()
+		if (mobileLayout.matches) mobileSlot.append(navigation)
+		else desktopParent.append(navigation)
+	}
+
 	menuToggle.addEventListener("click", () => {
-		const open = navigation.classList.toggle("is-open")
-		menuToggle.setAttribute("aria-expanded", String(open))
+		if (!mobileLayout.matches) return
+		scrollPosition = window.scrollY
+		document.body.style.top = `-${scrollPosition}px`
+		document.body.classList.add("menu-open")
+		mobileMenu.showModal()
+		menuToggle.setAttribute("aria-expanded", "true")
 	})
+	mobileMenu.querySelector(".drawer-close").addEventListener("click", closeMenu)
+	mobileMenu.addEventListener("cancel", (event) => {
+		event.preventDefault()
+		closeMenu()
+	})
+	mobileMenu.addEventListener("keydown", (event) => {
+		if (event.key !== "Tab") return
+		const controls = [
+			...mobileMenu.querySelectorAll("a[href], button:not(:disabled)"),
+		]
+		const first = controls[0]
+		const last = controls[controls.length - 1]
+		if (event.shiftKey && document.activeElement === first) {
+			event.preventDefault()
+			last.focus()
+		} else if (!event.shiftKey && document.activeElement === last) {
+			event.preventDefault()
+			first.focus()
+		}
+	})
+	mobileMenu.addEventListener("pointerdown", (event) => {
+		backdropPressed = event.target === mobileMenu
+	})
+	mobileMenu.addEventListener("click", (event) => {
+		if (backdropPressed && event.target === mobileMenu) closeMenu()
+		backdropPressed = false
+	})
+	for (const link of mobileMenu.querySelectorAll("a")) {
+		link.addEventListener("click", closeMenu)
+	}
 	for (const link of navigation.querySelectorAll("a")) {
 		link.addEventListener("click", closeMenu)
 	}
-	document.addEventListener("keydown", (event) => {
-		if (event.key === "Escape" && navigation.classList.contains("is-open")) {
-			closeMenu()
-			menuToggle.focus()
-		}
-	})
-	document.addEventListener("click", (event) => {
-		if (
-			!navigation.contains(event.target) &&
-			!menuToggle.contains(event.target)
-		) {
-			closeMenu()
-		}
-	})
+	mobileLayout.addEventListener("change", syncNavigation)
+	syncNavigation()
 }
