@@ -1,12 +1,14 @@
+import { createHash } from "node:crypto"
 import {
 	cpSync,
 	existsSync,
 	mkdirSync,
 	readFileSync,
+	renameSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs"
-import { join } from "node:path"
+import { extname, join } from "node:path"
 import { $ } from "bun"
 import { inlineSvgPlaceholders } from "./helpers"
 
@@ -29,18 +31,31 @@ cpSync(PUBLIC, DIST, { recursive: true })
 console.log("🎨 Building CSS...")
 await $`bunx @tailwindcss/cli -i ${join(SRC, "styles/main.css")} -o ${join(DIST, "styles.css")} --minify`
 
-// Copy index.html
-console.log("📄 Copying HTML...")
-let html = readFileSync(join(SRC, "index.html"), "utf-8")
-html = inlineSvgPlaceholders(html, PUBLIC)
-// Update CSS path for production (dev uses public/styles.css)
-html = html.replace("/styles.css", "./styles.css")
-html = html.replace("/scripts/main.js", "./scripts/main.js")
-writeFileSync(join(DIST, "index.html"), html)
-
-// Copy JS
+// Copy JS before fingerprinting the production entrypoints.
 console.log("📦 Copying JS...")
 mkdirSync(join(DIST, "scripts"), { recursive: true })
 cpSync(join(SRC, "scripts"), join(DIST, "scripts"), { recursive: true })
+
+/** Name an asset after its content so cached files cannot cross deployment versions. */
+function fingerprintAsset(relativePath: string): string {
+	const path = join(DIST, relativePath)
+	const hash = createHash("sha256")
+		.update(readFileSync(path))
+		.digest("hex")
+		.slice(0, 16)
+	const extension = extname(relativePath)
+	const fingerprintedPath = `${relativePath.slice(0, -extension.length)}.${hash}${extension}`
+	renameSync(path, join(DIST, fingerprintedPath))
+	return fingerprintedPath
+}
+const stylesheet = fingerprintAsset("styles.css")
+const script = fingerprintAsset("scripts/main.js")
+
+console.log("📄 Copying HTML...")
+let html = readFileSync(join(SRC, "index.html"), "utf-8")
+html = inlineSvgPlaceholders(html, PUBLIC)
+html = html.replace('href="/styles.css"', `href="./${stylesheet}"`)
+html = html.replace('src="/scripts/main.js"', `src="./${script}"`)
+writeFileSync(join(DIST, "index.html"), html)
 
 console.log("✅ Build complete! Output in dist/")
