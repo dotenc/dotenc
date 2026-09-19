@@ -22,6 +22,7 @@ This document describes the security model, cryptographic design, and operationa
 - [OCI Image Trust Model](#oci-image-trust-model)
 - [GitHub Actions Trust Model](#github-actions-trust-model)
 - [Known Limitations](#known-limitations)
+- [Development and publishing dependencies](#development-and-publishing-dependencies)
 - [Vulnerability Reporting](#vulnerability-reporting)
 
 ---
@@ -1082,6 +1083,17 @@ provider-specific runbook for that provider's own runner.
 - **No centralized policy engine.** Access control is enforced per-environment and per-repository, not across an organization.
 
 ---
+
+## Development and publishing dependencies
+
+The VS Code publishing/test tools and README demo renderer have independent
+lockfiles and are not included in the root dependency audit or the CLI runtime
+package. Audit the repository root, `vscode-extension/`, and
+`scripts/readme-demos/` separately with `bun audit --json`. Their package
+manifests enforce compatible patched versions for known vulnerable transitive
+dependencies. Reassess these constraints with upstream fixes instead of removing
+them solely because the root audit is clean. Electron's embedded browser runtime
+also requires upstream release review beyond npm advisories.
 
 ## Vulnerability Reporting
 

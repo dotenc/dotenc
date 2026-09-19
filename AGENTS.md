@@ -56,6 +56,8 @@ Bun temp files:
 - CLI deps: included via root workspace install (or `cd cli && bun install`)
 - Website deps: included via root workspace install (or `cd website && bun install`)
 - VS Code extension deps: `cd vscode-extension && bun install` (separate from root workspaces)
+- Dependency security checks must cover the root, `vscode-extension/`, and
+  `scripts/readme-demos/` lockfiles separately; a root audit does not include the latter two.
 
 ## Validation (Run What Matches Your Change)
 

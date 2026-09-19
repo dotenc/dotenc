@@ -5,6 +5,11 @@ These scripts generate the animated terminal examples embedded in
 legacy native PTY and Electron renderer; it is not part of the root workspaces,
 normal installs, or CI rendering.
 
+The overrides keep Electron on the maintained 43.x patch line and enforce
+patched js-yaml and Undici versions in the authoring dependency tree. Run
+`bun audit --json` here separately from the root and extension audits when
+updating the lockfile.
+
 ## Prerequisites
 
 - Bun 1.3.14
