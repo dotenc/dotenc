@@ -170,7 +170,7 @@ h3 { font-size: 16px; line-height: 1.4; letter-spacing: -.03em; font-weight: 750
 .agent-option h3 { font-size: 24px; margin: 22px 0 12px; }
 .agent-option > p { font-size: 13px; line-height: 1.9; color: var(--muted); margin-bottom: 23px; }
 .agent-option .command { width: 100%; min-height: 75px; margin: auto 0 22px; }
-.agent-option .text-link { color: var(--blue); }
+.agent-option .text-link { color: var(--blue); margin-top: auto; }
 .agent-requirements { font-size: 11px; line-height: 1.9; color: var(--muted); margin-top: 23px; max-width: 780px; }
 .agent-requirements a { color: var(--blue); text-decoration: underline; text-underline-offset: 3px; }
 @media (max-width: 1050px) {
