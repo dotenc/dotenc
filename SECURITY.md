@@ -1073,6 +1073,14 @@ build pin does not update binaries already installed by users. Those receive
 the new runtime only through a newly built dotenc release. npm installations
 run on the user-provided Node.js runtime, which must be kept patched separately.
 
+### Node.js authoring runtime
+
+CI and publication Node steps use the reviewed `.node-version` baseline
+(24.21.0). README demo authoring requires Node 24.21.0 or a newer 24.x patch
+and a compatible native PTY. This replaces the obsolete Node 16 authoring
+requirement. npm users supply and patch their own Node.js runtime; this build
+pin does not upgrade that runtime or the Node runtime hosted by GitHub Actions.
+
 ## Known Limitations
 
 - **dotenc does not prompt for passphrases.** To use passphrase-protected SSH keys, provide `DOTENC_PRIVATE_KEY_PASSPHRASE` in the environment. In interactive key selection flows (`dotenc init`, interactive `dotenc key add`), dotenc can also create an optional passwordless copy (for example `id_ed25519_passwordless`) after explicit user confirmation.
