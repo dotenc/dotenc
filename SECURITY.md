@@ -83,7 +83,7 @@ Data key
 
 This means:
 - Only authorized users can decrypt the data key, and therefore the environment
-- Re-keying an environment (adding or revoking access) only re-encrypts the data key, not the environment contents
+- Adding or revoking access generates a fresh data key, re-encrypts the environment contents, and wraps the new key for every remaining or newly authorized recipient
 - Rotating the data key generates a new random key and re-encrypts all environment contents
 
 ### Algorithms
@@ -92,9 +92,13 @@ This means:
 |-----------|-----------|------------|
 | Environment encryption | AES-256-GCM | 96-bit random IV, 128-bit auth tag |
 | Additional Authenticated Data | Version 2 environment name bound to ciphertext | Prevents ciphertext swap across environment names; legacy v1 has no AAD |
-| Data key encryption (Ed25519 keys) | ECIES (`eciesjs` v0.4+) | X25519 ECDH + AES-GCM |
+| Data key encryption (Ed25519 keys) | ECIES (`eciesjs` 0.4.x, `ellipticCurve: "ed25519"`) | Ed25519 Edwards-point key agreement + HKDF-SHA256 + AES-256-GCM |
 | Data key encryption (RSA keys) | RSA-OAEP | SHA-256 |
 | Supported public key types | Ed25519, RSA ≥ 2048-bit | ECDSA and DSA are rejected |
+
+Ed25519 SSH keys are used in the library’s Edwards-curve mode; they are not
+converted to X25519 keys. This documents the existing envelope format and does
+not change the cryptographic scheme or stored ciphertext compatibility.
 
 **IV generation:** A fresh 12-byte random IV is generated for every encryption operation using Node.js `crypto.randomBytes()`. IVs are never reused.
 
@@ -112,10 +116,14 @@ readable without AAD for migration compatibility.
 
 ### Data Key Lifecycle
 
-1. On `dotenc env create` or `dotenc env edit`, a new 32-byte random data key is generated
+1. Creating, editing, encrypting, rotating, granting, or revoking access generates a new 32-byte random data key
 2. The data key is encrypted for each authorized public key and stored in the `.enc` file header
 3. The data key is never written to disk in plaintext
-4. On decryption, the data key is held in memory only for the duration of the operation, then explicitly zeroed
+4. Encryption and decryption data-key buffers are explicitly zeroed in `finally` blocks after use, including failure paths
+
+Zeroing reduces the lifetime of the owned mutable buffers. It cannot guarantee
+erasure of copies made by JavaScript, the crypto provider, the OS, or immutable
+plaintext strings.
 
 ---
 
@@ -354,8 +362,8 @@ coverage.
 Access in dotenc is enforced cryptographically, not by policy:
 
 - A user who is not in the authorized list for an environment cannot decrypt that environment's data key, and therefore cannot read the secrets
-- Granting access re-encrypts the data key for the new user's public key; no re-encryption of the environment contents is required
-- Revoking access removes the user's encrypted data key copy and re-encrypts the data key for all remaining users (requires the revoking user to have decrypt access)
+- Granting access decrypts the current contents, generates a fresh data key, re-encrypts the contents, and wraps the new key for the authorized recipient set including the new user
+- Revoking access decrypts the current contents, generates a fresh data key, re-encrypts the contents, and wraps the new key only for remaining recipients (requires the revoking user to have decrypt access)
 
 **Important limitation:** Revoking access changes the current environment files;
 it does not invalidate secrets already seen by the revoked user or rewrite old

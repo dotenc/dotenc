@@ -117,39 +117,44 @@ export const createCommand = async (
 	}
 	const dataKey = createDataKey()
 
-	const content = initialContent ?? `# ${environmentName} environment\n`
-	const encryptedContent = await encryptData(
-		dataKey,
-		content,
-		Buffer.from(environmentName, "utf-8"),
-	)
-
-	const environmentJson: Environment = {
-		version: 2,
-		keys: [],
-		encryptedContent: encryptedContent.toString("base64"),
-	}
-
-	for (const publicKeyName of publicKeys) {
-		const publicKey = availablePublicKeys.find(
-			(key) => key.name === publicKeyName,
+	let environmentJson: Environment
+	try {
+		const content = initialContent ?? `# ${environmentName} environment\n`
+		const encryptedContent = await encryptData(
+			dataKey,
+			content,
+			Buffer.from(environmentName, "utf-8"),
 		)
 
-		if (!publicKey) {
-			console.error(
-				`Public key ${chalk.cyan(publicKeyName)} not found or invalid.`,
-			)
-			continue
+		environmentJson = {
+			version: 2,
+			keys: [],
+			encryptedContent: encryptedContent.toString("base64"),
 		}
 
-		const encrypted = encryptDataKey(publicKey, dataKey)
+		for (const publicKeyName of publicKeys) {
+			const publicKey = availablePublicKeys.find(
+				(key) => key.name === publicKeyName,
+			)
 
-		environmentJson.keys.push({
-			name: publicKeyName,
-			fingerprint: publicKey.fingerprint,
-			encryptedDataKey: encrypted.toString("base64"),
-			algorithm: publicKey.algorithm,
-		})
+			if (!publicKey) {
+				console.error(
+					`Public key ${chalk.cyan(publicKeyName)} not found or invalid.`,
+				)
+				continue
+			}
+
+			const encrypted = encryptDataKey(publicKey, dataKey)
+
+			environmentJson.keys.push({
+				name: publicKeyName,
+				fingerprint: publicKey.fingerprint,
+				encryptedDataKey: encrypted.toString("base64"),
+				algorithm: publicKey.algorithm,
+			})
+		}
+	} finally {
+		dataKey.fill(0)
 	}
 
 	if (environmentJson.keys.length === 0) {

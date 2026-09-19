@@ -16,7 +16,7 @@
 - ✍️ Easy and secure environment variable editing
 - 🌍 Supports multiple and extensible environments
 - 👤 Personal encrypted environments per developer
-- 🔄 Automatic data key rotation on edits
+- 🔄 Automatic data key rotation on edits and access changes
 - 🔍 Readable local Git diffs and redacted pull-request reviews
 - 🛡️ Supports both RSA and Ed25519 SSH keys
 - 🤖 Ready for the AI era — check out the official [dotenc skill](https://www.skills.sh/dotenc/skills/dotenc)
