@@ -390,6 +390,13 @@ var require_config = __commonJS(function(exports2) {
   exports2.ephemeralKeySize = ephemeralKeySize;
 });
 
+// node_modules/eciesjs/dist/types.js
+var require_types = __commonJS(function(exports2) {
+  Object.defineProperty(exports2, "__esModule", { value: true });
+  exports2.IS_BUFFER_SUPPORTED = undefined;
+  exports2.IS_BUFFER_SUPPORTED = typeof Buffer !== "undefined" && typeof Buffer.from === "function";
+});
+
 // node_modules/@noble/ciphers/cryptoNode.js
 var require_cryptoNode = __commonJS(function(exports2) {
   Object.defineProperty(exports2, "__esModule", { value: true });
@@ -5523,6 +5530,7 @@ var require_PublicKey = __commonJS(function(exports2) {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.PublicKey = undefined;
   var utils_1 = require_utils();
+  var types_js_1 = require_types();
   var index_js_1 = require_utils4();
   var PublicKey = function() {
     function PublicKey(data, curve) {
@@ -5543,14 +5551,14 @@ var require_PublicKey = __commonJS(function(exports2) {
     });
     Object.defineProperty(PublicKey.prototype, "uncompressed", {
       get: function() {
-        return Buffer.from(this._uncompressed);
+        return types_js_1.IS_BUFFER_SUPPORTED ? Buffer.from(this._uncompressed) : this._uncompressed;
       },
       enumerable: false,
       configurable: true
     });
     Object.defineProperty(PublicKey.prototype, "compressed", {
       get: function() {
-        return Buffer.from(this.data);
+        return types_js_1.IS_BUFFER_SUPPORTED ? Buffer.from(this.data) : this.data;
       },
       enumerable: false,
       configurable: true
@@ -5588,6 +5596,7 @@ var require_PrivateKey = __commonJS(function(exports2) {
   Object.defineProperty(exports2, "__esModule", { value: true });
   exports2.PrivateKey = undefined;
   var utils_1 = require_utils();
+  var types_js_1 = require_types();
   var index_js_1 = require_utils4();
   var PublicKey_js_1 = require_PublicKey();
   var PrivateKey = function() {
@@ -5607,7 +5616,7 @@ var require_PrivateKey = __commonJS(function(exports2) {
     };
     Object.defineProperty(PrivateKey.prototype, "secret", {
       get: function() {
-        return Buffer.from(this.data);
+        return types_js_1.IS_BUFFER_SUPPORTED ? Buffer.from(this.data) : this.data;
       },
       enumerable: false,
       configurable: true
@@ -5660,9 +5669,11 @@ var require_dist = __commonJS(function(exports2) {
   var utils_1 = require_utils();
   var config_js_1 = require_config();
   var index_js_1 = require_keys();
+  var types_js_1 = require_types();
   var index_js_2 = require_utils4();
   function encrypt(receiverRawPK, data) {
-    return Buffer.from(_encrypt(receiverRawPK, data, config_js_1.ECIES_CONFIG));
+    var encrypted = _encrypt(receiverRawPK, data, config_js_1.ECIES_CONFIG);
+    return types_js_1.IS_BUFFER_SUPPORTED ? Buffer.from(encrypted) : encrypted;
   }
   function _encrypt(receiverRawPK, data, config) {
     var curve = config.ellipticCurve;
@@ -5674,7 +5685,8 @@ var require_dist = __commonJS(function(exports2) {
     return (0, utils_1.concatBytes)(ephemeralPK, encrypted);
   }
   function decrypt(receiverRawSK, data) {
-    return Buffer.from(_decrypt(receiverRawSK, data));
+    var decrypted = _decrypt(receiverRawSK, data);
+    return types_js_1.IS_BUFFER_SUPPORTED ? Buffer.from(decrypted) : decrypted;
   }
   function _decrypt(receiverRawSK, data, config) {
     if (config === undefined) {
@@ -9811,7 +9823,10 @@ var import_node_crypto2 = __toESM(require("node:crypto"), 1);
 // cli/src/helpers/ecies.ts
 var import_eciesjs = __toESM(require_dist(), 1);
 import_eciesjs.ECIES_CONFIG.ellipticCurve = "ed25519";
-var eciesDecrypt = (privateKey, data) => import_eciesjs.decrypt(privateKey, data);
+var eciesDecrypt = (privateKey, data) => {
+  const plaintext = import_eciesjs.decrypt(privateKey, data);
+  return Buffer.from(plaintext.buffer, plaintext.byteOffset, plaintext.byteLength);
+};
 
 // cli/src/helpers/ed25519Der.ts
 var ED25519_OID = Buffer.from([43, 101, 112]);

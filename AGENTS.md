@@ -36,6 +36,7 @@ Notes:
   behavior. Keep the README simplicity- and DX-first, with a quick start and
   simple examples at the top and full documentation below. Keep SECURITY
   precise about guarantees, trade-offs, and the overall security model.
+- Clear owned data-key buffers in `finally` after encryption as well as decryption; validate success and failure paths without logging key bytes.
 - Keep `SECURITY.md` in sync with the implementation. Update it whenever you change cryptographic algorithms, key handling, file permissions, input validation, command execution, or the installation flow.
 - Encrypted environment names are cryptographic context, not just filenames.
   Use `dotenc env rename <source> <destination>` for renames; never move an
