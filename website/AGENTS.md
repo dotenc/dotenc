@@ -11,4 +11,4 @@ The marketing site is static HTML, CSS (compiled with Tailwind), and small vanil
 - Link to the full security model and platform guides rather than duplicating their implementation details. Do not promise that revocation erases previously known secrets.
 - Mobile navigation uses a native modal dialog with the same links as desktop. Preserve focus containment, Escape/backdrop closing, scroll restoration, safe-area spacing, and navigation without JavaScript.
 - Run `bun run build`, `bun run test`, and scoped Biome checks. Check desktop and mobile layouts, keyboard navigation, installation tabs, and clipboard feedback in the browser.
-- `bun run dev` serves port 3000. Generated `public/styles.css` and `dist/` are ignored; production CSS must come from the minified build, not a previous dev session.
+- `bun run dev` serves port 3000. Generated `public/styles.css` and `dist/` are ignored; production CSS must come from the minified build, not a previous dev session. Production CSS and JavaScript entrypoints use content-hashed filenames to prevent cached assets from crossing deployment versions.
