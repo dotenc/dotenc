@@ -31,6 +31,8 @@ Notes:
 - Prefer scoped checks in the package you changed before running broader repo checks.
 - Follow existing code patterns and let deterministic tools (Biome/tests/typecheck) catch style issues.
 - Do not commit real secrets, private keys, or local `.env` files. Use fixtures and temp directories.
+- Keep plaintext temporary files inside cleanup-protected scopes; test exit/failure
+  cleanup with real subprocesses, since mocking `process.exit` changes control flow.
 - Keep changes minimal and package-scoped unless the task explicitly spans multiple packages.
 - For every PR, check `README.md` and `SECURITY.md` against the actual product
   behavior. Keep the README simplicity- and DX-first, with a quick start and

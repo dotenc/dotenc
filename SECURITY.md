@@ -249,10 +249,11 @@ override contract.
 
 ```typescript
 // cli/src/commands/env/edit.ts
-const stat = await fs.stat(tempFilePath)
-await fs.writeFile(tempFilePath, Buffer.alloc(stat.size, 0))
+await secureEraseFile(tempFilePath)
 ```
 
+- Ordinary failures, including editor discovery, launch, nonzero exit, and
+  temporary-file write failures, run cleanup before the command exits nonzero.
 - Signal handlers for `SIGINT` and `SIGTERM` perform the same best-effort
   overwrite before exit. Filesystem snapshots, copy-on-write storage, flash
   wear leveling, abrupt process termination, and editor backups can still
