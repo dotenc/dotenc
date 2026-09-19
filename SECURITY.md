@@ -1095,6 +1095,16 @@ dependencies. Reassess these constraints with upstream fixes instead of removing
 them solely because the root audit is clean. Electron's embedded browser runtime
 also requires upstream release review beyond npm advisories.
 
+### CI dependency verification
+
+Pull requests run registry-advisory audits against all three committed dependency
+graphs: the root workspaces, VS Code extension, and README demo tools, including
+development dependencies. A failed audit blocks its CI check; audit results are
+point-in-time signals and do not prove the absence of vulnerabilities. CI and
+publication installs explicitly freeze their lockfiles, and extension checks
+install the independent extension graph. CI and npm publication checks default
+to read-only repository access; the publishing job retains its required OIDC permission.
+
 ## Vulnerability Reporting
 
 If you discover a security vulnerability in dotenc, please report it responsibly.

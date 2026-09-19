@@ -6,6 +6,9 @@ on:
       - main
       - beta
 
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -21,7 +24,7 @@ jobs:
           bun-version: '1.3.14'
 
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Lint
         run: bun run lint
@@ -40,7 +43,10 @@ jobs:
           bun-version: '1.3.14'
 
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
+
+      - name: Install independent extension dependencies
+        run: bun install --cwd vscode-extension --frozen-lockfile
 
       - name: Typecheck
         run: bun run typecheck
@@ -59,7 +65,10 @@ jobs:
           bun-version: '1.3.14'
 
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
+
+      - name: Install independent extension dependencies
+        run: bun install --cwd vscode-extension --frozen-lockfile
 
       - name: Run unit tests
         run: cd cli && bun run test:coverage
@@ -121,7 +130,7 @@ jobs:
           registry-url: "https://registry.npmjs.org/"
 
       - name: Install dependencies
-        run: cd cli && bun install
+        run: cd cli && bun install --frozen-lockfile
 
       - name: Check if version has been bumped
         id: version-check
