@@ -12,7 +12,7 @@ updating the lockfile.
 
 ## Prerequisites
 
-- Bun 1.3.14
+- Bun 1.4.2
 - Node 16 active on `PATH` (for Terminalizer's native PTY)
 - WebP tools (`gif2webp` and `webpmux`; installed by Homebrew's `webp` formula)
 - `git`, `ssh-keygen`, `nano`, and `expect`

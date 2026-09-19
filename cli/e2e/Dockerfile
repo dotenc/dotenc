@@ -1,4 +1,4 @@
-FROM oven/bun:1.3.14-slim
+FROM oven/bun:1.4.2-slim
 
 # Install openssh-client for ssh-keygen and expect for PTY-driven e2e flows
 RUN apt-get update && apt-get install -y openssh-client git expect && rm -rf /var/lib/apt/lists/*
@@ -7,7 +7,7 @@ WORKDIR /app
 RUN chown bun:bun /app
 
 # Copy workspace config for layer caching
-COPY --chown=bun:bun package.json bun.lockb ./
+COPY --chown=bun:bun package.json bun.lock ./
 COPY --chown=bun:bun cli/package.json cli/
 COPY --chown=bun:bun website/package.json website/
 
