@@ -2,30 +2,30 @@
 
 These scripts generate the animated terminal examples embedded in
 `cli/README.md`. Terminalizer is isolated here because version `0.12.0` uses a
-legacy native PTY and Electron renderer; it is not part of the root workspaces,
+native PTY and Electron renderer; it is not part of the root workspaces,
 normal installs, or CI rendering.
 
 The overrides keep Electron on the maintained 43.x patch line and enforce
-patched js-yaml and Undici versions in the authoring dependency tree. Run
+a Node 24-compatible PTY (0.14.1), and patched js-yaml and Undici versions in the authoring dependency tree. Run
 `bun audit --json` here separately from the root and extension audits when
 updating the lockfile.
 
 ## Prerequisites
 
 - Bun 1.4.2
-- Node 16 active on `PATH` (for Terminalizer's native PTY)
+- Node 24.21.0 or newer in the 24.x LTS line active on `PATH` (for Terminalizer's native PTY)
 - WebP tools (`gif2webp` and `webpmux`; installed by Homebrew's `webp` formula)
 - `git`, `ssh-keygen`, `nano`, and `expect`
 - A real terminal/TTY when recording
 
-Install the pinned authoring dependency with Node 16 active:
+Install the pinned authoring dependency with Node 24.21.0 or newer in the 24.x LTS line active:
 
 ```bash
 bun install --cwd scripts/readme-demos --frozen-lockfile
 ```
 
 The package postinstall uses Bun to download the pinned Electron binary while
-the active Node 16 runtime selects the matching native PTY ABI.
+the active Node 24 runtime selects the matching native PTY ABI.
 
 ## Regenerate
 

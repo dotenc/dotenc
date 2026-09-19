@@ -52,6 +52,7 @@ Bun temp files:
 
 ## Setup / Installs
 
+- Node development/CI baseline: `.node-version` (24.21.0). README demo authoring must use the patched Node 24 line and its compatible native PTY; do not restore the obsolete Node 16 requirement.
 - Bun version: `1.4.2` (verify with `bun --version`; run `bun upgrade` if needed)
 - Commit the root text `bun.lock`; use `bun install --frozen-lockfile` for reproducible verification. Rebuild `actions/diff/dist/index.js` when changing the pinned Bun compiler.
 - Root deps: `bun install`
