@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
+import { spawnSync } from "node:child_process"
 import crypto from "node:crypto"
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import fs from "node:fs/promises"
@@ -158,5 +159,80 @@ describe("editCommand", () => {
 			"utf-8",
 		)
 		expect(tmpRaw).toContain('"encryptedContent"')
+	})
+	test.each([
+		"nonzero exit",
+		"editor signal",
+		"editor discovery",
+		"editor launch",
+		"temporary write",
+		"temporary read",
+		"encryption failure",
+	])("cleans plaintext before exiting on %s", async (failure) => {
+		const scratch = path.join(workspace, "scratch")
+		await fs.mkdir(scratch, { mode: 0o700 })
+		const originalEnvelope = await fs.readFile(
+			path.join(workspace, ".env.test.enc"),
+		)
+		let editor = editorScriptPath
+		let setup = ""
+		if (failure === "editor discovery") {
+			await fs.mkdir(path.join(homeDir, ".dotenc"), { mode: 0o700 })
+			await fs.writeFile(
+				path.join(homeDir, ".dotenc", "config.json"),
+				JSON.stringify({ editor: "unsafe;editor" }),
+				{ mode: 0o600 },
+			)
+		} else if (failure === "editor launch") {
+			editor = path.join(workspace, "missing-editor")
+		} else if (failure === "temporary write") {
+			// A real partial plaintext write followed by an I/O failure.
+			setup = `
+import fs from "node:fs/promises";
+const write = fs.writeFile;
+fs.writeFile = async (...args) => {
+  await write(...args);
+  throw new Error("Synthetic partial write failure");
+};
+`
+		} else {
+			const script = {
+				"nonzero exit": "exit 7",
+				"editor signal": "kill -TERM $$",
+				"temporary read": 'rm "$1"',
+				"encryption failure": 'printf "UPDATED=1\\n" >> "$1"\nrm .env.test.enc',
+			}[failure]
+			await fs.writeFile(editorScriptPath, `#!/bin/sh\n${script}\n`, {
+				mode: 0o700,
+			})
+		}
+		const runner = path.join(workspace, "edit-runner.ts")
+		const commandPath = path.resolve(import.meta.dir, "../commands/env/edit.ts")
+		await fs.writeFile(
+			runner,
+			`${setup}\nconst { editCommand } = await import(${JSON.stringify(commandPath)}); await editCommand("test");\n`,
+		)
+		const result = spawnSync(process.execPath, [runner], {
+			cwd: workspace,
+			env: {
+				PATH: process.env.PATH,
+				HOME: homeDir,
+				TMPDIR: scratch,
+				EDITOR: editor,
+			},
+			encoding: "utf-8",
+			timeout: 15_000,
+		})
+		expect(result.error).toBeUndefined()
+		expect(result.status).toBe(1)
+		expect(result.stderr).toContain("Failed to edit environment")
+		expect(result.stdout).not.toContain("ORIGINAL=1")
+		expect(result.stderr).not.toContain("ORIGINAL=1")
+		expect(await fs.readdir(scratch)).toEqual([])
+		if (failure !== "encryption failure") {
+			expect(await fs.readFile(path.join(workspace, ".env.test.enc"))).toEqual(
+				originalEnvelope,
+			)
+		}
 	})
 })

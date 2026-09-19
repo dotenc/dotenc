@@ -9,6 +9,7 @@ import { decryptEnvironment } from "../../helpers/decryptEnvironment"
 import { encryptEnvironment } from "../../helpers/encryptEnvironment"
 import { getDefaultEditor } from "../../helpers/getDefaultEditor"
 import { getEnvironmentByName } from "../../helpers/getEnvironmentByName"
+import { secureEraseFile } from "../../helpers/secureEraseFile"
 import { splitCommand } from "../../helpers/splitCommand"
 import { validateEnvironmentName } from "../../helpers/validateEnvironmentName"
 import { chooseEnvironmentPrompt } from "../../prompts/chooseEnvironment"
@@ -68,21 +69,8 @@ ${separator}${content}`
 
 	const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "dotenc-"))
 	const tempFilePath = path.join(tempDir, `.env.${environmentName}`)
-	await fs.writeFile(tempFilePath, content, { encoding: "utf-8", mode: 0o600 })
-	const initialHash = createHash(content)
-
-	// Overwrite plaintext content with zeros before removing the temp file.
-	const secureErase = async () => {
-		try {
-			const stat = await fs.stat(tempFilePath)
-			await fs.writeFile(tempFilePath, Buffer.alloc(stat.size, 0))
-		} catch {
-			// File may not exist; best effort.
-		}
-	}
-
 	const cleanup = async () => {
-		await secureErase()
+		await secureEraseFile(tempFilePath)
 		await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {})
 	}
 
@@ -101,9 +89,13 @@ ${separator}${content}`
 	process.on("SIGINT", onSignal)
 	process.on("SIGTERM", onSignal)
 
-	const editorCommand = await getDefaultEditor()
-
 	try {
+		await fs.writeFile(tempFilePath, content, {
+			encoding: "utf-8",
+			mode: 0o600,
+		})
+		const initialHash = createHash(content)
+		const editorCommand = await getDefaultEditor()
 		const [editorExecutable, ...editorArgs] = splitCommand(editorCommand)
 		if (!editorExecutable) {
 			throw new Error("No editor command configured.")
@@ -119,8 +111,11 @@ ${separator}${content}`
 		}
 
 		if (result.status !== 0) {
-			console.error(`\nEditor exited with code ${result.status}`)
-			process.exit(1)
+			throw new Error(
+				result.signal
+					? `Editor terminated by signal ${result.signal}`
+					: `Editor exited with code ${result.status}`,
+			)
 		}
 
 		let newContent = await fs.readFile(tempFilePath, "utf-8")
@@ -145,7 +140,8 @@ ${separator}${content}`
 			)
 		}
 	} catch (error: unknown) {
-		console.error(`\nFailed to open editor: ${editorCommand}`)
+		process.exitCode = 1
+		console.error("\nFailed to edit environment.")
 		console.error(error instanceof Error ? error.message : String(error))
 	} finally {
 		process.removeListener("SIGINT", onSignal)
