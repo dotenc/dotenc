@@ -1106,3 +1106,13 @@ Instead, report via [GitHub Security Advisories](https://github.com/dotenc/doten
 - A description of the vulnerability and its potential impact
 - Steps to reproduce or a proof-of-concept
 - Any relevant environment details (OS, dotenc version, key type)
+
+### CI dependency verification
+
+Pull requests run registry-advisory audits against all three committed dependency
+graphs: the root workspaces, VS Code extension, and README demo tools, including
+development dependencies. A failed audit blocks its CI check; audit results are
+point-in-time signals and do not prove the absence of vulnerabilities. CI and
+publication installs explicitly freeze their lockfiles, and extension checks
+install the independent extension graph. CI and npm publication checks default
+to read-only repository access; the publishing job retains its required OIDC permission.

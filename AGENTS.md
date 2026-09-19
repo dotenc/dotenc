@@ -27,6 +27,7 @@ Notes:
 ## How (Working Rules)
 
 - Use `bun` for installs, scripts, tests, and builds.
+- CI installs must explicitly use `--frozen-lockfile`. Audit all three lockfile scopes (root, VS Code extension, README demos), including development dependencies. Root typechecks/tests also require the extension’s separate install.
 - Prefer scoped checks in the package you changed before running broader repo checks.
 - Follow existing code patterns and let deterministic tools (Biome/tests/typecheck) catch style issues.
 - Do not commit real secrets, private keys, or local `.env` files. Use fixtures and temp directories.
