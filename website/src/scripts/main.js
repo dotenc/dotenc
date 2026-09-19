@@ -109,7 +109,11 @@ if (menuToggle && navigation && mobileMenu) {
 		]
 		const first = controls[0]
 		const last = controls[controls.length - 1]
-		if (event.shiftKey && document.activeElement === first) {
+		if (
+			event.shiftKey &&
+			(document.activeElement === first ||
+				document.activeElement === mobileMenu.querySelector(".drawer-shell"))
+		) {
 			event.preventDefault()
 			last.focus()
 		} else if (!event.shiftKey && document.activeElement === last) {
