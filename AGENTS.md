@@ -52,7 +52,8 @@ Bun temp files:
 
 ## Setup / Installs
 
-- Bun version: `1.3.14` (verify with `bun --version`; run `bun upgrade` if needed)
+- Bun version: `1.4.2` (verify with `bun --version`; run `bun upgrade` if needed)
+- Commit the root text `bun.lock`; use `bun install --frozen-lockfile` for reproducible verification. Rebuild `actions/diff/dist/index.js` when changing the pinned Bun compiler.
 - Root deps: `bun install`
 - CLI deps: included via root workspace install (or `cd cli && bun install`)
 - Website deps: included via root workspace install (or `cd website && bun install`)

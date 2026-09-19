@@ -772,7 +772,7 @@ describe("Linux package publication manifest", () => {
 		expect(outputs).toContain(`source_run_id=${fixture.sourceRunId}\n`)
 		expect(outputs).toContain(`release_commit=${fixture.sourceCommit}\n`)
 		for (const packageGenerationInput of [
-			"bun.lockb",
+			"bun.lock",
 			"cli/package.json",
 			"cli/packaging",
 			"package.json",

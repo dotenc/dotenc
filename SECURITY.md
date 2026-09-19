@@ -21,6 +21,7 @@ This document describes the security model, cryptographic design, and operationa
 - [Linux Package Repository Trust Model](#linux-package-repository-trust-model)
 - [OCI Image Trust Model](#oci-image-trust-model)
 - [GitHub Actions Trust Model](#github-actions-trust-model)
+- [Build Runtime](#build-runtime)
 - [Known Limitations](#known-limitations)
 - [Development and publishing dependencies](#development-and-publishing-dependencies)
 - [Vulnerability Reporting](#vulnerability-reporting)
@@ -1062,6 +1063,15 @@ Actions runs the command that needs those values; otherwise, follow the
 provider-specific runbook for that provider's own runner.
 
 ---
+
+## Build Runtime
+
+Development, CI, container builds, and standalone compilation pin Bun 1.4.2.
+The root text `bun.lock` records the dependency graph for reproducible installs.
+Standalone releases embed the Bun runtime used at compilation; updating the
+build pin does not update binaries already installed by users. Those receive
+the new runtime only through a newly built dotenc release. npm installations
+run on the user-provided Node.js runtime, which must be kept patched separately.
 
 ## Known Limitations
 
