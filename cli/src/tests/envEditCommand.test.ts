@@ -48,12 +48,14 @@ describe("editCommand", () => {
 	let originalHomeEnv: string | undefined
 	let originalEditorEnv: string | undefined
 	let editorScriptPath: string
+	let originalExitCode: typeof process.exitCode
 
 	beforeEach(async () => {
 		workspace = mkdtempSync(path.join(os.tmpdir(), "dotenc-edit-workspace-"))
 		homeDir = mkdtempSync(path.join(os.tmpdir(), "dotenc-edit-home-"))
 		cwdSpy = spyOn(process, "cwd").mockReturnValue(workspace)
 		homedirSpy = spyOn(os, "homedir").mockReturnValue(homeDir)
+		originalExitCode = process.exitCode
 		originalPrivateKeyEnv = process.env.DOTENC_PRIVATE_KEY
 		originalHomeEnv = process.env.HOME
 		originalEditorEnv = process.env.EDITOR
@@ -119,6 +121,7 @@ describe("editCommand", () => {
 	})
 
 	afterEach(() => {
+		process.exitCode = originalExitCode
 		cwdSpy.mockRestore()
 		homedirSpy.mockRestore()
 		rmSync(workspace, { recursive: true, force: true })
@@ -233,6 +236,35 @@ fs.writeFile = async (...args) => {
 			expect(await fs.readFile(path.join(workspace, ".env.test.enc"))).toEqual(
 				originalEnvelope,
 			)
+		}
+	})
+	test.each([
+		"exit",
+		"signal",
+	])("reports editor %s failure after cleaning up", async (failure) => {
+		const scratch = path.join(workspace, "in-process-scratch")
+		await fs.mkdir(scratch, { mode: 0o700 })
+		await fs.writeFile(
+			editorScriptPath,
+			failure === "exit" ? "#!/bin/sh\nexit 7\n" : "#!/bin/sh\nkill -TERM $$\n",
+			{ mode: 0o700 },
+		)
+		const tmpdirSpy = spyOn(os, "tmpdir").mockReturnValue(scratch)
+		const errorSpy = spyOn(console, "error").mockImplementation(() => {})
+		try {
+			await editCommand("test")
+			expect(process.exitCode).toBe(1)
+			expect(errorSpy).toHaveBeenCalledWith("\nFailed to edit environment.")
+			expect(errorSpy).toHaveBeenCalledWith(
+				failure === "exit"
+					? "Editor exited with code 7"
+					: "Editor terminated by signal SIGTERM",
+			)
+			expect(await fs.readdir(scratch)).toEqual([])
+			expect(await decryptEnvironment("test")).toBe("ORIGINAL=1\n")
+		} finally {
+			tmpdirSpy.mockRestore()
+			errorSpy.mockRestore()
 		}
 	})
 })
