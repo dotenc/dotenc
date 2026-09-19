@@ -121,6 +121,9 @@ describe("editCommand", () => {
 	})
 
 	afterEach(() => {
+		// Bun 1.3.14/1.4.2 ignore undefined assignments to this non-configurable
+		// accessor. Restore an unset exit status as success so a prior error
+		// assertion cannot leave the runner exiting 1. Tests run with --isolate.
 		process.exitCode = originalExitCode ?? 0
 		cwdSpy.mockRestore()
 		homedirSpy.mockRestore()
