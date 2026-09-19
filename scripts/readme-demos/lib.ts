@@ -26,7 +26,7 @@ export const terminalizerBin = path.join(
 	"terminalizer",
 )
 
-const nodeVersionPattern = /^v16\./
+const nodeVersionPattern = /^v24\.(\d+)\.(\d+)$/
 
 export const parseSceneSelection = (value = "all"): Scene[] => {
 	if (value === "all") return [...scenes]
@@ -46,18 +46,19 @@ const commandOutput = (command: string, args: string[], env = process.env) => {
 	}
 }
 
-export const getNode16Path = () => {
+export const getNode24Path = () => {
 	const node = commandOutput("node", ["--version"])
-	if (node.status !== 0 || !nodeVersionPattern.test(node.stdout)) {
+	const match = nodeVersionPattern.exec(node.stdout)
+	if (node.status !== 0 || !match || Number(match[1]) < 21) {
 		throw new Error(
-			`Terminalizer 0.12.0 requires Node 16 for its native PTY on this project. ` +
-				`Activate Node 16 before recording or rendering (current: ${node.stdout || "unavailable"}).`,
+			`README demos require the patched Node 24 LTS line (24.21.0 or newer). ` +
+				`Activate Node 24.21.0 or newer in the 24.x line before recording or rendering (current: ${node.stdout || "unavailable"}).`,
 		)
 	}
 
 	const resolved = commandOutput("node", ["-p", "process.execPath"])
 	if (resolved.status !== 0 || !resolved.stdout) {
-		throw new Error("Could not resolve the active Node 16 executable.")
+		throw new Error("Could not resolve the active Node 24 executable.")
 	}
 	return path.dirname(resolved.stdout)
 }
@@ -65,7 +66,7 @@ export const getNode16Path = () => {
 export const assertTerminalizer = (env: NodeJS.ProcessEnv) => {
 	if (!existsSync(terminalizerBin)) {
 		throw new Error(
-			"Terminalizer is not installed. Run `bun install --cwd scripts/readme-demos --frozen-lockfile` with Node 16 active.",
+			"Terminalizer is not installed. Run `bun install --cwd scripts/readme-demos --frozen-lockfile` with Node 24.21.0 or newer in the 24.x line active.",
 		)
 	}
 
@@ -96,7 +97,7 @@ export const createToolEnvironment = async (
 	temporaryHome: string,
 	extra: Record<string, string> = {},
 ) => {
-	const nodeBin = getNode16Path()
+	const nodeBin = getNode24Path()
 	const bunBin = path.dirname(process.execPath)
 	const temporaryDirectory = path.join(temporaryHome, "tmp")
 	const configDirectory = path.join(temporaryHome, ".config")

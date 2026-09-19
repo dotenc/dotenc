@@ -1,12 +1,12 @@
 # syntax=docker/dockerfile:1.7
 
-ARG BUN_VERSION=1.3.14
+ARG BUN_VERSION=1.4.2
 ARG ALPINE_VERSION=3.24
 
 FROM --platform=$BUILDPLATFORM oven/bun:${BUN_VERSION}-slim AS build-base
 WORKDIR /repo
 
-COPY package.json bun.lockb bunfig.toml tsconfig.base.json ./
+COPY package.json bun.lock bunfig.toml tsconfig.base.json ./
 COPY cli/package.json cli/tsconfig.json cli/
 COPY website/package.json website/package.json
 

@@ -27,6 +27,7 @@ Notes:
 ## How (Working Rules)
 
 - Use `bun` for installs, scripts, tests, and builds.
+- CI installs must explicitly use `--frozen-lockfile`. Audit all three lockfile scopes (root, VS Code extension, README demos), including development dependencies. Root typechecks/tests also require the extension’s separate install.
 - Prefer scoped checks in the package you changed before running broader repo checks.
 - Follow existing code patterns and let deterministic tools (Biome/tests/typecheck) catch style issues.
 - Do not commit real secrets, private keys, or local `.env` files. Use fixtures and temp directories.
@@ -37,6 +38,7 @@ Notes:
   behavior. Keep the README simplicity- and DX-first, with a quick start and
   simple examples at the top and full documentation below. Keep SECURITY
   precise about guarantees, trade-offs, and the overall security model.
+- Clear owned data-key buffers in `finally` after encryption as well as decryption; validate success and failure paths without logging key bytes.
 - Keep `SECURITY.md` in sync with the implementation. Update it whenever you change cryptographic algorithms, key handling, file permissions, input validation, command execution, or the installation flow.
 - Encrypted environment names are cryptographic context, not just filenames.
   Use `dotenc env rename <source> <destination>` for renames; never move an
@@ -53,11 +55,15 @@ Bun temp files:
 
 ## Setup / Installs
 
-- Bun version: `1.3.14` (verify with `bun --version`; run `bun upgrade` if needed)
+- Node development/CI baseline: `.node-version` (24.21.0). README demo authoring must use the patched Node 24 line and its compatible native PTY; do not restore the obsolete Node 16 requirement.
+- Bun version: `1.4.2` (verify with `bun --version`; run `bun upgrade` if needed)
+- Commit the root text `bun.lock`; use `bun install --frozen-lockfile` for reproducible verification. Rebuild `actions/diff/dist/index.js` when changing the pinned Bun compiler.
 - Root deps: `bun install`
 - CLI deps: included via root workspace install (or `cd cli && bun install`)
 - Website deps: included via root workspace install (or `cd website && bun install`)
 - VS Code extension deps: `cd vscode-extension && bun install` (separate from root workspaces)
+- Dependency security checks must cover the root, `vscode-extension/`, and
+  `scripts/readme-demos/` lockfiles separately; a root audit does not include the latter two.
 
 ## Validation (Run What Matches Your Change)
 

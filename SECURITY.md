@@ -21,7 +21,9 @@ This document describes the security model, cryptographic design, and operationa
 - [Linux Package Repository Trust Model](#linux-package-repository-trust-model)
 - [OCI Image Trust Model](#oci-image-trust-model)
 - [GitHub Actions Trust Model](#github-actions-trust-model)
+- [Build Runtime](#build-runtime)
 - [Known Limitations](#known-limitations)
+- [Development and publishing dependencies](#development-and-publishing-dependencies)
 - [Vulnerability Reporting](#vulnerability-reporting)
 
 ---
@@ -81,7 +83,7 @@ Data key
 
 This means:
 - Only authorized users can decrypt the data key, and therefore the environment
-- Re-keying an environment (adding or revoking access) only re-encrypts the data key, not the environment contents
+- Adding or revoking access generates a fresh data key, re-encrypts the environment contents, and wraps the new key for every remaining or newly authorized recipient
 - Rotating the data key generates a new random key and re-encrypts all environment contents
 
 ### Algorithms
@@ -90,9 +92,13 @@ This means:
 |-----------|-----------|------------|
 | Environment encryption | AES-256-GCM | 96-bit random IV, 128-bit auth tag |
 | Additional Authenticated Data | Version 2 environment name bound to ciphertext | Prevents ciphertext swap across environment names; legacy v1 has no AAD |
-| Data key encryption (Ed25519 keys) | ECIES (`eciesjs` v0.4+) | X25519 ECDH + AES-GCM |
+| Data key encryption (Ed25519 keys) | ECIES (`eciesjs` 0.4.x, `ellipticCurve: "ed25519"`) | Ed25519 Edwards-point key agreement + HKDF-SHA256 + AES-256-GCM |
 | Data key encryption (RSA keys) | RSA-OAEP | SHA-256 |
 | Supported public key types | Ed25519, RSA ≥ 2048-bit | ECDSA and DSA are rejected |
+
+Ed25519 SSH keys are used in the library’s Edwards-curve mode; they are not
+converted to X25519 keys. This documents the existing envelope format and does
+not change the cryptographic scheme or stored ciphertext compatibility.
 
 **IV generation:** A fresh 12-byte random IV is generated for every encryption operation using Node.js `crypto.randomBytes()`. IVs are never reused.
 
@@ -110,10 +116,14 @@ readable without AAD for migration compatibility.
 
 ### Data Key Lifecycle
 
-1. On `dotenc env create` or `dotenc env edit`, a new 32-byte random data key is generated
+1. Creating, editing, encrypting, rotating, granting, or revoking access generates a new 32-byte random data key
 2. The data key is encrypted for each authorized public key and stored in the `.enc` file header
 3. The data key is never written to disk in plaintext
-4. On decryption, the data key is held in memory only for the duration of the operation, then explicitly zeroed
+4. Encryption and decryption data-key buffers are explicitly zeroed in `finally` blocks after use, including failure paths
+
+Zeroing reduces the lifetime of the owned mutable buffers. It cannot guarantee
+erasure of copies made by JavaScript, the crypto provider, the OS, or immutable
+plaintext strings.
 
 ---
 
@@ -353,8 +363,8 @@ coverage.
 Access in dotenc is enforced cryptographically, not by policy:
 
 - A user who is not in the authorized list for an environment cannot decrypt that environment's data key, and therefore cannot read the secrets
-- Granting access re-encrypts the data key for the new user's public key; no re-encryption of the environment contents is required
-- Revoking access removes the user's encrypted data key copy and re-encrypts the data key for all remaining users (requires the revoking user to have decrypt access)
+- Granting access decrypts the current contents, generates a fresh data key, re-encrypts the contents, and wraps the new key for the authorized recipient set including the new user
+- Revoking access decrypts the current contents, generates a fresh data key, re-encrypts the contents, and wraps the new key only for remaining recipients (requires the revoking user to have decrypt access)
 
 **Important limitation:** Revoking access changes the current environment files;
 it does not invalidate secrets already seen by the revoked user or rewrite old
@@ -1063,6 +1073,23 @@ provider-specific runbook for that provider's own runner.
 
 ---
 
+## Build Runtime
+
+Development, CI, container builds, and standalone compilation pin Bun 1.4.2.
+The root text `bun.lock` records the dependency graph for reproducible installs.
+Standalone releases embed the Bun runtime used at compilation; updating the
+build pin does not update binaries already installed by users. Those receive
+the new runtime only through a newly built dotenc release. npm installations
+run on the user-provided Node.js runtime, which must be kept patched separately.
+
+### Node.js authoring runtime
+
+CI and publication Node steps use the reviewed `.node-version` baseline
+(24.21.0). README demo authoring requires Node 24.21.0 or a newer 24.x patch
+and a compatible native PTY. This replaces the obsolete Node 16 authoring
+requirement. npm users supply and patch their own Node.js runtime; this build
+pin does not upgrade that runtime or the Node runtime hosted by GitHub Actions.
+
 ## Known Limitations
 
 - **dotenc does not prompt for passphrases.** To use passphrase-protected SSH keys, provide `DOTENC_PRIVATE_KEY_PASSPHRASE` in the environment. In interactive key selection flows (`dotenc init`, interactive `dotenc key add`), dotenc can also create an optional passwordless copy (for example `id_ed25519_passwordless`) after explicit user confirmation.
@@ -1083,6 +1110,27 @@ provider-specific runbook for that provider's own runner.
 - **No centralized policy engine.** Access control is enforced per-environment and per-repository, not across an organization.
 
 ---
+
+## Development and publishing dependencies
+
+The VS Code publishing/test tools and README demo renderer have independent
+lockfiles and are not included in the root dependency audit or the CLI runtime
+package. Audit the repository root, `vscode-extension/`, and
+`scripts/readme-demos/` separately with `bun audit --json`. Their package
+manifests enforce compatible patched versions for known vulnerable transitive
+dependencies. Reassess these constraints with upstream fixes instead of removing
+them solely because the root audit is clean. Electron's embedded browser runtime
+also requires upstream release review beyond npm advisories.
+
+### CI dependency verification
+
+Pull requests run registry-advisory audits against all three committed dependency
+graphs: the root workspaces, VS Code extension, and README demo tools, including
+development dependencies. A failed audit blocks its CI check; audit results are
+point-in-time signals and do not prove the absence of vulnerabilities. CI and
+publication installs explicitly freeze their lockfiles, and extension checks
+install the independent extension graph. CI and npm publication checks default
+to read-only repository access; the publishing job retains its required OIDC permission.
 
 ## Vulnerability Reporting
 

@@ -9,7 +9,7 @@ type PublicKeyInfo = {
 
 /**
  * Encrypts a data key using the appropriate algorithm for the given public key.
- * RSA: uses crypto.publicEncrypt with PKCS1 padding.
+ * RSA: uses RSA-OAEP with SHA-256.
  * Ed25519: uses ECIES (eciesjs) with raw 32-byte public key.
  */
 export const encryptDataKey = (
