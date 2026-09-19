@@ -121,7 +121,7 @@ describe("editCommand", () => {
 	})
 
 	afterEach(() => {
-		process.exitCode = originalExitCode
+		process.exitCode = originalExitCode ?? 0
 		cwdSpy.mockRestore()
 		homedirSpy.mockRestore()
 		rmSync(workspace, { recursive: true, force: true })
@@ -249,7 +249,8 @@ fs.writeFile = async (...args) => {
 			failure === "exit" ? "#!/bin/sh\nexit 7\n" : "#!/bin/sh\nkill -TERM $$\n",
 			{ mode: 0o700 },
 		)
-		const tmpdirSpy = spyOn(os, "tmpdir").mockReturnValue(scratch)
+		const originalTmpdir = process.env.TMPDIR
+		process.env.TMPDIR = scratch
 		const errorSpy = spyOn(console, "error").mockImplementation(() => {})
 		try {
 			await editCommand("test")
@@ -263,7 +264,8 @@ fs.writeFile = async (...args) => {
 			expect(await fs.readdir(scratch)).toEqual([])
 			expect(await decryptEnvironment("test")).toBe("ORIGINAL=1\n")
 		} finally {
-			tmpdirSpy.mockRestore()
+			if (originalTmpdir === undefined) delete process.env.TMPDIR
+			else process.env.TMPDIR = originalTmpdir
 			errorSpy.mockRestore()
 		}
 	})
