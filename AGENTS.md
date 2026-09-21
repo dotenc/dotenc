@@ -138,3 +138,4 @@ Coverage:
   `actions/wrapper-repos/setup-action/action.yml`; the setup action must not
   default to npm's mutable `latest` tag.
 - Validate both JS entrypoint (`dist/cli.js`) and compiled binary when changing CLI build/packaging behavior.
+- Verify releases against the merged commit: npm `gitHead`, the GitHub release tag, and checksum-matched published binaries. A successful merge alone does not confirm publication.
