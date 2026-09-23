@@ -128,6 +128,7 @@ Coverage:
 - The official operational skill is maintained separately in `dotenc/skills`; for dotenc development work, inspect and modify this repository directly instead of following consumer workflows from that skill.
 - `scripts/coverage-summary.sh` and `scripts/merge-lcov.ts` — coverage aggregation details
 - `docs/` — implementation references and deep dives (e.g. `docs/NESTING.md`)
+- `docs/plans/artifact-doctor.md` — artifact scanner contract, encoding/compression limits, redaction, and pre-release acceptance checks; keep incomplete scans distinct from successful scans.
 - `docs/plans/dotenc-doctor.md` — authoritative read-only doctor contract, finding and exit semantics, JSON redaction, and repair boundary.
 
 ## Release / Versioning Notes

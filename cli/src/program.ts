@@ -12,6 +12,12 @@ import {
 	renderDoctorJson,
 } from "./commands/doctor"
 import {
+	artifactDoctorCommand,
+	createArtifactDoctorFailureReport,
+	renderArtifactDoctorJson,
+	reportArtifactDoctorInvocationError,
+} from "./commands/doctorArtifacts"
+import {
 	_resolvePublicKeySelectionForCreate,
 	createCommand,
 } from "./commands/env/create"
@@ -279,10 +285,69 @@ const doctor = program
 	.description("diagnose local dotenc state without changing it")
 	.action(doctorCommand)
 
+const doctorArtifacts = doctor
+	.command("artifacts")
+	.exitOverride()
+	.argument("<directory>", "the build or publish directory to scan")
+	.addOption(
+		new Option(
+			"--secret-name <name>",
+			"scan for one environment value and its name (repeatable)",
+		).argParser(collectValues),
+	)
+	.addOption(new Option("--json", "output versioned machine-readable JSON"))
+	.addOption(new Option("--strict", "treat diagnostic warnings as failures"))
+	.description("scan deployment artifacts for high-confidence secret leaks")
+	.action((directory, options) => {
+		const parentOptions = doctor.opts()
+		const commandOptions = {
+			...(options.secretName
+				? { secretNames: options.secretName as string[] }
+				: {}),
+			json:
+				options.json === true ||
+				parentOptions.json === true ||
+				doctorJsonRequested,
+			strict: options.strict === true || parentOptions.strict === true,
+		}
+		if (
+			parentOptions.profile !== undefined ||
+			parentOptions.localOnly === true ||
+			parentOptions.all === true
+		) {
+			reportArtifactDoctorInvocationError(
+				commandOptions,
+				"Artifact scans cannot be combined with profile or repository-scope doctor options.",
+			)
+			return
+		}
+		return artifactDoctorCommand(directory, commandOptions)
+	})
+
 const doctorJsonRequested =
 	process.argv[2] === "doctor" && process.argv.slice(3).includes("--json")
-if (doctorJsonRequested) {
+const doctorArtifactsRequested = (() => {
+	if (process.argv[2] !== "doctor") return false
+	const args = process.argv.slice(3)
+	for (let index = 0; index < args.length; index += 1) {
+		const argument = args[index]
+		if (argument === "--profile") {
+			index += 1
+			continue
+		}
+		if (
+			argument?.startsWith("--profile=") ||
+			["--json", "--strict", "--local-only", "--all"].includes(argument)
+		) {
+			continue
+		}
+		return argument === "artifacts"
+	}
+	return false
+})()
+if (doctorJsonRequested || doctorArtifactsRequested) {
 	doctor.configureOutput({ writeErr: () => {} })
+	doctorArtifacts.configureOutput({ writeErr: () => {} })
 }
 
 const key = program.command("key").description("manage keys")
@@ -438,22 +503,38 @@ try {
 		if (error.exitCode === 0) process.exit(0)
 		if (process.argv[2] === "doctor") {
 			if (doctorJsonRequested) {
-				const doctorArgs = process.argv.slice(3)
-				const profileIndex = doctorArgs.indexOf("--profile")
-				const profile =
-					profileIndex === -1 ? undefined : doctorArgs[profileIndex + 1]
-				console.log(
-					renderDoctorJson(
-						createDoctorFailureReport(
-							{
-								all: doctorArgs.includes("--all"),
-								localOnly: doctorArgs.includes("--local-only"),
-								...(profile ? { profile } : {}),
-								json: true,
-							},
-							"invocation.invalid",
+				if (doctorArtifactsRequested) {
+					console.log(
+						renderArtifactDoctorJson(
+							createArtifactDoctorFailureReport(
+								{ json: true },
+								"invocation.invalid",
+							),
 						),
-					),
+					)
+				} else {
+					const doctorArgs = process.argv.slice(3)
+					const profileIndex = doctorArgs.indexOf("--profile")
+					const profile =
+						profileIndex === -1 ? undefined : doctorArgs[profileIndex + 1]
+					console.log(
+						renderDoctorJson(
+							createDoctorFailureReport(
+								{
+									all: doctorArgs.includes("--all"),
+									localOnly: doctorArgs.includes("--local-only"),
+									...(profile ? { profile } : {}),
+									json: true,
+								},
+								"invocation.invalid",
+							),
+						),
+					)
+				}
+			} else if (doctorArtifactsRequested) {
+				reportArtifactDoctorInvocationError(
+					{},
+					"The artifact doctor invocation is invalid. Use doctor artifacts --help for usage.",
 				)
 			}
 			process.exit(2)

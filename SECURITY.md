@@ -574,6 +574,67 @@ personal-environment creation command is suggested only after complete,
 non-shallow local history finds no recoverable revision, and the finding states
 that creation starts empty and cannot recover prior values.
 
+### Deployment Artifact Diagnostics
+
+`dotenc doctor artifacts <dir>` is a separate, content-reading diagnostic for a
+generated build or publish directory. It does not decrypt dotenc environments
+or read arbitrary process-environment values. It always searches artifact bytes
+for known dotenc bootstrap variable names and compares any currently active
+bootstrap values in literal and supported encoded forms. Additional application
+values are compared only when their environment-variable names are explicitly selected with repeatable
+`--secret-name` options. Selected and active bootstrap values must encode to
+between 8 bytes and 1 MiB; values outside that range make the invocation
+incomplete instead of being silently skipped or treated as high-confidence
+matches.
+
+The report never contains the selected names or values, matched bytes, file
+contents, private-key material, or absolute paths. It emits only typed generic
+finding categories, counts, and normalized paths relative to the selected
+artifact directory. Paths containing a known name or value representation are
+omitted, including paths attached to incomplete-scan findings. Temporary
+pattern, chunk, and overlap buffers are best-effort zeroed after use; JavaScript strings inherited from the process
+environment remain subject to the runtime's ordinary memory lifecycle.
+
+The scanner compares selected and bootstrap values literally and in common
+JSON/JavaScript escaped-string, URI-component percent-encoded, base64 (padded
+and unpadded), base64url, lower/uppercase hexadecimal, and fully Unicode-escaped
+forms. Transformations are finite and non-recursive; the aggregate pattern
+budget is 16 MiB, and exceeding it is an invalid invocation (exit `2`).
+
+The scanner fails on supported selected or bootstrap value matches, plaintext
+`.env` filenames, and recognizable OpenSSH or PEM private-key headers. A
+variable-name match is a warning because bundled code may intentionally refer
+to a runtime-injected value. `--strict` promotes warnings to exit `1` for CI.
+The scanner is a byte-pattern defense, not an entropy classifier. Arbitrary
+fragmentation, mixed/nested encodings, encryption, unsupported transformations,
+and unknown containers can evade it and require provider-specific review.
+
+Gzip is identified by suffix or magic bytes, and Brotli by `.br` suffix.
+Decompression uses the runtime's bounded zlib APIs in memory, with at most
+16 MiB compressed input and 32 MiB expanded output per file, also bounded by
+the remaining overall byte budget. Raw and expanded bytes both count toward
+the 512 MiB total. Recognized ZIP, tar, 7z, RAR, bzip2, xz and zstd containers,
+nested compression, malformed streams, and exceeded bounds make the scan
+incomplete even without `--strict`. No archive members are extracted or
+executed. Unlabelled Brotli and unrecognized containers are not detected by
+magic; inspect unpacked output before packaging. Decoder-owned internal memory
+and generated strings follow runtime memory management; owned input/output
+buffers are best-effort zeroed. Failed decoders conservatively consume their full
+output allowance from the shared budget; successful byte counts remain separate
+from that reservation.
+
+Scan a trusted build directory after all writers have stopped; the checks are
+not a filesystem snapshot or a sandbox against concurrent adversarial ancestor
+replacement. The root must be a real directory. Nested symlinks and non-regular
+entries are never followed; they make the scan incomplete. Regular files are opened with
+no-follow and non-blocking flags where supported, checked against their initial
+device and inode, streamed in bounded chunks, and checked again for size and
+identity changes. Directory enumeration stops at the entry bound without first
+materializing the whole directory. Traversal limits directories, directory entries, total
+entries, files, individual file bytes, total bytes, selected secret names, and
+reported paths. Any unsafe entry, race, read failure, or exceeded bound makes
+the report incomplete and exits `2` instead of producing a clean result.
+
 ### Recursive Environment Discovery
 
 Batch operations (`env rotate --all`, `auth purge`) recursively walk the project tree to find all `.env.*.enc` files. The following directories are explicitly excluded from this walk to avoid processing build artifacts or dependency caches: `node_modules`, `.git`, `dist`, `build`, `.next`, `coverage`, `vendor`.
