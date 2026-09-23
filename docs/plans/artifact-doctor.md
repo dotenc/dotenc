@@ -110,13 +110,17 @@ implementation status alone does not establish publication.
 ## Validation record — 2026-09-22
 
 - Bun 1.4.2 with a frozen root dependency install; root lint and CLI typecheck passed.
-- Full isolated CLI coverage suite: 849 tests passed, zero failures; 91.70% line
+- Full isolated CLI coverage suite: 852 tests passed, zero failures; 91.70% line
   coverage overall, 100% lines/functions for the artifact command, and 95.64%
   lines / 100% functions for the artifact scanner.
 - CLI build and Node entrypoint version/help passed. Compiled Node CLI smoke
   verified clean, gzip-leak, Brotli-leak, and unsupported-ZIP cases with the
   expected 0/1/2 exits, sanitized JSON, and no generated files. A separate Node
   smoke rejected gzip expansion above 32 MiB with exit `2`.
+- CodeRabbit follow-up: invalid options preceding `artifacts` preserve the
+  artifact JSON schema and sanitized human diagnostics. Both regressions failed
+  before the fix and pass afterward; a profile named `artifacts` remains a
+  parent-doctor invocation.
 - This feature does not include a version bump or publication.
 
 API reference: the [Node zlib documentation](https://nodejs.org/api/zlib.html)

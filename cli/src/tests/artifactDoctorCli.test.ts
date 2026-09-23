@@ -15,7 +15,7 @@ const fixture = async () => {
 	return root
 }
 
-const invoke = (cwd: string, args: string[]) =>
+const invoke = (cwd: string, args: readonly string[]) =>
 	spawnSync(process.execPath, [cli, "doctor", ...args], {
 		cwd,
 		env: {
@@ -78,6 +78,7 @@ describe("artifact doctor CLI integration", () => {
 	test.each(
 		[
 			["artifacts", "--json"],
+			["--unknown-private-option", "artifacts", "output", "--json"],
 			["artifacts", "output", "--secret-name", "--json"],
 			["artifacts", "output", "--secret-name", "PRIVATE-NAME", "--json"],
 			["artifacts", "output", "--unknown-private-option", "--json"],
@@ -102,17 +103,30 @@ describe("artifact doctor CLI integration", () => {
 		expect(result.stdout).not.toContain("unknown-private-option")
 	})
 
-	test("does not echo unknown options in human diagnostics", async () => {
+	test.each([
+		{ args: ["artifacts", "output", "--synthetic-sensitive-argument"] },
+		{ args: ["--synthetic-sensitive-argument", "artifacts", "output"] },
+	])("does not echo unknown options in human diagnostics for %j", async ({
+		args,
+	}) => {
+		const root = await fixture()
+		const result = invoke(root, args)
+		expect(result.status).toBe(2)
+		expect(result.stdout).toBe("")
+		expect(result.stderr).not.toContain("synthetic-sensitive-argument")
+		expect(result.stderr).toContain("artifact doctor invocation is invalid")
+	})
+
+	test("does not mistake the profile value artifacts for the subcommand", async () => {
 		const root = await fixture()
 		const result = invoke(root, [
+			"--profile",
 			"artifacts",
-			"output",
-			"--synthetic-sensitive-argument",
+			"--unknown-option",
+			"--json",
 		])
 		expect(result.status).toBe(2)
-		expect(result.stdout + result.stderr).not.toContain(
-			"synthetic-sensitive-argument",
-		)
-		expect(result.stderr).toContain("invocation is invalid")
+		expect(result.stderr).toBe("")
+		expect(JSON.parse(result.stdout).command).toBe("doctor")
 	})
 })

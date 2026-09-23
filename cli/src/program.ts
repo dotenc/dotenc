@@ -335,12 +335,9 @@ const doctorArtifactsRequested = (() => {
 			index += 1
 			continue
 		}
-		if (
-			argument?.startsWith("--profile=") ||
-			["--json", "--strict", "--local-only", "--all"].includes(argument)
-		) {
-			continue
-		}
+		// Classify invalid artifact invocations too, before Commander reports
+		// unknown options. Keep their errors in the sanitized artifact format.
+		if (argument?.startsWith("-")) continue
 		return argument === "artifacts"
 	}
 	return false
