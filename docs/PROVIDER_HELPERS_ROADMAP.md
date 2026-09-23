@@ -89,23 +89,32 @@ Shipped local key-source integration:
 
 ### Artifact doctor
 
-Planned command:
+Status: implemented; not released. The detailed
+contract and acceptance checklist are in [the artifact-doctor plan](./plans/artifact-doctor.md).
+
+Command:
 
 ```bash
 dotenc doctor artifacts <dir>
 ```
 
-Initial checks:
+Supported checks:
 
 - committed or generated `.env` files in publish/build directories
-- OpenSSH private key headers
-- known dotenc bootstrap variable names
-- configured secret names from an explicit allowlist
-- obvious multiline key material in generated JavaScript, JSON, HTML, and text
-  files
+- OpenSSH and PEM private-key headers
+- known dotenc bootstrap variable names and active bootstrap values
+- explicitly selected environment-variable names and literal/common encoded values through
+  repeatable `--secret-name <name>` options
+- obvious multiline key material in generated JavaScript, JSON, HTML, text,
+  and other regular files
+- bounded inspection of gzip and Brotli web assets; recognized unsupported
+  archives and nested compression produce an incomplete scan
 
-The doctor should be conservative: fail on high-confidence leaks, report
-warnings for ambiguous matches, and never print full secret values.
+The scanner is bounded, does not follow symlinks, and never prints selected
+secret names or values. High-confidence leaks fail the command. Variable-name
+matches are warnings because runtime references can be intentional; `--strict`
+promotes warnings for CI. An unsafe or incomplete scan exits `2` rather than
+claiming the artifacts are clean.
 
 ## Railpack integration
 
