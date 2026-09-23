@@ -121,6 +121,9 @@ implementation status alone does not establish publication.
   artifact JSON schema and sanitized human diagnostics. Both regressions failed
   before the fix and pass afterward; a profile named `artifacts` remains a
   parent-doctor invocation.
+- Linux CI exposed intermittent dangling-process timeouts in synchronous CLI
+  test invocations. The subprocess harness now drains stdout/stderr concurrently,
+  awaits exit explicitly, and kills timed-out children before fixture cleanup.
 - This feature does not include a version bump or publication.
 
 API reference: the [Node zlib documentation](https://nodejs.org/api/zlib.html)

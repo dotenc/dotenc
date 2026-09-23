@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { spawnSync } from "node:child_process"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
@@ -15,8 +14,10 @@ const fixture = async () => {
 	return root
 }
 
-const invoke = (cwd: string, args: readonly string[]) =>
-	spawnSync(process.execPath, [cli, "doctor", ...args], {
+// Drain both pipes and await exit explicitly. Synchronous child-process waits
+// can leave dangling-process bookkeeping in Bun's isolated Linux test runner.
+const invoke = async (cwd: string, args: readonly string[]) => {
+	const child = Bun.spawn([process.execPath, cli, "doctor", ...args], {
 		cwd,
 		env: {
 			PATH: process.env.PATH,
@@ -24,9 +25,24 @@ const invoke = (cwd: string, args: readonly string[]) =>
 			NO_COLOR: "1",
 			TEST_SECRET: secret,
 		},
-		encoding: "utf8",
-		timeout: 10_000,
+		stdin: "ignore",
+		stdout: "pipe",
+		stderr: "pipe",
+		timeout: 4_000,
+		killSignal: "SIGKILL",
 	})
+	try {
+		const [status, stdout, stderr] = await Promise.all([
+			child.exited,
+			new Response(child.stdout).text(),
+			new Response(child.stderr).text(),
+		])
+		return { status, stdout, stderr }
+	} finally {
+		if (child.exitCode === null) child.kill("SIGKILL")
+		await child.exited
+	}
+}
 
 afterEach(async () => {
 	for (const root of roots.splice(0))
@@ -40,7 +56,7 @@ describe("artifact doctor CLI integration", () => {
 			path.join(root, "output", "bundle.js"),
 			Buffer.from(secret).toString("base64"),
 		)
-		const result = invoke(root, [
+		const result = await invoke(root, [
 			"artifacts",
 			"output",
 			"--secret-name",
@@ -67,7 +83,7 @@ describe("artifact doctor CLI integration", () => {
 			path.join(root, "output", "bundle.js"),
 			"process.env.DOTENC_PRIVATE_KEY_BASE64",
 		)
-		const result = invoke(root, args)
+		const result = await invoke(root, args)
 		expect(result.status).toBe(1)
 		expect(result.stderr).toBe("")
 		expect(JSON.parse(result.stdout).findings[0].id).toBe(
@@ -91,7 +107,7 @@ describe("artifact doctor CLI integration", () => {
 		args,
 	}) => {
 		const root = await fixture()
-		const result = invoke(root, args)
+		const result = await invoke(root, args)
 		expect(result.status).toBe(2)
 		expect(result.stderr).toBe("")
 		const report = JSON.parse(result.stdout)
@@ -110,7 +126,7 @@ describe("artifact doctor CLI integration", () => {
 		args,
 	}) => {
 		const root = await fixture()
-		const result = invoke(root, args)
+		const result = await invoke(root, args)
 		expect(result.status).toBe(2)
 		expect(result.stdout).toBe("")
 		expect(result.stderr).not.toContain("synthetic-sensitive-argument")
@@ -119,7 +135,7 @@ describe("artifact doctor CLI integration", () => {
 
 	test("does not mistake the profile value artifacts for the subcommand", async () => {
 		const root = await fixture()
-		const result = invoke(root, [
+		const result = await invoke(root, [
 			"--profile",
 			"artifacts",
 			"--unknown-option",
