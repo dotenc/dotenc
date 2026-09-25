@@ -1,0 +1,37 @@
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap");
+
+:root {
+	--sl-font: "Manrope", sans-serif;
+	--sl-font-mono: "IBM Plex Mono", monospace;
+	--sl-color-accent-low: #123e35;
+	--sl-color-accent: #36efb4;
+	--sl-color-accent-high: #8ff9d5;
+	--sl-color-bg: #101a2e;
+	--sl-color-bg-nav: #101a2e;
+	--sl-color-bg-sidebar: #101a2e;
+	--sl-content-width: 49rem;
+	--sl-text-h1: 2.65rem;
+}
+:root[data-theme="light"] {
+	--sl-color-accent-low: #e8eeff;
+	--sl-color-accent: #0749f5;
+	--sl-color-accent-high: #0835a6;
+	--sl-color-bg: #ffffff;
+	--sl-color-bg-nav: #ffffff;
+	--sl-color-bg-sidebar: #f6f8fc;
+	--sl-color-text: #34405a;
+}
+h1, h2, h3, .site-title { letter-spacing: -0.035em; }
+h1 { font-weight: 800; line-height: 1.15; }
+.site-title { font-weight: 800; }
+.site-title img { height: 2rem; width: 2rem; padding: 0.25rem; background: #0749f5; border-radius: 0.45rem; box-sizing: content-box; }
+.sl-markdown-content a { text-underline-offset: 0.2em; }
+.sl-markdown-content :is(pre, .expressive-code) { border-radius: 0.65rem; }
+.sl-markdown-content table { font-size: 0.9rem; }
+a:focus-visible, button:focus-visible, select:focus-visible {
+	outline: 3px solid #36efb4;
+	outline-offset: 3px;
+}
+:root[data-theme="light"] :is(a, button, select):focus-visible { outline-color: #147754; }
+::selection { background: #36efb4; color: #111c35; }
+@media (max-width: 50rem) { :root { --sl-text-h1: 2rem; } }

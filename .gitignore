@@ -3,3 +3,10 @@
 # Website build output
 website/dist
 website/public/styles.css
+
+# Documentation build and generated views of canonical sources
+docs-site/node_modules/
+docs-site/dist/
+docs-site/.astro/
+docs-site/src/content/docs/imported/
+docs-site/public/
