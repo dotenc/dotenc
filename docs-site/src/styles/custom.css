@@ -26,7 +26,6 @@ h1 { font-weight: 800; line-height: 1.15; }
 .site-title { font-weight: 800; }
 .site-title img { height: 2rem; width: 2rem; padding: 0.25rem; background: #0749f5; border-radius: 0.45rem; box-sizing: content-box; }
 .sl-markdown-content a { text-underline-offset: 0.2em; }
-.sl-markdown-content :is(pre, .expressive-code) { border-radius: 0.65rem; }
 .sl-markdown-content table { font-size: 0.9rem; }
 a:focus-visible, button:focus-visible, select:focus-visible {
 	outline: 3px solid #36efb4;

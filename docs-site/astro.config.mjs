@@ -22,6 +22,9 @@ export default defineConfig({
 				baseUrl: "https://github.com/dotenc/dotenc/edit/main/docs-site/",
 			},
 			customCss: ["./src/styles/custom.css"],
+			expressiveCode: {
+				styleOverrides: { borderRadius: "0.65rem" },
+			},
 			sidebar: [
 				{
 					label: "Start here",

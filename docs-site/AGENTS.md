@@ -18,6 +18,10 @@ mounted at `/docs/` inside the existing GitHub Pages artifact.
   notices until a release containing it has been independently verified.
 - Preserve the blue/mint brand and keyboard/mobile usability. Test local search
   on the built preview: Starlight does not run Pagefind search in development.
+  Configure code-block corners through Expressive Code `styleOverrides` so the
+  title bar and code area share one frame; avoid overriding `pre` radii in CSS.
+  Keep `astro build --force` in the production build to refresh cached Markdown
+  when Expressive Code configuration changes its generated stylesheet hashes.
 - Validation: root `bun run docs:check`, `bun run docs:test`,
   `bun run --cwd docs-site validate:cli`, `bun run site:build`,
   `bun run --cwd docs-site validate:links`, and `bun run lint`.

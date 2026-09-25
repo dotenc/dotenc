@@ -5,7 +5,7 @@
 	"scripts": {
 		"content:prepare": "bun scripts/prepare.ts",
 		"dev": "bun run content:prepare && astro dev --host 127.0.0.1 --port 4321",
-		"build": "bun run content:prepare && astro build",
+		"build": "bun run content:prepare && astro build --force",
 		"check": "bun run content:prepare && astro check",
 		"test": "bun test --isolate tests",
 		"validate:links": "bun scripts/check-links.ts",
