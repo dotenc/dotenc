@@ -10,6 +10,7 @@ RUN chown bun:bun /app
 COPY --chown=bun:bun package.json bun.lock ./
 COPY --chown=bun:bun cli/package.json cli/
 COPY --chown=bun:bun website/package.json website/
+COPY --chown=bun:bun docs-site/package.json docs-site/
 
 USER bun
 
