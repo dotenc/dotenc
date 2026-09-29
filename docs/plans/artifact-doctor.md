@@ -1,6 +1,6 @@
 # Artifact doctor implementation plan
 
-Status: implemented; not released.
+Status: implemented; included in CLI 0.15.0.
 Compared with the provider-helper roadmap on 2026-09-22.
 
 ## Purpose and scope

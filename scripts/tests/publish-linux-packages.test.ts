@@ -1003,7 +1003,7 @@ describe("Linux package publication manifest", () => {
 			)
 		}
 
-		fixture.release.tag_name = "v0.15.0"
+		fixture.release.tag_name = `v${fixture.version}-stale`
 		const staleReleaseResult = fixture.runScript(recoveryVerification, {
 			extraEnvironment: recoveryEnvironment,
 		})

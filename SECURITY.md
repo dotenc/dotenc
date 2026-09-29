@@ -962,6 +962,11 @@ Security properties:
 - **Release-built image** — the image is built from `cli/Dockerfile` by the
   release workflow after CLI version bumps or an authorized image-only manual
   dispatch.
+- **Distribution updates** — CI and release builds refresh base images and OS
+  packages, then enforce the reviewed package floors in
+  `scripts/check-image-security.sh`. This targeted gate is not a complete OS
+  vulnerability scan; see [OCI image security](docs/OCI_IMAGE.md#security-maintenance)
+  for sources and remaining vendor limitations.
 - **Variant separation** — default tags contain the glibc binary; `-alpine`
   tags contain the musl binary. Copy only the variant matching the application
   image's libc.
@@ -999,7 +1004,7 @@ implementation actions in `actions/`, which are thin wrappers around the dotenc
 CLI:
 
 - `actions/setup` installs `@dotenc/cli` through npm. Its default is the exact
-  CLI package version shipped with this repository (`0.14.2`), not npm's
+  CLI package version shipped with this repository (`0.15.0`), not npm's
   mutable `latest` tag. Pin the action ref to a commit when workflows also need
   an immutable action implementation.
 - `actions/run` writes the requested command to a temporary script and executes
