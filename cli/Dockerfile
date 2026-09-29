@@ -9,6 +9,7 @@ WORKDIR /repo
 COPY package.json bun.lock bunfig.toml tsconfig.base.json ./
 COPY cli/package.json cli/tsconfig.json cli/
 COPY website/package.json website/package.json
+COPY docs-site/package.json docs-site/package.json
 
 RUN bun install --frozen-lockfile
 

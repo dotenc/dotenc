@@ -3,7 +3,7 @@ name: Deploy Website
 on:
   push:
     branches: [main]
-    paths: ["website/**"]
+    paths: ["website/**", "docs-site/**", "docs/**", "SECURITY.md", "vscode-extension/README.md", "cli/src/**", "cli/package.json", "package.json", "bun.lock", ".node-version", ".github/workflows/deploy-website.yml"]
   workflow_dispatch:
 
 permissions:
@@ -27,11 +27,18 @@ jobs:
         with:
           bun-version: '1.4.2'
 
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .node-version
+
       - name: Install dependencies
-        run: cd website && bun install --frozen-lockfile
+        run: bun install --frozen-lockfile
 
       - name: Build website
-        run: cd website && bun run build
+        run: bun run site:build
+
+      - name: Check built links
+        run: bun run --cwd docs-site validate:links
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1

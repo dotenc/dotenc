@@ -21,7 +21,12 @@
 			"vscode-extension/**/*.json",
 			"*.json",
 			"!!**/vscode-extension/.vscode-test",
-			"!!**/vscode-extension/node_modules"
+			"!!**/vscode-extension/node_modules",
+			"docs-site/scripts/**/*.ts",
+			"docs-site/tests/**/*.ts",
+			"docs-site/*.json",
+			"docs-site/*.mjs",
+			"docs-site/src/*.ts"
 		]
 	},
 	"formatter": {

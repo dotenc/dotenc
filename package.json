@@ -7,7 +7,8 @@
 	"packageManager": "bun@1.4.2",
 	"workspaces": [
 		"cli",
-		"website"
+		"website",
+		"docs-site"
 	],
 	"scripts": {
 		"lint": "biome check",
@@ -27,7 +28,13 @@
 		"coverage:summary": "bash ./scripts/coverage-summary.sh",
 		"coverage:summary:full": "bash ./scripts/coverage-summary.sh --include-e2e-cli",
 		"test:coverage": "(cd cli && bun run test:coverage) && (cd vscode-extension && bun run test:coverage) && bun run coverage:summary",
-		"test:coverage:full": "bun run test:coverage && (cd cli && bun run test:e2e:coverage) && bun run coverage:summary:full"
+		"test:coverage:full": "bun run test:coverage && (cd cli && bun run test:e2e:coverage) && bun run coverage:summary:full",
+		"docs:dev": "bun run --cwd docs-site dev",
+		"docs:build": "bun run --cwd docs-site build",
+		"docs:check": "bun run --cwd docs-site check",
+		"docs:test": "bun run --cwd docs-site test",
+		"site:build": "bun run --cwd website build && bun run docs:build && bun docs-site/scripts/assemble.ts",
+		"site:preview": "bun docs-site/scripts/preview.ts"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.4.1"

@@ -15,13 +15,14 @@ Never weaken security for convenience. Within those guarantees, treat avoidable 
 
 - `cli/` — Bun + TypeScript CLI published as `@dotenc/cli` (`dotenc` command)
 - `vscode-extension/` — VS Code extension that depends on the installed `dotenc` CLI
-- `website/` — marketing/docs website build; see `website/AGENTS.md` for design and validation guidance
+- `website/` — marketing website build; see `website/AGENTS.md` for design and validation guidance
+- `docs-site/` — Astro Starlight public documentation; see `docs-site/AGENTS.md` for content sources and validation
 - `scripts/` — coverage merge/summary scripts used by root test coverage workflows
 - `docs/` — implementation references and deep dives (read only when relevant)
 
 Notes:
 
-- Root workspaces are `cli` and `website` only (`vscode-extension/` is managed separately).
+- Root workspaces are `cli`, `website`, and `docs-site` (`vscode-extension/` is managed separately).
 - Package versions are independent (`cli/package.json`, `vscode-extension/package.json`, etc.).
 
 ## How (Working Rules)
@@ -36,7 +37,7 @@ Notes:
 - Keep changes minimal and package-scoped unless the task explicitly spans multiple packages.
 - For every PR, check `README.md` and `SECURITY.md` against the actual product
   behavior. Keep the README simplicity- and DX-first, with a quick start and
-  simple examples at the top and full documentation below. Keep SECURITY
+  simple examples at the top and links to the full documentation. Keep SECURITY
   precise about guarantees, trade-offs, and the overall security model.
 - Clear owned data-key buffers in `finally` after encryption as well as decryption; validate success and failure paths without logging key bytes.
 - Keep `SECURITY.md` in sync with the implementation. Update it whenever you change cryptographic algorithms, key handling, file permissions, input validation, command execution, or the installation flow.
@@ -130,6 +131,7 @@ Coverage:
 - `docs/` — implementation references and deep dives (e.g. `docs/NESTING.md`)
 - `docs/plans/artifact-doctor.md` — artifact scanner contract, encoding/compression limits, redaction, and pre-release acceptance checks; keep incomplete scans distinct from successful scans.
 - `docs/plans/dotenc-doctor.md` — authoritative read-only doctor contract, finding and exit semantics, JSON redaction, and repair boundary.
+- `docs/plans/documentation-site.md` — docs framework decision, GitHub Pages integration, README migration, and skill-link compatibility.
 
 ## Release / Versioning Notes
 
