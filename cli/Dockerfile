@@ -54,8 +54,12 @@ LABEL org.opencontainers.image.title="dotenc CLI (Alpine)" \
 	org.opencontainers.image.version="${DOTENC_VERSION}" \
 	org.opencontainers.image.revision="${VCS_REF}"
 
+COPY scripts/check-image-security.sh /usr/local/bin/check-image-security
+
 RUN set -eux; \
+	apk upgrade --no-cache; \
 	apk add --no-cache ca-certificates openssh-client libstdc++ libgcc; \
+	sh /usr/local/bin/check-image-security; \
 	addgroup -g 10001 -S dotenc; \
 	adduser -u 10001 -S -G dotenc -h /home/dotenc -s /sbin/nologin dotenc; \
 	mkdir -p /workspace; \
@@ -84,9 +88,13 @@ LABEL org.opencontainers.image.title="dotenc CLI" \
 	org.opencontainers.image.version="${DOTENC_VERSION}" \
 	org.opencontainers.image.revision="${VCS_REF}"
 
+COPY scripts/check-image-security.sh /usr/local/bin/check-image-security
+
 RUN set -eux; \
 	apt-get update; \
+	DEBIAN_FRONTEND=noninteractive apt-get upgrade -y --no-install-recommends; \
 	DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates openssh-client; \
+	sh /usr/local/bin/check-image-security; \
 	rm -rf /var/lib/apt/lists/*; \
 	groupadd --gid 10001 dotenc; \
 	useradd --uid 10001 --gid dotenc --create-home --home-dir /home/dotenc --shell /usr/sbin/nologin dotenc; \

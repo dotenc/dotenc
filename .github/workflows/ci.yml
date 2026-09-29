@@ -60,6 +60,9 @@ jobs:
           scripts/alpine-package-tool.sh
           scripts/verify-packages-edge.sh
 
+      - name: Validate image security gate
+        run: sh -n scripts/check-image-security.sh && shellcheck -s sh scripts/check-image-security.sh
+
       - name: Validate website
         run: |
           sh -n website/public/install.sh
@@ -169,7 +172,7 @@ jobs:
           persist-credentials: false
 
       - name: Build CLI image (${{ matrix.variant }})
-        run: docker build --target "${{ matrix.target }}" -t "${{ matrix.image }}" -f cli/Dockerfile .
+        run: docker build --pull --no-cache --target "${{ matrix.target }}" -t "${{ matrix.image }}" -f cli/Dockerfile .
 
       - name: Verify CLI image (${{ matrix.variant }})
         run: |

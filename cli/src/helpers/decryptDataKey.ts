@@ -9,7 +9,7 @@ type PrivateKeyInfo = {
 
 /**
  * Decrypts a data key using the appropriate algorithm for the given private key.
- * RSA: uses crypto.privateDecrypt with PKCS1 padding.
+ * RSA: uses crypto.privateDecrypt with RSA-OAEP padding and SHA-256.
  * Ed25519: uses ECIES (eciesjs) with raw 32-byte seed extracted at call time and
  *          zeroed immediately after use to minimise key material lifetime in memory.
  */
