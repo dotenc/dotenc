@@ -1163,6 +1163,8 @@ Bun uses BoringSSL and is excluded from this OpenSSL-specific notice. On Windows
 secure home-configuration persistence is unavailable, so both the automatic update
 check and this notice are skipped. If a configuration write fails on other platforms,
 the OpenSSL notice is skipped; update checks and command execution still continue.
+If reading existing configuration fails, notification bookkeeping does not
+write a replacement configuration, preserving existing preferences.
 
 The optional update check makes an HTTPS request to the npm registry; the
 advisory describes memory pressure from crafted certificates during TLS

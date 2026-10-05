@@ -70,7 +70,9 @@ const persistUpdateState = async (
 	config: HomeConfig,
 	updateState: NonNullable<HomeConfig["update"]>,
 	deps: UpdateNotifierDeps,
+	configReadSucceeded: boolean,
 ) => {
+	if (!configReadSucceeded) return false
 	try {
 		await deps.setHomeConfig({
 			...config,
@@ -101,8 +103,10 @@ export const maybeNotifyAboutUpdate = async (
 	}
 
 	let config: HomeConfig = {}
+	let configReadSucceeded = false
 	try {
 		config = await deps.getHomeConfig()
+		configReadSucceeded = true
 	} catch (error) {
 		// Without persistence, every dev invocation would fetch and show the same
 		// notice again. Skip the check when home configuration deliberately fails
@@ -122,7 +126,14 @@ export const maybeNotifyAboutUpdate = async (
 				...updateState,
 				notifiedOpenSslVersion: deps.runtimeVersions.openssl,
 			}
-			if (await persistUpdateState(config, nextUpdateState, deps)) {
+			if (
+				await persistUpdateState(
+					config,
+					nextUpdateState,
+					deps,
+					configReadSucceeded,
+				)
+			) {
 				updateState = nextUpdateState
 				deps.log(notice)
 			}
@@ -145,5 +156,5 @@ export const maybeNotifyAboutUpdate = async (
 		latestVersion,
 		notifiedVersion: latestVersion,
 	}
-	await persistUpdateState(config, updateState, deps)
+	await persistUpdateState(config, updateState, deps, configReadSucceeded)
 }

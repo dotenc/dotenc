@@ -272,6 +272,36 @@ describe("npm OpenSSL notice", () => {
 	})
 
 	test.each([
+		null,
+		"99.0.0",
+	])("preserves unreadable config while checking latest %s", async (latest) => {
+		const original =
+			'{"editor":"trusted-editor --wait","update":{"notifiedVersion":42}}'
+		let file = original
+		const persist = mock(async (next: unknown) => {
+			file = JSON.stringify(next)
+		})
+		const fetchLatestVersion = mock(async () => latest)
+		const log = mock(() => {})
+		await maybeNotifyAboutUpdate({
+			args: ["dev"],
+			currentVersion: "0.15.1",
+			detectInstallMethod: () => "npm",
+			runtimeVersions: { openssl: "3.5.8" },
+			getHomeConfig: async () => {
+				throw new Error("invalid update field")
+			},
+			setHomeConfig: persist,
+			fetchLatestVersion,
+			log,
+		})
+		expect(file).toBe(original)
+		expect(persist).not.toHaveBeenCalled()
+		expect(fetchLatestVersion).toHaveBeenCalledTimes(1)
+		expect(log).toHaveBeenCalledTimes(latest ? 1 : 0)
+	})
+
+	test.each([
 		"binary",
 		"homebrew",
 		"scoop",
