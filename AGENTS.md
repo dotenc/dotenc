@@ -140,6 +140,6 @@ Coverage:
   `actions/setup/action.yml` and
   `actions/wrapper-repos/setup-action/action.yml`; the setup action must not
   default to npm's mutable `latest` tag.
-- OCI builds must refresh distribution packages and pass `scripts/check-image-security.sh`; see `docs/OCI_IMAGE.md` for package floors and vendor-backport limitations.
+- The default OCI runtime is Debian 13 Trixie; retain Bookworm package-install compatibility tests separately. OCI builds must refresh distribution packages and pass `scripts/check-image-security.sh`; see `docs/OCI_IMAGE.md` for package floors and vendor-backport limitations.
 - Validate both JS entrypoint (`dist/cli.js`) and compiled binary when changing CLI build/packaging behavior.
 - Verify releases against the merged commit: npm `gitHead`, the GitHub release tag, and checksum-matched published binaries. A successful merge alone does not confirm publication.

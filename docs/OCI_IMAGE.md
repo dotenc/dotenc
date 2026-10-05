@@ -9,11 +9,12 @@ installing Node.js, Bun, or the npm package.
 
 | Runtime | Rolling tag | Version tags | Dockerfile target |
 | --- | --- | --- | --- |
-| Debian/glibc | `latest` | `<version>`, `v<version>` | `runtime` |
+| Debian 13 Trixie/glibc | `latest` | `<version>`, `v<version>` | `runtime` |
 | Alpine/musl | `alpine` | `<version>-alpine`, `v<version>-alpine` | `runtime-alpine` |
 
 Both variants are published for `linux/amd64` and `linux/arm64`. The Debian
-variant remains the default for compatibility. Use the Alpine variant when the
+variant remains the default. Starting with CLI 0.15.1, it uses Debian 13 Trixie
+in place of Debian 12 Bookworm. Use the Alpine variant when the
 CLI runs inside Alpine or its binary is copied into another musl-based image.
 
 Do not copy a musl binary into a glibc application image, or a glibc binary into
@@ -50,14 +51,15 @@ Reviewed minimum package versions (2026-10-05):
 
 | Distribution | Packages | Minimum version |
 | --- | --- | --- |
-| Debian 12 | `openssl`, `libssl3` | `3.0.22-1~deb12u1` |
-| Debian 12 | `libpcre2-8-0` | `10.42-1+deb12u2` |
-| Debian 12 | `perl-base` | `5.36.0-7+deb12u4` |
+| Debian 13 | `openssl`, `libssl3t64`, `openssl-provider-legacy` | `3.5.7-1~deb13u3` |
+| Debian 13 | `libpcre2-8-0` | `10.46-1~deb13u3` |
+| Debian 13 | `perl-base` | `5.40.1-6+deb13u1` |
 | Alpine 3.24 | `libssl3`, `libcrypto3` | `3.5.9-r0` |
 | Alpine 3.24 | `openssh-client-common`, `openssh-client-default`, `openssh-keygen` | `10.3_p1-r1` |
 
-The Debian floor follows the [Debian OpenSSL security tracker](https://security-tracker.debian.org/tracker/CVE-2026-63072)
-and [OpenSSL's August advisory](https://openssl-library.org/news/secadv/20260825.txt).
+The Debian OpenSSL floor follows [DSA-6531-1](https://security-tracker.debian.org/tracker/DSA-6531-1),
+which backports the September 29 fixes into Trixie's 3.5.7 package.
+The upstream version alone therefore does not establish whether it is patched.
 Alpine's OpenSSH package includes security backports despite its older upstream
 version; use the [Alpine 3.24 security database](https://secdb.alpinelinux.org/v3.24/main.json)
 when reviewing it. These minimums block known regressions, but are not a complete
@@ -68,23 +70,30 @@ The October 5 floors also require Debian's [PCRE2 backport](https://security-tra
 and [Perl update](https://security-tracker.debian.org/tracker/CVE-2026-7017), plus
 Alpine's [OpenSSL 3.5.9 security update](https://github.com/alpinelinux/aports/commit/29b9ec24b1b5b39aeef51fa2a044210e2ec5258e).
 
-**Remaining Debian OpenSSL limitation:** as of 2026-10-05, Bookworm has no fixed
-package for the [September 29 advisory set](https://openssl-library.org/news/secadv/20260929.txt),
-including [CVE-2026-84782](https://security-tracker.debian.org/tracker/CVE-2026-84782).
-The Debian OpenSSL floor above covers earlier fixes and does not resolve this
-new set; a trixie fix is not a Bookworm fix. dotenc does not use the affected
-DTLS path, but wrapped workloads may use other library features.
+**Older Bookworm images and npm hosts:** the Trixie migration fixes the reviewed
+September OpenSSL issues in newly built default OCI images. It does not upgrade
+previously pulled Bookworm images or the host's Node/OpenSSL. As of 2026-10-05,
+Bookworm still lacks these backports. The npm runtime notice is informational
+and separate from the standalone OCI binary; it is not a mitigation or a claim
+that the host is patched.
 
-**Remaining Debian OpenSSH limitation:** as of 2026-10-05, Debian Bookworm has
-no fixed package recorded for the reviewed client issues CVE-2026-59995,
+**Remaining Debian OpenSSH limitation:** as of 2026-10-05, Debian Trixie
+(`openssh-client` `1:10.0p1-7+deb13u4`) and Bookworm have no fixed package recorded for the reviewed client issues CVE-2026-59995,
 CVE-2026-59996, CVE-2026-60002, CVE-2026-73281 and CVE-2026-73282. For example,
-[Debian postpones CVE-2026-73282](https://security-tracker.debian.org/tracker/CVE-2026-73282),
+[Debian tracks CVE-2026-73282 without a stable update](https://security-tracker.debian.org/tracker/CVE-2026-73282),
 a concurrent remote-forwarding use-after-free. dotenc's key workflows use local
 `ssh-keygen`; no affected dotenc call path was established. The image also ships
 `ssh` and `ssh-agent`, which wrapped commands may use. Prefer the patched Alpine
 variant where compatible if those SSH features are needed, and track Debian's
 backports before treating the default image as fully remediated. Do not compare
-upstream version strings alone or mix Debian unstable packages into Bookworm.
+upstream version strings alone or mix Debian unstable packages into the stable image.
+
+The Trixie source package also lists [CVE-2026-55654](https://security-tracker.debian.org/tracker/CVE-2026-55654),
+a GSSAPI/Kerberos authentication-indicator cleanup issue. That SSH server
+authentication path is absent from this client-only image (`sshd` is not
+installed). Reassess exposure if adding an SSH server or enabling additional
+SSH features in a derived image. Track Debian residuals in the weekly security
+review; there is no separate daily checker.
 
 ## Pull and verify
 

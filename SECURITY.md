@@ -951,7 +951,8 @@ order, verification, and recovery procedures are documented in
 ## OCI Image Trust Model
 
 The `ghcr.io/dotenc/cli` image packages the compiled standalone CLI for Linux
-container environments. Debian/glibc and Alpine/musl variants contain the
+container environments. From CLI 0.15.1, the default image uses Debian 13
+Trixie/glibc; an Alpine/musl variant is also available. Both contain the
 `dotenc` binary, `ca-certificates`, and `openssh-client`. The Alpine variant also
 contains `libstdc++` and `libgcc`, which its Bun-compiled musl binary requires.
 Neither variant includes Node.js, Bun, npm, provider CLIs, application runtimes,

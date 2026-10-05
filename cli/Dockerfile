@@ -74,7 +74,7 @@ WORKDIR /workspace
 ENTRYPOINT ["dotenc"]
 CMD ["--help"]
 
-FROM debian:bookworm-slim AS runtime
+FROM debian:trixie-slim AS runtime
 
 ARG DOTENC_VERSION=dev
 ARG VCS_REF=unknown

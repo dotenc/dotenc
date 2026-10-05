@@ -113,7 +113,12 @@ routine scoped remediation/release permission.
 5. Record unavailable fixes, blocked review/CI/credentials or failed artifact
    verification accurately and notify Ivan with the concrete next action.
    Never invent a pass, silently waive an advisory, or weaken security gates.
-   Continue the separate Debian OpenSSH watcher while its CVEs are unresolved.
+   Track unresolved Debian OpenSSH/OpenSSL issues in this weekly review, including
+   the actual published OCI distribution and older Bookworm/npm installations.
+   Ivan removed the separate daily checker on October 5; do not recreate it.
+   Check vendor backports and package availability on both architectures. Consider
+   a workaround only for an identified reachable attack surface; an informational
+   npm notice neither patches the host nor protects an OCI image.
 
 This authorization excludes unrelated features, host upgrades, destructive
 changes, external contact and public vulnerability disclosure. Keep detailed

@@ -25,11 +25,12 @@ require_alpine_version() {
 }
 
 case "$ID:$VERSION_ID" in
-	debian:12)
-		require_debian_version openssl '3.0.22-1~deb12u1'
-		require_debian_version libssl3 '3.0.22-1~deb12u1'
-		require_debian_version libpcre2-8-0 '10.42-1+deb12u2'
-		require_debian_version perl-base '5.36.0-7+deb12u4'
+	debian:13)
+		require_debian_version openssl '3.5.7-1~deb13u3'
+		require_debian_version libssl3t64 '3.5.7-1~deb13u3'
+		require_debian_version openssl-provider-legacy '3.5.7-1~deb13u3'
+		require_debian_version libpcre2-8-0 '10.46-1~deb13u3'
+		require_debian_version perl-base '5.40.1-6+deb13u1'
 		;;
 	alpine:3.24.*)
 		require_alpine_version libssl3 '3.5.9-r0'
