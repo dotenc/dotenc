@@ -951,7 +951,8 @@ order, verification, and recovery procedures are documented in
 ## OCI Image Trust Model
 
 The `ghcr.io/dotenc/cli` image packages the compiled standalone CLI for Linux
-container environments. Debian/glibc and Alpine/musl variants contain the
+container environments. From CLI 0.15.1, the default image uses Debian 13
+Trixie/glibc; an Alpine/musl variant is also available. Both contain the
 `dotenc` binary, `ca-certificates`, and `openssh-client`. The Alpine variant also
 contains `libstdc++` and `libgcc`, which its Bun-compiled musl binary requires.
 Neither variant includes Node.js, Bun, npm, provider CLIs, application runtimes,
@@ -1004,7 +1005,7 @@ implementation actions in `actions/`, which are thin wrappers around the dotenc
 CLI:
 
 - `actions/setup` installs `@dotenc/cli` through npm. Its default is the exact
-  CLI package version shipped with this repository (`0.15.0`), not npm's
+  CLI package version shipped with this repository (`0.15.1`), not npm's
   mutable `latest` tag. Pin the action ref to a commit when workflows also need
   an immutable action implementation.
 - `actions/run` writes the requested command to a temporary script and executes
@@ -1147,6 +1148,31 @@ Standalone releases embed the Bun runtime used at compilation; updating the
 build pin does not update binaries already installed by users. Those receive
 the new runtime only through a newly built dotenc release. npm installations
 run on the user-provided Node.js runtime, which must be kept patched separately.
+
+### npm runtime security notice
+
+On npm installations with home configuration available, `dotenc dev` warns
+once per affected OpenSSL version
+reported by the running Node.js runtime about the certificate-processing
+advisory [CVE-2026-35189](https://openssl-library.org/news/secadv/20260929.txt).
+The warning is informational: it does not block commands or the optional update
+check. Node's `process.versions.openssl` is used because `openssl version` may
+report a different system library. Vendor backports can retain an older
+upstream version, so the notice asks users to check their runtime vendor's status.
+Bun uses BoringSSL and is excluded from this OpenSSL-specific notice. On Windows,
+secure home-configuration persistence is unavailable, so both the automatic update
+check and this notice are skipped. If a configuration write fails on other platforms,
+the OpenSSL notice is skipped; update checks and command execution still continue.
+If reading existing configuration fails, notification bookkeeping does not
+write a replacement configuration, preserving existing preferences.
+
+The optional update check makes an HTTPS request to the npm registry; the
+advisory describes memory pressure from crafted certificates during TLS
+handshakes. This is a potential runtime exposure, not evidence of an attack on
+dotenc or a flaw in its encrypted-file format. dotenc's encryption workflow
+does not use DTLS, QUIC, CMP, or SM2 signing. npm installation, explicit updates,
+provider CLIs, and programs launched through `run`/`dev` also depend on their own
+runtimes. Neither a notice nor a dotenc update patches the user's Node or OS.
 
 ### Node.js authoring runtime
 

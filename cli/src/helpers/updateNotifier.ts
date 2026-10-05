@@ -10,6 +10,7 @@ import {
 import {
 	detectInstallMethod,
 	fetchLatestVersion,
+	getOpenSslUpdateWarning,
 	type InstallMethod,
 	isSystemInstallMethod,
 	isVersionNewer,
@@ -24,6 +25,7 @@ type UpdateNotifierDeps = {
 	currentVersion: string
 	log: (message: string) => void
 	args: string[]
+	runtimeVersions: { bun?: string; openssl?: string }
 	detectInstallMethod: () => InstallMethod
 }
 
@@ -58,6 +60,7 @@ const defaultDeps: UpdateNotifierDeps = {
 	currentVersion: pkg.version,
 	log: (message) => logger.log(message),
 	args: process.argv.slice(2),
+	runtimeVersions: process.versions,
 	detectInstallMethod,
 }
 
@@ -67,14 +70,18 @@ const persistUpdateState = async (
 	config: HomeConfig,
 	updateState: NonNullable<HomeConfig["update"]>,
 	deps: UpdateNotifierDeps,
+	configReadSucceeded: boolean,
 ) => {
+	if (!configReadSucceeded) return false
 	try {
 		await deps.setHomeConfig({
 			...config,
 			update: updateState,
 		})
+		return true
 	} catch {
 		// Never fail command execution because of update-check persistence.
+		return false
 	}
 }
 
@@ -90,13 +97,16 @@ export const maybeNotifyAboutUpdate = async (
 		return
 	}
 
-	if (isSystemInstallMethod(deps.detectInstallMethod())) {
+	const installMethod = deps.detectInstallMethod()
+	if (isSystemInstallMethod(installMethod)) {
 		return
 	}
 
 	let config: HomeConfig = {}
+	let configReadSucceeded = false
 	try {
 		config = await deps.getHomeConfig()
+		configReadSucceeded = true
 	} catch (error) {
 		// Without persistence, every dev invocation would fetch and show the same
 		// notice again. Skip the check when home configuration deliberately fails
@@ -106,6 +116,29 @@ export const maybeNotifyAboutUpdate = async (
 	}
 
 	let updateState = config.update ?? {}
+	if (installMethod === "npm") {
+		const notice = getOpenSslUpdateWarning(deps.runtimeVersions)
+		if (
+			notice &&
+			updateState.notifiedOpenSslVersion !== deps.runtimeVersions.openssl
+		) {
+			const nextUpdateState = {
+				...updateState,
+				notifiedOpenSslVersion: deps.runtimeVersions.openssl,
+			}
+			if (
+				await persistUpdateState(
+					config,
+					nextUpdateState,
+					deps,
+					configReadSucceeded,
+				)
+			) {
+				updateState = nextUpdateState
+				deps.log(notice)
+			}
+		}
+	}
 	const latestVersion = await deps.fetchLatestVersion()
 
 	if (!latestVersion || !isVersionNewer(latestVersion, deps.currentVersion)) {
@@ -123,5 +156,5 @@ export const maybeNotifyAboutUpdate = async (
 		latestVersion,
 		notifiedVersion: latestVersion,
 	}
-	await persistUpdateState(config, updateState, deps)
+	await persistUpdateState(config, updateState, deps, configReadSucceeded)
 }

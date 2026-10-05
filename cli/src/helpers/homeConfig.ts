@@ -8,6 +8,7 @@ const updateConfigSchema = z.object({
 	lastCheckedAt: z.string().nullish(),
 	latestVersion: z.string().nullish(),
 	notifiedVersion: z.string().nullish(),
+	notifiedOpenSslVersion: z.string().nullish(),
 })
 
 export const homeConfigSchema = z.object({

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, mock, test } from "bun:test"
 import { HomeConfigUnavailableError } from "../helpers/homeConfig"
 import { maybeNotifyAboutUpdate } from "../helpers/updateNotifier"
 
@@ -206,5 +206,131 @@ describe("maybeNotifyAboutUpdate", () => {
 		})
 
 		expect(logs).toHaveLength(0)
+	})
+})
+
+describe("npm OpenSSL notice", () => {
+	test("warns once per runtime version and still performs the update check", async () => {
+		let config = {}
+		const log = mock(() => {})
+		const fetchLatestVersion = mock(async () => null)
+		const deps = {
+			args: ["dev"],
+			detectInstallMethod: () => "npm" as const,
+			runtimeVersions: { openssl: "3.5.8" },
+			getHomeConfig: async () => config,
+			setHomeConfig: async (next: typeof config) => {
+				config = next
+			},
+			log,
+			fetchLatestVersion,
+		}
+		await maybeNotifyAboutUpdate(deps)
+		await maybeNotifyAboutUpdate(deps)
+		expect(log).toHaveBeenCalledTimes(1)
+		expect(fetchLatestVersion).toHaveBeenCalledTimes(2)
+		expect(config).toEqual({ update: { notifiedOpenSslVersion: "3.5.8" } })
+	})
+	test("skips the OpenSSL notice when persistence fails and still fetches updates", async () => {
+		const log = mock(() => {})
+		const fetchLatestVersion = mock(async () => null)
+		const deps = {
+			args: ["dev"],
+			detectInstallMethod: () => "npm" as const,
+			runtimeVersions: { openssl: "3.5.8" },
+			getHomeConfig: async () => ({}),
+			setHomeConfig: async () => {
+				throw new Error("read-only config")
+			},
+			log,
+			fetchLatestVersion,
+		}
+		await maybeNotifyAboutUpdate(deps)
+		await maybeNotifyAboutUpdate(deps)
+		expect(log).not.toHaveBeenCalled()
+		expect(fetchLatestVersion).toHaveBeenCalledTimes(2)
+	})
+	test("persists the runtime marker before displaying the notice", async () => {
+		const events: string[] = []
+		await maybeNotifyAboutUpdate({
+			args: ["dev"],
+			detectInstallMethod: () => "npm",
+			runtimeVersions: { openssl: "3.5.8" },
+			getHomeConfig: async () => ({}),
+			setHomeConfig: async () => {
+				events.push("persist")
+			},
+			log: () => {
+				events.push("notice")
+			},
+			fetchLatestVersion: async () => {
+				events.push("fetch")
+				return null
+			},
+		})
+		expect(events).toEqual(["persist", "notice", "fetch"])
+	})
+
+	test.each([
+		null,
+		"99.0.0",
+	])("preserves unreadable config while checking latest %s", async (latest) => {
+		const original =
+			'{"editor":"trusted-editor --wait","update":{"notifiedVersion":42}}'
+		let file = original
+		const persist = mock(async (next: unknown) => {
+			file = JSON.stringify(next)
+		})
+		const fetchLatestVersion = mock(async () => latest)
+		const log = mock(() => {})
+		await maybeNotifyAboutUpdate({
+			args: ["dev"],
+			currentVersion: "0.15.1",
+			detectInstallMethod: () => "npm",
+			runtimeVersions: { openssl: "3.5.8" },
+			getHomeConfig: async () => {
+				throw new Error("invalid update field")
+			},
+			setHomeConfig: persist,
+			fetchLatestVersion,
+			log,
+		})
+		expect(file).toBe(original)
+		expect(persist).not.toHaveBeenCalled()
+		expect(fetchLatestVersion).toHaveBeenCalledTimes(1)
+		expect(log).toHaveBeenCalledTimes(latest ? 1 : 0)
+	})
+
+	test.each([
+		"binary",
+		"homebrew",
+		"scoop",
+		"unknown",
+		"apt",
+		"rpm",
+		"apk",
+		"aur",
+	] as const)("does not warn for %s installations", async (method) => {
+		const log = mock(() => {})
+		await maybeNotifyAboutUpdate({
+			args: ["dev"],
+			detectInstallMethod: () => method,
+			runtimeVersions: { openssl: "3.5.8" },
+			getHomeConfig: async () => ({}),
+			setHomeConfig: async () => {},
+			fetchLatestVersion: async () => null,
+			log,
+		})
+		expect(log).not.toHaveBeenCalled()
+	})
+	test("does not warn outside dev", async () => {
+		const log = mock(() => {})
+		await maybeNotifyAboutUpdate({
+			args: ["run"],
+			detectInstallMethod: () => "npm",
+			runtimeVersions: { openssl: "3.5.8" },
+			log,
+		})
+		expect(log).not.toHaveBeenCalled()
 	})
 })

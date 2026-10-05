@@ -5,6 +5,7 @@ import {
 	compareVersions,
 	detectInstallMethod,
 	fetchLatestVersion,
+	getOpenSslUpdateWarning,
 	isVersionNewer,
 } from "../helpers/update"
 
@@ -257,5 +258,38 @@ describe("_runPackageManagerCommand", () => {
 		await expect(
 			_runPackageManagerCommand("npm", ["--version"], spawnImpl as never),
 		).rejects.toThrow("spawn failed")
+	})
+})
+
+describe("OpenSSL runtime notice", () => {
+	test.each([
+		"3.0.22",
+		"3.4.7",
+		"3.5.8",
+		"3.6.4",
+		"4.0.2",
+		"3.0.22+quic",
+	])("notices affected upstream version %s", (openssl) => {
+		expect(getOpenSslUpdateWarning({ openssl })).toContain("CVE-2026-35189")
+		expect(getOpenSslUpdateWarning({ openssl })).toContain("vendor backports")
+	})
+	test.each([
+		"3.0.23",
+		"3.4.8",
+		"3.5.9",
+		"3.6.5",
+		"4.0.3",
+		"3.5.10",
+		"3.5.9+quic",
+		"unknown",
+		"",
+		undefined,
+	])("does not claim an affected runtime for %s", (openssl) => {
+		expect(getOpenSslUpdateWarning({ openssl })).toBeNull()
+	})
+	test("excludes Bun's BoringSSL compatibility version", () => {
+		expect(
+			getOpenSslUpdateWarning({ bun: "1.4.2", openssl: "3.0.22" }),
+		).toBeNull()
 	})
 })

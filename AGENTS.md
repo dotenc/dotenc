@@ -129,6 +129,8 @@ Coverage:
 - `scripts/coverage-summary.sh` and `scripts/merge-lcov.ts` — coverage aggregation details
 - `docs/` — implementation references and deep dives (e.g. `docs/NESTING.md`)
 - `docs/plans/artifact-doctor.md` — artifact scanner contract, encoding/compression limits, redaction, and pre-release acceptance checks; keep incomplete scans distinct from successful scans.
+- `docs/security/weekly-review.md` — standing weekly audit, independent Grok review,
+  protected remediation/release and published-artifact verification workflow.
 - `docs/plans/dotenc-doctor.md` — authoritative read-only doctor contract, finding and exit semantics, JSON redaction, and repair boundary.
 
 ## Release / Versioning Notes
@@ -138,6 +140,6 @@ Coverage:
   `actions/setup/action.yml` and
   `actions/wrapper-repos/setup-action/action.yml`; the setup action must not
   default to npm's mutable `latest` tag.
-- OCI builds must refresh distribution packages and pass `scripts/check-image-security.sh`; see `docs/OCI_IMAGE.md` for package floors and vendor-backport limitations.
+- The default OCI runtime is Debian 13 Trixie; retain Bookworm package-install compatibility tests separately. OCI builds must refresh distribution packages and pass `scripts/check-image-security.sh`; see `docs/OCI_IMAGE.md` for package floors and vendor-backport limitations.
 - Validate both JS entrypoint (`dist/cli.js`) and compiled binary when changing CLI build/packaging behavior.
 - Verify releases against the merged commit: npm `gitHead`, the GitHub release tag, and checksum-matched published binaries. A successful merge alone does not confirm publication.

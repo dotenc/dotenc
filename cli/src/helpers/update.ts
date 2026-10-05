@@ -214,3 +214,24 @@ export const fetchLatestVersion = async (
 		clearTimeout(timer)
 	}
 }
+
+// Informational only: version numbers cannot identify distribution backports.
+// Bun's OpenSSL compatibility version describes BoringSSL, not OpenSSL.
+export const getOpenSslUpdateWarning = (
+	runtime: { bun?: string; openssl?: string } = process.versions,
+): string | null => {
+	if (runtime.bun) return null
+	const version = /^(3\.(?:0|4|5|6)|4\.0)\.(0|[1-9]\d*)(?:\+quic)?$/.exec(
+		runtime.openssl ?? "",
+	)
+	if (!version) return null
+	const fixedPatch: Record<string, number> = {
+		"3.0": 23,
+		"3.4": 8,
+		"3.5": 9,
+		"3.6": 5,
+		"4.0": 3,
+	}
+	if (Number(version[2]) >= (fixedPatch[version[1] ?? ""] ?? 0)) return null
+	return `Node.js uses OpenSSL ${runtime.openssl}, which may be affected by CVE-2026-35189 (TLS certificate memory pressure). Check Node.js or distribution security updates; vendor backports may already include the fix. Commands will continue normally.`
+}
