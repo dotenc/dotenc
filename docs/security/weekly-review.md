@@ -92,7 +92,10 @@ routine scoped remediation/release permission.
 
 1. Use an isolated checkout and preserve unrelated dirty work. Patch every
    affected lock scope and runtime/image pin; retain explicit residual findings
-   where vendors have no applicable fix. Reassess new vendor disclosures even
+   where vendors have no applicable fix. Match application mitigations to demonstrated
+   exposure; do not block normal workflows solely for a vulnerable version string.
+   Runtime notices must distinguish vendor backports and npm's linked Node/OpenSSL
+   from a possibly unrelated system openssl executable. Reassess new vendor disclosures even
    when a component was patched in the previous release.
 2. Add meaningful regression checks, run required tests/builds/audits, and ask
    Grok to independently review the concrete diff and security trade-offs.

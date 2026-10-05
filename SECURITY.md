@@ -1148,6 +1148,25 @@ build pin does not update binaries already installed by users. Those receive
 the new runtime only through a newly built dotenc release. npm installations
 run on the user-provided Node.js runtime, which must be kept patched separately.
 
+### npm runtime security notice
+
+On npm installations, `dotenc dev` warns once per affected OpenSSL version
+reported by the running Node.js runtime about the certificate-processing
+advisory [CVE-2026-35189](https://openssl-library.org/news/secadv/20260929.txt).
+The warning is informational: it does not block commands or the optional update
+check. Node's `process.versions.openssl` is used because `openssl version` may
+report a different system library. Vendor backports can retain an older
+upstream version, so the notice asks users to check their runtime vendor's status.
+Bun uses BoringSSL and is excluded from this OpenSSL-specific notice.
+
+The optional update check makes an HTTPS request to the npm registry; the
+advisory describes memory pressure from crafted certificates during TLS
+handshakes. This is a potential runtime exposure, not evidence of an attack on
+dotenc or a flaw in its encrypted-file format. dotenc's encryption workflow
+does not use DTLS, QUIC, CMP, or SM2 signing. npm installation, explicit updates,
+provider CLIs, and programs launched through `run`/`dev` also depend on their own
+runtimes. Neither a notice nor a dotenc update patches the user's Node or OS.
+
 ### Node.js authoring runtime
 
 CI and publication Node steps use the reviewed `.node-version` baseline

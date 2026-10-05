@@ -10,6 +10,7 @@ import {
 import {
 	detectInstallMethod,
 	fetchLatestVersion,
+	getOpenSslUpdateWarning,
 	type InstallMethod,
 	isSystemInstallMethod,
 	isVersionNewer,
@@ -24,6 +25,7 @@ type UpdateNotifierDeps = {
 	currentVersion: string
 	log: (message: string) => void
 	args: string[]
+	runtimeVersions: { bun?: string; openssl?: string }
 	detectInstallMethod: () => InstallMethod
 }
 
@@ -58,6 +60,7 @@ const defaultDeps: UpdateNotifierDeps = {
 	currentVersion: pkg.version,
 	log: (message) => logger.log(message),
 	args: process.argv.slice(2),
+	runtimeVersions: process.versions,
 	detectInstallMethod,
 }
 
@@ -90,7 +93,8 @@ export const maybeNotifyAboutUpdate = async (
 		return
 	}
 
-	if (isSystemInstallMethod(deps.detectInstallMethod())) {
+	const installMethod = deps.detectInstallMethod()
+	if (isSystemInstallMethod(installMethod)) {
 		return
 	}
 
@@ -106,6 +110,20 @@ export const maybeNotifyAboutUpdate = async (
 	}
 
 	let updateState = config.update ?? {}
+	if (installMethod === "npm") {
+		const notice = getOpenSslUpdateWarning(deps.runtimeVersions)
+		if (
+			notice &&
+			updateState.notifiedOpenSslVersion !== deps.runtimeVersions.openssl
+		) {
+			deps.log(notice)
+			updateState = {
+				...updateState,
+				notifiedOpenSslVersion: deps.runtimeVersions.openssl,
+			}
+			await persistUpdateState(config, updateState, deps)
+		}
+	}
 	const latestVersion = await deps.fetchLatestVersion()
 
 	if (!latestVersion || !isVersionNewer(latestVersion, deps.currentVersion)) {
