@@ -43,15 +43,17 @@ Every runtime architecture must pass `scripts/check-image-security.sh` during
 its build. You can rerun the same read-only check on a published image:
 
 ```bash
-docker run --rm --entrypoint sh ghcr.io/dotenc/cli:0.15.0 /usr/local/bin/check-image-security
+docker run --rm --entrypoint sh ghcr.io/dotenc/cli:0.15.1 /usr/local/bin/check-image-security
 ```
 
-Reviewed minimum package versions (2026-09-29):
+Reviewed minimum package versions (2026-10-05):
 
 | Distribution | Packages | Minimum version |
 | --- | --- | --- |
 | Debian 12 | `openssl`, `libssl3` | `3.0.22-1~deb12u1` |
-| Alpine 3.24 | `libssl3`, `libcrypto3` | `3.5.8-r0` |
+| Debian 12 | `libpcre2-8-0` | `10.42-1+deb12u2` |
+| Debian 12 | `perl-base` | `5.36.0-7+deb12u4` |
+| Alpine 3.24 | `libssl3`, `libcrypto3` | `3.5.9-r0` |
 | Alpine 3.24 | `openssh-client-common`, `openssh-client-default`, `openssh-keygen` | `10.3_p1-r1` |
 
 The Debian floor follows the [Debian OpenSSL security tracker](https://security-tracker.debian.org/tracker/CVE-2026-63072)
@@ -62,7 +64,18 @@ when reviewing it. These minimums block known regressions, but are not a complet
 or continuously updated vulnerability scan. Reassess all OS packages during
 security reviews and raise the floors when new fixes become available.
 
-**Remaining Debian OpenSSH limitation:** as of 2026-09-29, Debian Bookworm has
+The October 5 floors also require Debian's [PCRE2 backport](https://security-tracker.debian.org/tracker/CVE-2026-103111)
+and [Perl update](https://security-tracker.debian.org/tracker/CVE-2026-7017), plus
+Alpine's [OpenSSL 3.5.9 security update](https://github.com/alpinelinux/aports/commit/29b9ec24b1b5b39aeef51fa2a044210e2ec5258e).
+
+**Remaining Debian OpenSSL limitation:** as of 2026-10-05, Bookworm has no fixed
+package for the [September 29 advisory set](https://openssl-library.org/news/secadv/20260929.txt),
+including [CVE-2026-84782](https://security-tracker.debian.org/tracker/CVE-2026-84782).
+The Debian OpenSSL floor above covers earlier fixes and does not resolve this
+new set; a trixie fix is not a Bookworm fix. dotenc does not use the affected
+DTLS path, but wrapped workloads may use other library features.
+
+**Remaining Debian OpenSSH limitation:** as of 2026-10-05, Debian Bookworm has
 no fixed package recorded for the reviewed client issues CVE-2026-59995,
 CVE-2026-59996, CVE-2026-60002, CVE-2026-73281 and CVE-2026-73282. For example,
 [Debian postpones CVE-2026-73282](https://security-tracker.debian.org/tracker/CVE-2026-73282),

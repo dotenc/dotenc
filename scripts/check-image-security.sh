@@ -28,10 +28,12 @@ case "$ID:$VERSION_ID" in
 	debian:12)
 		require_debian_version openssl '3.0.22-1~deb12u1'
 		require_debian_version libssl3 '3.0.22-1~deb12u1'
+		require_debian_version libpcre2-8-0 '10.42-1+deb12u2'
+		require_debian_version perl-base '5.36.0-7+deb12u4'
 		;;
 	alpine:3.24.*)
-		require_alpine_version libssl3 '3.5.8-r0'
-		require_alpine_version libcrypto3 '3.5.8-r0'
+		require_alpine_version libssl3 '3.5.9-r0'
+		require_alpine_version libcrypto3 '3.5.9-r0'
 		for package in openssh-client-common openssh-client-default openssh-keygen; do
 			require_alpine_version "$package" '10.3_p1-r1'
 		done
