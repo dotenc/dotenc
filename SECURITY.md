@@ -1150,14 +1150,18 @@ run on the user-provided Node.js runtime, which must be kept patched separately.
 
 ### npm runtime security notice
 
-On npm installations, `dotenc dev` warns once per affected OpenSSL version
+On npm installations with home configuration available, `dotenc dev` warns
+once per affected OpenSSL version
 reported by the running Node.js runtime about the certificate-processing
 advisory [CVE-2026-35189](https://openssl-library.org/news/secadv/20260929.txt).
 The warning is informational: it does not block commands or the optional update
 check. Node's `process.versions.openssl` is used because `openssl version` may
 report a different system library. Vendor backports can retain an older
 upstream version, so the notice asks users to check their runtime vendor's status.
-Bun uses BoringSSL and is excluded from this OpenSSL-specific notice.
+Bun uses BoringSSL and is excluded from this OpenSSL-specific notice. On Windows,
+secure home-configuration persistence is unavailable, so both the automatic update
+check and this notice are skipped. If a configuration write fails on other platforms,
+the notice can repeat; command execution still continues.
 
 The optional update check makes an HTTPS request to the npm registry; the
 advisory describes memory pressure from crafted certificates during TLS

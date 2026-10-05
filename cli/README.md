@@ -952,7 +952,8 @@ The CLI checks for new versions when you run `dotenc dev` and prints a notificat
 For npm installations, `dotenc dev` also shows a one-time notice if Node's
 OpenSSL version predates the reviewed certificate-processing fix. Commands
 continue normally. Check your Node.js or distribution security updates;
-vendor backports may already include the fix.
+vendor backports may already include the fix. Automatic checks and notices are
+skipped on Windows, where secure home-configuration persistence is unavailable.
 
 ## Troubleshooting
 
