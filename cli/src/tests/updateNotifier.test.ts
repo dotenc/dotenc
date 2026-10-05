@@ -231,6 +231,46 @@ describe("npm OpenSSL notice", () => {
 		expect(fetchLatestVersion).toHaveBeenCalledTimes(2)
 		expect(config).toEqual({ update: { notifiedOpenSslVersion: "3.5.8" } })
 	})
+	test("skips the OpenSSL notice when persistence fails and still fetches updates", async () => {
+		const log = mock(() => {})
+		const fetchLatestVersion = mock(async () => null)
+		const deps = {
+			args: ["dev"],
+			detectInstallMethod: () => "npm" as const,
+			runtimeVersions: { openssl: "3.5.8" },
+			getHomeConfig: async () => ({}),
+			setHomeConfig: async () => {
+				throw new Error("read-only config")
+			},
+			log,
+			fetchLatestVersion,
+		}
+		await maybeNotifyAboutUpdate(deps)
+		await maybeNotifyAboutUpdate(deps)
+		expect(log).not.toHaveBeenCalled()
+		expect(fetchLatestVersion).toHaveBeenCalledTimes(2)
+	})
+	test("persists the runtime marker before displaying the notice", async () => {
+		const events: string[] = []
+		await maybeNotifyAboutUpdate({
+			args: ["dev"],
+			detectInstallMethod: () => "npm",
+			runtimeVersions: { openssl: "3.5.8" },
+			getHomeConfig: async () => ({}),
+			setHomeConfig: async () => {
+				events.push("persist")
+			},
+			log: () => {
+				events.push("notice")
+			},
+			fetchLatestVersion: async () => {
+				events.push("fetch")
+				return null
+			},
+		})
+		expect(events).toEqual(["persist", "notice", "fetch"])
+	})
+
 	test.each([
 		"binary",
 		"homebrew",

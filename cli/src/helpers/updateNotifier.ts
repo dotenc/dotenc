@@ -76,8 +76,10 @@ const persistUpdateState = async (
 			...config,
 			update: updateState,
 		})
+		return true
 	} catch {
 		// Never fail command execution because of update-check persistence.
+		return false
 	}
 }
 
@@ -116,12 +118,14 @@ export const maybeNotifyAboutUpdate = async (
 			notice &&
 			updateState.notifiedOpenSslVersion !== deps.runtimeVersions.openssl
 		) {
-			deps.log(notice)
-			updateState = {
+			const nextUpdateState = {
 				...updateState,
 				notifiedOpenSslVersion: deps.runtimeVersions.openssl,
 			}
-			await persistUpdateState(config, updateState, deps)
+			if (await persistUpdateState(config, nextUpdateState, deps)) {
+				updateState = nextUpdateState
+				deps.log(notice)
+			}
 		}
 	}
 	const latestVersion = await deps.fetchLatestVersion()
