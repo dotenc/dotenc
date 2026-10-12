@@ -48,6 +48,9 @@ jobs:
       - name: Lint
         run: bun run lint
 
+      - name: Install README demo test dependencies
+        run: bun install --cwd scripts/readme-demos --frozen-lockfile --ignore-scripts
+
       - name: Validate README demos
         run: bun run readme:demos:check
 
