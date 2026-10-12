@@ -1,4 +1,4 @@
-FROM oven/bun:1.4.2-slim
+FROM oven/bun:1.4.3-slim
 
 # Install tools needed by tests (ssh-keygen, git, nano)
 RUN apt-get update && apt-get install -y openssh-client git nano && rm -rf /var/lib/apt/lists/*

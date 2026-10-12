@@ -90,20 +90,25 @@ security review through the `grok` CLI, and ship and verify the fixes through th
 normal protected release flow. Do not stop at an audit report or ask again for
 routine scoped remediation/release permission.
 
+This thread owns security maintenance only. Documentation-site feature branches
+and their PRs, including the dependency PR59, belong to the separate docs
+workflow: do not merge or manage their delivery here. Audit their dependencies
+and record relevant security findings, but do not count their PR completion as
+unfinished security-release work. Security reports, README/SECURITY corrections
+required by a security fix, and this review guidance remain within scope.
+
 1. Use an isolated checkout and preserve unrelated dirty work. Patch every
    affected lock scope and runtime/image pin; retain explicit residual findings
-   where vendors have no applicable fix. Match application mitigations to demonstrated
-   exposure; do not block normal workflows solely for a vulnerable version string.
-   Runtime notices must distinguish vendor backports and npm's linked Node/OpenSSL
-   from a possibly unrelated system openssl executable. Reassess new vendor disclosures even
+   where vendors have no applicable fix. Reassess new vendor disclosures even
    when a component was patched in the previous release.
-2. Add meaningful regression checks, run required tests/builds/audits, and ask
-   Grok to independently review the concrete diff and security trade-offs.
-   Keep its model/session, reviewed revision and findings in local evidence.
-   Address actionable findings and re-review substantive changes.
-3. Bump affected package versions appropriately (patch for maintenance unless
-   a different bump is required). Synchronize exact setup-action defaults.
-   Open a non-draft PR, resolve human/bot feedback, and merge only the final
+2. Prepare the complete patch, including meaningful regression checks,
+   documentation, affected package versions (patch for maintenance unless a
+   different bump is required), and exact setup-action defaults. Run required
+   tests/builds/audits. Before committing, use the `grok` CLI to independently
+   review the full uncommitted patch and relevant surrounding implementation.
+   Follow the pre-commit review procedure below; resolve findings locally.
+3. Commit the reviewed content and consolidate the push. Open a non-draft PR,
+   resolve human/bot feedback through the same local review procedure, and merge only the final
    reviewed head with required checks satisfied. Never bypass branch protection.
 4. Use existing release channels. Verify the merged SHA, npm gitHead/integrity,
    release tag and checksums, embedded runtime, synthetic security behavior,
@@ -113,12 +118,12 @@ routine scoped remediation/release permission.
 5. Record unavailable fixes, blocked review/CI/credentials or failed artifact
    verification accurately and notify Ivan with the concrete next action.
    Never invent a pass, silently waive an advisory, or weaken security gates.
-   Track unresolved Debian OpenSSH/OpenSSL issues in this weekly review, including
-   the actual published OCI distribution and older Bookworm/npm installations.
-   Ivan removed the separate daily checker on October 5; do not recreate it.
-   Check vendor backports and package availability on both architectures. Consider
-   a workaround only for an identified reachable attack surface; an informational
-   npm notice neither patches the host nor protects an OCI image.
+   Review unresolved Debian OpenSSH and OpenSSL issues weekly. Ivan removed
+   the separate daily Bookworm checker on October 5, 2026; do not recreate it.
+   Track upstream/vendor fixes and actual affected-package availability, then
+   ship applicable fixes through this routine. Investigate a workaround if a
+   reachable attack surface is identified; a version warning is not a patch
+   and the npm-only notice does not cover OCI images.
 
 This authorization excludes unrelated features, host upgrades, destructive
 changes, external contact and public vulnerability disclosure. Keep detailed
@@ -126,3 +131,43 @@ unfixed reports and review transcripts local. Notify Ivan of shipped versions,
 verification, meaningful findings or blockers; stay quiet only when no changes,
 fixes or actionable findings remain.
 
+
+## Runtime mitigation scope
+
+Match application mitigations to demonstrated exposure and severity. Ivan clarified
+on October 5 that unavailable Node/Debian OpenSSL fixes do not justify blocking
+normal dotenc workflows solely for a version string. Use a narrowly scoped
+informational npm-runtime notice when useful, account for vendor backports, and
+check Node's linked OpenSSL rather than a potentially unrelated system executable.
+A warning is not a patch and does not establish absence of exploit paths.
+
+## External review and CI availability
+
+### Grok before committing
+
+Review the complete proposed change before every security-remediation commit,
+including tests, documentation, version bumps, generated artifacts and new files.
+Give Grok the base revision, the full proposed diff and enough surrounding code
+to assess trust boundaries and interactions. Explicitly examine read/write
+failures, state persistence, concurrency and cleanup when relevant. Do not limit
+the review to a known finding or a tiny hunk that hides affected control flow.
+
+Address actionable findings locally, rerun affected checks, and have Grok
+re-review substantive changes before committing. Record the model, session,
+verdict, base revision and a diff/file-hash manifest identifying the exact
+reviewed content, including new files. Verify the committed tree matches that
+content; a new commit SHA alone does not require another Grok review. Content
+changes do require reassessment and substantive changes require re-review.
+
+Push the consolidated, validated result once local review closes. Remote pushes
+can trigger CodeRabbit; local commits alone do not. For later bot findings,
+collect and address the actionable feedback together, complete the same Grok
+gate, then push one reviewed batch. This reduces avoidable review rounds without
+waiving CodeRabbit's independent review or guaranteeing it finds no new issues.
+
+CodeRabbit's included review allowance can be shared across PRs. Request the
+release PR review first and confirm acceptance before requesting secondary
+reviews. Respect the explicit reset deadline instead of treating a green
+rate-limit status as a completed review. When CI has no execution steps and
+reports failure to acquire a hosted runner, inspect GitHub's incident status;
+retain the failed attempt and retry without changing source or weakening gates.

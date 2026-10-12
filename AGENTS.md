@@ -56,7 +56,7 @@ Bun temp files:
 ## Setup / Installs
 
 - Node development/CI baseline: `.node-version` (24.21.0). README demo authoring must use the patched Node 24 line and its compatible native PTY; do not restore the obsolete Node 16 requirement.
-- Bun version: `1.4.2` (verify with `bun --version`; run `bun upgrade` if needed)
+- Bun version: `1.4.3` (verify with `bun --version`; use a scoped runtime when host upgrades are outside the task)
 - Commit the root text `bun.lock`; use `bun install --frozen-lockfile` for reproducible verification. Rebuild `actions/diff/dist/index.js` when changing the pinned Bun compiler.
 - Root deps: `bun install`
 - CLI deps: included via root workspace install (or `cd cli && bun install`)
@@ -107,6 +107,12 @@ Coverage (when requested):
 - Full (includes CLI e2e coverage): `bun run test:coverage:full`
 
 ## Pre-Commit Gate
+
+For security remediation, run the `grok` CLI on the complete uncommitted patch
+before committing. Resolve findings locally, record the reviewed diff and file
+hashes, then consolidate the push. Follow `docs/security/weekly-review.md`.
+Documentation-site PR delivery belongs to its separate workflow; audit and
+report its findings here without managing those merges.
 
 Before committing any CLI changes, all of the following must pass:
 

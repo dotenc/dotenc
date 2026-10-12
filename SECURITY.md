@@ -1005,7 +1005,7 @@ implementation actions in `actions/`, which are thin wrappers around the dotenc
 CLI:
 
 - `actions/setup` installs `@dotenc/cli` through npm. Its default is the exact
-  CLI package version shipped with this repository (`0.15.1`), not npm's
+  CLI package version shipped with this repository (`0.15.2`), not npm's
   mutable `latest` tag. Pin the action ref to a commit when workflows also need
   an immutable action implementation.
 - `actions/run` writes the requested command to a temporary script and executes
@@ -1142,7 +1142,7 @@ provider-specific runbook for that provider's own runner.
 
 ## Build Runtime
 
-Development, CI, container builds, and standalone compilation pin Bun 1.4.2.
+Development, CI, container builds, and standalone compilation pin Bun 1.4.3.
 The root text `bun.lock` records the dependency graph for reproducible installs.
 Standalone releases embed the Bun runtime used at compilation; updating the
 build pin does not update binaries already installed by users. Those receive
