@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-ARG BUN_VERSION=1.4.2
+ARG BUN_VERSION=1.4.3
 ARG ALPINE_VERSION=3.24
 
 FROM --platform=$BUILDPLATFORM oven/bun:${BUN_VERSION}-slim AS build-base

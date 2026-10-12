@@ -44,16 +44,18 @@ Every runtime architecture must pass `scripts/check-image-security.sh` during
 its build. You can rerun the same read-only check on a published image:
 
 ```bash
-docker run --rm --entrypoint sh ghcr.io/dotenc/cli:0.15.1 /usr/local/bin/check-image-security
+docker run --rm --entrypoint sh ghcr.io/dotenc/cli:0.15.2 /usr/local/bin/check-image-security
 ```
 
-Reviewed minimum package versions (2026-10-05):
+Reviewed minimum package versions (2026-10-12):
 
 | Distribution | Packages | Minimum version |
 | --- | --- | --- |
 | Debian 13 | `openssl`, `libssl3t64`, `openssl-provider-legacy` | `3.5.7-1~deb13u3` |
 | Debian 13 | `libpcre2-8-0` | `10.46-1~deb13u3` |
 | Debian 13 | `perl-base` | `5.40.1-6+deb13u1` |
+| Debian 13 | `liblzma5` | `5.8.1-1+deb13u2` |
+| Alpine 3.24 | `zlib` | `1.3.2-r1` |
 | Alpine 3.24 | `libssl3`, `libcrypto3` | `3.5.9-r0` |
 | Alpine 3.24 | `openssh-client-common`, `openssh-client-default`, `openssh-keygen` | `10.3_p1-r1` |
 
@@ -70,14 +72,27 @@ The October 5 floors also require Debian's [PCRE2 backport](https://security-tra
 and [Perl update](https://security-tracker.debian.org/tracker/CVE-2026-7017), plus
 Alpine's [OpenSSL 3.5.9 security update](https://github.com/alpinelinux/aports/commit/29b9ec24b1b5b39aeef51fa2a044210e2ec5258e).
 
+The October 12 floor additionally requires Debian's `liblzma5` backport for
+[GHSA-5qpq-xqfv-j9pg](https://github.com/tukaani-project/xz/security/advisories/GHSA-5qpq-xqfv-j9pg),
+confirmed in the [Debian tracker](https://security-tracker.debian.org/tracker/TEMP-1147318-639065).
+The defect requires decoder reinitialization after allocation failure; no direct
+dotenc call path was established. The image includes liblzma through packaging
+tools, so rebuilds require the available vendor fix.
+
+Alpine additionally requires the [zlib backport for CVE-2026-85091](https://github.com/alpinelinux/aports/commit/0afa2da0e8c8051c6f8f64a7a388e5a259904245).
+The vulnerable non-blocking gzip write/printf sequence is not used by dotenc.
+Debian still tracks its zlib source package as unresolved; the affected-range
+discussion is ongoing, so do not treat an older version string as proof of safety.
+
 **Older Bookworm images and npm hosts:** the Trixie migration fixes the reviewed
-September OpenSSL issues in newly built default OCI images. It does not upgrade
-previously pulled Bookworm images or the host's Node/OpenSSL. As of 2026-10-05,
-Bookworm still lacks these backports. The npm runtime notice is informational
+September OpenSSL issues in default OCI images starting with 0.15.1. It does not upgrade
+previously pulled Bookworm images or the host's Node/OpenSSL. As of 2026-10-12,
+Bookworm still lacks the CVE-2026-35189 fix even with its newer
+`3.0.22-1~deb12u1` OpenSSL candidate. The npm runtime notice is informational
 and separate from the standalone OCI binary; it is not a mitigation or a claim
 that the host is patched.
 
-**Remaining Debian OpenSSH limitation:** as of 2026-10-05, Debian Trixie
+**Remaining Debian OpenSSH limitation:** as of 2026-10-12, Debian Trixie
 (`openssh-client` `1:10.0p1-7+deb13u4`) and Bookworm have no fixed package recorded for the reviewed client issues CVE-2026-59995,
 CVE-2026-59996, CVE-2026-60002, CVE-2026-73281 and CVE-2026-73282. For example,
 [Debian tracks CVE-2026-73282 without a stable update](https://security-tracker.debian.org/tracker/CVE-2026-73282),
@@ -94,6 +109,16 @@ authentication path is absent from this client-only image (`sshd` is not
 installed). Reassess exposure if adding an SSH server or enabling additional
 SSH features in a derived image. Track Debian residuals in the weekly security
 review; there is no separate daily checker.
+
+**New OpenSSH 10.6 advisories:** the [October 6 upstream release](https://www.openssh.org/txt/release-10.6)
+fixes additional SFTP traversal, SSH username handling, compression and certificate
+expiry issues. As of October 12, no corresponding backport was verified in either
+Trixie `1:10.0p1-7+deb13u4` or Alpine `10.3_p1-r1`. Alpine's earlier backports
+cover the five previously tracked client advisories, not this new set. dotenc
+uses key creation/passphrase conversion, not SSH certificate signing or network
+SSH/SFTP. Wrapped commands must avoid untrusted SSH usernames and unsafe recursive
+SFTP sources; leave SSH compression disabled when mixing trust levels. No `sshd`
+is installed. Continue tracking vendor fixes weekly.
 
 ## Pull and verify
 

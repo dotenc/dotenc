@@ -12,7 +12,7 @@ updating the lockfile.
 
 ## Prerequisites
 
-- Bun 1.4.2
+- Bun 1.4.3
 - Node 24.21.0 or newer in the 24.x LTS line active on `PATH` (for Terminalizer's native PTY)
 - WebP tools (`gif2webp` and `webpmux`; installed by Homebrew's `webp` formula)
 - `git`, `ssh-keygen`, `nano`, and `expect`
@@ -71,3 +71,12 @@ The committed outputs are:
 - Keep each asset under 3 MiB and within 2200×1200 pixels.
 - Rendering is manual. CI runs the cheap checker, but does not install or run
   Terminalizer.
+
+### Dependency security overrides
+
+Electron is pinned to 43.7.9 for its upstream security backports. The `argparse`
+2.0.1 override removes the unpatched `sprintf-js` dependency from js-yaml 3's
+CLI without replacing Terminalizer's YAML API. `bun run test` exercises the
+legacy argument aliases, conversions and error paths; validate rendering when
+changing either override. These tools are for sanitized local demo assets and
+are not shipped in the CLI package.

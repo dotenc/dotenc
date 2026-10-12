@@ -31,8 +31,10 @@ case "$ID:$VERSION_ID" in
 		require_debian_version openssl-provider-legacy '3.5.7-1~deb13u3'
 		require_debian_version libpcre2-8-0 '10.46-1~deb13u3'
 		require_debian_version perl-base '5.40.1-6+deb13u1'
+		require_debian_version liblzma5 '5.8.1-1+deb13u2'
 		;;
 	alpine:3.24.*)
+		require_alpine_version zlib '1.3.2-r1'
 		require_alpine_version libssl3 '3.5.9-r0'
 		require_alpine_version libcrypto3 '3.5.9-r0'
 		for package in openssh-client-common openssh-client-default openssh-keygen; do
