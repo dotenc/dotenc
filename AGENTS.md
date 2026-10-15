@@ -131,6 +131,7 @@ Coverage:
 - `cli/README.md` — CLI-focused usage and distribution context
 - `SECURITY.md` — full cryptographic design, threat model, key material handling, and vulnerability reporting
 - `vscode-extension/README.md` — extension behavior, prerequisites, settings
+- `docs/plans/zed-extension.md` — Zed integration requirements and staged plan; native encrypted editing depends on public document/save APIs and a shared CLI revision/atomic-write contract. Task support alone is not native editing support.
 - The official operational skill is maintained separately in `dotenc/skills`; for dotenc development work, inspect and modify this repository directly instead of following consumer workflows from that skill.
 - `scripts/coverage-summary.sh` and `scripts/merge-lcov.ts` — coverage aggregation details
 - `docs/` — implementation references and deep dives (e.g. `docs/NESTING.md`)
