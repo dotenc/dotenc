@@ -97,6 +97,8 @@ VS Code extension (`vscode-extension/`):
 - For branding changes, verify the packaged PNG listing icon and the 24x24
   monochrome activity-bar SVG on light and dark themes. Both VS Code Marketplace
   and Open VSX use the same extension assets; website branding is separate.
+  The Marketplace listing PNG must be at most 1024×1024; local VSIX packaging
+  alone does not establish that Marketplace validation will accept it.
 
 Website (`website/`):
 

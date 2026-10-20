@@ -1,3 +1,5 @@
+const { readFileSync } = require("node:fs")
+const path = require("node:path")
 const { describe, expect, test } = require("bun:test")
 const packageJson = require("../../package.json")
 const { formatDetectedVersion } = require("../../src/helpers/formatDetectedVersion")
@@ -257,5 +259,20 @@ describe("core helpers", () => {
 		expect(result.code).toBe(0)
 		expect(result.error).toBeUndefined()
 		expect(result.stdout).toBe("hello-dotenc")
+	})
+})
+
+
+describe("extension packaging", () => {
+	test("listing PNG fits the Marketplace dimension limit", () => {
+		const icon = readFileSync(path.resolve(__dirname, "../..", packageJson.icon))
+		expect(icon.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+		expect(icon.toString("ascii", 12, 16)).toBe("IHDR")
+		const width = icon.readUInt32BE(16)
+		const height = icon.readUInt32BE(20)
+		expect(width).toBeGreaterThan(0)
+		expect(height).toBeGreaterThan(0)
+		expect(width).toBeLessThanOrEqual(1024)
+		expect(height).toBeLessThanOrEqual(1024)
 	})
 })
