@@ -2,7 +2,7 @@
 	"name": "dotenc-vscode-extension",
 	"displayName": "dotenc",
 	"description": "Seamless editing for dotenc encrypted environment files.",
-	"version": "0.6.3",
+	"version": "0.6.4",
 	"publisher": "dotenc",
 	"icon": "assets/logo-square.png",
 	"license": "MIT",
@@ -170,6 +170,7 @@
 		"js-yaml": "^4.3.2",
 		"qs": "^6.16.0",
 		"undici": "^7.29.0",
-		"@vscode/vsce": "4.0.0"
+		"@vscode/vsce": "4.0.0",
+		"follow-redirects": "1.16.1"
 	}
 }
