@@ -23,6 +23,8 @@ Notes:
 
 - Root workspaces are `cli` and `website` only (`vscode-extension/` is managed separately).
 - Package versions are independent (`cli/package.json`, `vscode-extension/package.json`, etc.).
+  Scope security releases to the affected package/toolchain; verify whether a
+  patched development dependency is included in the shipped artifact.
 
 ## How (Working Rules)
 

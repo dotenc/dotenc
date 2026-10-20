@@ -69,14 +69,19 @@ The committed outputs are:
 - Only use the generated temporary SSH keys and obviously fake values.
 - Review recording diffs and inspect every WebP frame before committing.
 - Keep each asset under 3 MiB and within 2200×1200 pixels.
-- Rendering is manual. CI runs the cheap checker, but does not install or run
-  Terminalizer.
+- Rendering is manual. CI installs the frozen tool dependencies with lifecycle scripts
+  disabled and runs the checker; it does not run Terminalizer.
 
 ### Dependency security overrides
 
-Electron is pinned to 43.7.9 for its upstream security backports. The `argparse`
+Electron is pinned to 43.8.1 for its upstream security backports. The `argparse`
 2.0.1 override removes the unpatched `sprintf-js` dependency from js-yaml 3's
 CLI without replacing Terminalizer's YAML API. `bun run test` exercises the
 legacy argument aliases, conversions and error paths; validate rendering when
 changing either override. These tools are for sanitized local demo assets and
 are not shipped in the CLI package.
+
+The `follow-redirects` 1.16.1 override fixes cross-origin credential stripping
+for array-form headers and declared sensitive header names containing regular
+expression metacharacters. It also applies to the separate extension publishing
+toolchain; it is not part of the installed extension or CLI runtime.

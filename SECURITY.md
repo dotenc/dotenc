@@ -1212,7 +1212,11 @@ package. Audit the repository root, `vscode-extension/`, and
 manifests enforce compatible patched versions for known vulnerable transitive
 dependencies. Reassess these constraints with upstream fixes instead of removing
 them solely because the root audit is clean. Electron's embedded browser runtime
-also requires upstream release review beyond npm advisories.
+also requires upstream release review beyond npm advisories. The separate tool
+lockfiles pin `follow-redirects` 1.16.1 to preserve credential stripping on
+cross-origin redirects, including array-form headers and custom sensitive-header
+names. This dependency belongs to publishing/demo tools, not installed extension
+or CLI runtime code.
 
 ### CI dependency verification
 
