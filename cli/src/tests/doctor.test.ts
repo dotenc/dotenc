@@ -1255,3 +1255,118 @@ describe("createDoctorReport", () => {
 		expect(JSON.stringify(report)).not.toContain(outside)
 	})
 })
+
+// Security diagnostics must not turn uncertain access or rename evidence into repair instructions.
+describe("doctor access and legacy collision safety", () => {
+	test.each([
+		["provider-inconclusive", "personal.provider-inconclusive"],
+		["local-key-inconclusive", "personal.local-key-inconclusive"],
+		["inaccessible", "personal.inaccessible"],
+		["corrupt-data-key", "personal.corrupt"],
+	] as const)("keeps personal %s evidence qualified", async (status, expected) => {
+		const fixture = await makeFixture()
+		await writeEnvironment(fixture, fixture.root, "development")
+		await writeEnvironment(fixture, fixture.root, "personal.alice", {
+			marker: status,
+		})
+		const report = await createDoctorReport(
+			{ invocationDir: fixture.root },
+			dependencies(fixture),
+		)
+		const result = report.findings.find((entry) => entry.id === expected)
+		expect(result).toBeDefined()
+		expect(result?.severity).toBe("warning")
+		expect(
+			report.findings.some((entry) => entry.id === "personal.accessible"),
+		).toBe(false)
+		if (status !== "inaccessible")
+			expect(result?.commands ?? []).toHaveLength(0)
+		expect(JSON.stringify(report)).not.toContain("private-path-must-not-leak")
+	})
+
+	test("marks corrupt personal recovery history incomplete without suggesting a restore", async () => {
+		const fixture = await makeFixture()
+		await writeEnvironment(fixture, fixture.root, "development")
+		await fs.writeFile(
+			path.join(fixture.root, ".env.personal.alice.enc"),
+			'{"invalid":true}',
+		)
+		const report = await createDoctorReport(
+			{ invocationDir: fixture.root },
+			dependencies(fixture, {
+				createGitInspector: () =>
+					createGit({
+						latestValidRevision: () => ({ status: "incomplete" }),
+					}) as never,
+			}),
+		)
+		expect(report.complete).toBe(false)
+		expect(report.exitCode).toBe(2)
+		expect(
+			report.findings.find((entry) => entry.id === "personal.corrupt")
+				?.commands,
+		).toBeUndefined()
+	})
+
+	test.each([
+		"unverifiable-wrapped-key",
+		"invalid-destination",
+	])("suppresses a legacy rename for %s", async (scenario) => {
+		const fixture = await makeFixture()
+		await writeEnvironment(fixture, fixture.root, "development")
+		await writeEnvironment(fixture, fixture.root, "alice")
+		const destination = await writeEnvironment(
+			fixture,
+			fixture.root,
+			"personal.alice",
+		)
+		if (scenario === "invalid-destination")
+			await fs.writeFile(destination, '{"invalid":true}')
+		const before = await fs.readFile(destination)
+		const report = await createDoctorReport(
+			{ invocationDir: fixture.root },
+			dependencies(fixture),
+		)
+		const collision = report.findings.find(
+			(entry) => entry.id === "legacy.collision",
+		)
+		expect(collision?.paths).toEqual([
+			".env.alice.enc",
+			".env.personal.alice.enc",
+		])
+		expect(collision?.commands).toBeUndefined()
+		expect(findingIds(report)).not.toContain("legacy.candidate")
+		expect(findingIds(report)).not.toContain("legacy.partial-rename")
+		expect(await fs.readFile(destination)).toEqual(before)
+	})
+
+	testPosixUnprivileged(
+		"does not suggest a rename when its destination cannot be read",
+		async () => {
+			const fixture = await makeFixture()
+			await writeEnvironment(fixture, fixture.root, "development")
+			await writeEnvironment(fixture, fixture.root, "alice")
+			const destination = await writeEnvironment(
+				fixture,
+				fixture.root,
+				"personal.alice",
+			)
+			await fs.chmod(destination, 0)
+			try {
+				const report = await createDoctorReport(
+					{ invocationDir: fixture.root },
+					dependencies(fixture),
+				)
+				expect(report.complete).toBe(false)
+				expect(report.exitCode).toBe(2)
+				expect(
+					report.findings.find((entry) => entry.id === "legacy.collision")
+						?.commands,
+				).toBeUndefined()
+				expect(findingIds(report)).not.toContain("legacy.candidate")
+			} finally {
+				await fs.chmod(destination, 0o600)
+			}
+		},
+	)
+})

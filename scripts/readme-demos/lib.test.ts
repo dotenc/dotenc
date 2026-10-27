@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test"
 import { spawnSync } from "node:child_process"
 import path from "node:path"
-import { assetPath, parseSceneSelection, recordingPath, scenes } from "./lib"
+import {
+	assetPath,
+	isSupportedDemoNode,
+	parseSceneSelection,
+	recordingPath,
+	scenes,
+} from "./lib"
 
 describe("README demo scene paths", () => {
 	test("accepts only the declared scene names", () => {
@@ -48,5 +54,25 @@ describe("README demo YAML CLI compatibility", () => {
 		const malformed = runYaml(["--compact"], "key: [unterminated")
 		expect(malformed.status).toBe(1)
 		expect(malformed.stderr).toContain("YAMLException")
+	})
+})
+
+describe("README demo Node security baseline", () => {
+	test.each([
+		"v24.22.1",
+		"v24.22.2",
+		"v24.23.0",
+	])("accepts patched %s", (version) => {
+		expect(isSupportedDemoNode(version)).toBe(true)
+	})
+	test.each([
+		"v24.21.0",
+		"v24.22.0",
+		"v22.23.4",
+		"v26.12.1",
+		"v24.22.1-rc.1",
+		"unavailable",
+	])("rejects unsupported %s", (version) => {
+		expect(isSupportedDemoNode(version)).toBe(false)
 	})
 })
