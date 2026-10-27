@@ -1276,9 +1276,7 @@ describe("doctor access and legacy collision safety", () => {
 		const result = report.findings.find((entry) => entry.id === expected)
 		expect(result).toBeDefined()
 		expect(result?.severity).toBe("warning")
-		expect(
-			report.findings.some((entry) => entry.id === "personal.accessible"),
-		).toBe(false)
+		expect(passedIds(report)).not.toContain("personal.decryptable")
 		if (status !== "inaccessible")
 			expect(result?.commands ?? []).toHaveLength(0)
 		expect(JSON.stringify(report)).not.toContain("private-path-must-not-leak")

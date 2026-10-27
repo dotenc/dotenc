@@ -74,7 +74,7 @@ The committed outputs are:
 
 ### Dependency security overrides
 
-Electron is pinned to 43.8.1 for its upstream security backports. The `argparse`
+Electron is pinned to 43.8.3 for its upstream security backports. The `argparse`
 2.0.1 override removes the unpatched `sprintf-js` dependency from js-yaml 3's
 CLI without replacing Terminalizer's YAML API. `bun run test` exercises the
 legacy argument aliases, conversions and error paths; validate rendering when
