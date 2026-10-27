@@ -21,7 +21,7 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: '1.4.3'
+          bun-version: '1.4.4'
 
       - name: Set up Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
@@ -42,7 +42,7 @@ jobs:
             "https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery" \
             -H "Content-Type: application/json" \
             -H "Accept: application/json;api-version=7.2-preview.1" \
-            -d '{"filters":[{"criteria":[{"filterType":7,"value":"dotenc.dotenc"}]}],"flags":914}' \
+            -d '{"filters":[{"criteria":[{"filterType":7,"value":"dotenc.dotenc-vscode-extension"}]}],"flags":914}' \
             | jq -r '.results[0].extensions[0].versions[0].version // "0.0.0"')
 
           if [ "$VERSION" = "$PUBLISHED_VERSION" ]; then

@@ -272,3 +272,7 @@ docker pull ghcr.io/dotenc/cli:0.9.0-alpine
 You can also switch the job back to `npm install -g @dotenc/cli`, Homebrew,
 Scoop, or a standalone binary from GitHub Releases. No encrypted environment
 format changes are tied to the image distribution path.
+
+The October 26 security baseline also requires Debian `ca-certificates >=20250419+deb13u1` and Alpine `ca-certificates`/`ca-certificates-bundle >=20261020-r0`, available for both architectures, to remove compromised eMudhra trust anchors. Bun 1.4.4 embedded in the rebuilt CLI independently updates its bundled trust store and blocks the compromised intermediate public keys. System trust and embedded-runtime trust are separate surfaces.
+
+Alpine `musl` and `musl-utils` must also be at least `1.2.6-r3` for CVE-2026-107891. Vendor security metadata and fresh main indexes confirm that revision on amd64 and arm64; the published 0.15.2 images still contain 1.2.6-r2 until this release is verified.

@@ -1,7 +1,11 @@
 import { constants, type Dirent, type Stats } from "node:fs"
 import fs from "node:fs/promises"
 import path from "node:path"
-import { brotliDecompressSync, gunzipSync } from "node:zlib"
+import {
+	brotliDecompressSync,
+	gunzipSync,
+	constants as zlibConstants,
+} from "node:zlib"
 import { isSafeDoctorRelativePath } from "./doctorGit"
 
 export const ARTIFACT_DOCTOR_REPORT_SCHEMA_VERSION = 1 as const
@@ -109,16 +113,23 @@ export const DEFAULT_ARTIFACT_DOCTOR_LIMITS: ArtifactDoctorLimits = {
 }
 
 export type ArtifactDoctorDependencies = {
+	brotliDecoderPatched: boolean
 	environment: NodeJS.ProcessEnv
 	limits: ArtifactDoctorLimits
 }
 
 export type ArtifactDoctorDependencyOverrides = {
+	brotliDecoderPatched?: boolean
 	environment?: NodeJS.ProcessEnv
 	limits?: Partial<ArtifactDoctorLimits>
 }
 
 const defaultDependencies: ArtifactDoctorDependencies = {
+	// The CVE-2026-111497 fix exposes this decoder error in both Node and Bun.
+	// Check the backported capability rather than upstream version strings.
+	brotliDecoderPatched:
+		"BROTLI_DECODER_ERROR_FORMAT_BLOCK_SWITCH" in zlibConstants &&
+		zlibConstants.BROTLI_DECODER_ERROR_FORMAT_BLOCK_SWITCH === -17,
 	environment: process.env,
 	limits: DEFAULT_ARTIFACT_DOCTOR_LIMITS,
 }
@@ -146,6 +157,7 @@ type FindingAccumulator = {
 }
 
 type ScanState = {
+	brotliSkipped: boolean
 	complete: boolean
 	filesSeen: number
 	filesScanned: number
@@ -160,6 +172,7 @@ type FileScanResult =
 	| { status: "ok"; findingIds: Set<Pattern["id"]>; bytesScanned: number }
 	| {
 			status: "incomplete"
+			brotliSkipped?: boolean
 			bytesScanned: number
 			findingIds?: Set<Pattern["id"]>
 			bytesCharged?: number
@@ -268,6 +281,7 @@ const scanRegularFile = async (
 	maximumFileBytes: number,
 	remainingTotalBytes: number,
 	limits: ArtifactDoctorLimits,
+	brotliDecoderPatched: boolean,
 ): Promise<FileScanResult> => {
 	if (
 		initialStat.size > maximumFileBytes ||
@@ -381,6 +395,14 @@ const scanRegularFile = async (
 			return { status: "incomplete", bytesScanned }
 		}
 
+		if (format === "brotli" && !brotliDecoderPatched) {
+			return {
+				status: "incomplete",
+				bytesScanned,
+				findingIds,
+				brotliSkipped: true,
+			}
+		}
 		if (format && !unsupported) {
 			const maximumOutput = Math.min(
 				limits.maxDecompressedFileBytes,
@@ -668,6 +690,9 @@ export const createArtifactDoctorReport = async (
 ): Promise<ArtifactDoctorReport> => {
 	const dependencies = {
 		...defaultDependencies,
+		brotliDecoderPatched:
+			dependencyOverrides.brotliDecoderPatched ??
+			defaultDependencies.brotliDecoderPatched,
 		...(dependencyOverrides.environment
 			? { environment: dependencyOverrides.environment }
 			: {}),
@@ -701,6 +726,7 @@ export const createArtifactDoctorReport = async (
 		dependencies.environment,
 	)
 	const state: ScanState = {
+		brotliSkipped: false,
 		complete: true,
 		filesSeen: 0,
 		filesScanned: 0,
@@ -808,6 +834,7 @@ export const createArtifactDoctorReport = async (
 					limits.maxFileBytes,
 					limits.maxTotalBytes - state.bytesCharged,
 					limits,
+					dependencies.brotliDecoderPatched,
 				)
 				state.bytesScanned += result.bytesScanned
 				state.bytesCharged +=
@@ -817,6 +844,7 @@ export const createArtifactDoctorReport = async (
 					recordFinding(state, id, reportPath(entryPath))
 				}
 				if (result.status === "incomplete") {
+					state.brotliSkipped ||= result.brotliSkipped === true
 					markIncomplete(state, reportPath(entryPath))
 					continue
 				}
@@ -828,6 +856,14 @@ export const createArtifactDoctorReport = async (
 	}
 
 	const findings = renderFindings(state, limits)
+	if (state.brotliSkipped) {
+		const incomplete = findings.find(
+			(finding) => finding.id === "scan.incomplete",
+		)
+		if (incomplete)
+			incomplete.message +=
+				" Brotli decoding was skipped because this runtime does not expose the CVE-2026-111497 fix. Use a patched Node.js or standalone dotenc release, or scan unpacked assets."
+	}
 	const errors = findings.filter((entry) => entry.severity === "error").length
 	const warnings = findings.filter(
 		(entry) => entry.severity === "warning",

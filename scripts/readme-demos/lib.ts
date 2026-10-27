@@ -34,6 +34,15 @@ export const parseSceneSelection = (value = "all"): Scene[] => {
 	return [value]
 }
 
+export const isSupportedDemoNode = (version: string): boolean => {
+	const match = nodeVersionPattern.exec(version)
+	return (
+		!!match &&
+		(Number(match[1]) > 22 ||
+			(Number(match[1]) === 22 && Number(match[2]) >= 1))
+	)
+}
+
 const commandOutput = (command: string, args: string[], env = process.env) => {
 	const result = spawnSync(command, args, {
 		env,
@@ -48,11 +57,10 @@ const commandOutput = (command: string, args: string[], env = process.env) => {
 
 export const getNode24Path = () => {
 	const node = commandOutput("node", ["--version"])
-	const match = nodeVersionPattern.exec(node.stdout)
-	if (node.status !== 0 || !match || Number(match[1]) < 21) {
+	if (node.status !== 0 || !isSupportedDemoNode(node.stdout)) {
 		throw new Error(
-			`README demos require the patched Node 24 LTS line (24.21.0 or newer). ` +
-				`Activate Node 24.21.0 or newer in the 24.x line before recording or rendering (current: ${node.stdout || "unavailable"}).`,
+			`README demos require the patched Node 24 LTS line (24.22.1 or newer). ` +
+				`Activate Node 24.22.1 or newer in the 24.x line before recording or rendering (current: ${node.stdout || "unavailable"}).`,
 		)
 	}
 
@@ -66,7 +74,7 @@ export const getNode24Path = () => {
 export const assertTerminalizer = (env: NodeJS.ProcessEnv) => {
 	if (!existsSync(terminalizerBin)) {
 		throw new Error(
-			"Terminalizer is not installed. Run `bun install --cwd scripts/readme-demos --frozen-lockfile` with Node 24.21.0 or newer in the 24.x line active.",
+			"Terminalizer is not installed. Run `bun install --cwd scripts/readme-demos --frozen-lockfile` with Node 24.22.1 or newer in the 24.x line active.",
 		)
 	}
 

@@ -1,4 +1,4 @@
-FROM oven/bun:1.4.3-slim
+FROM oven/bun:1.4.4-slim
 
 # Install openssh-client for ssh-keygen and expect for PTY-driven e2e flows
 RUN apt-get update && apt-get install -y openssh-client git expect && rm -rf /var/lib/apt/lists/*

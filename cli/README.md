@@ -1060,6 +1060,9 @@ report.
 Gzip (`.gz` or gzip magic bytes) and Brotli (`.br`) assets are also inspected
 in memory. Decompression is limited to 16 MiB of compressed input and 32 MiB
 of expanded output per file; both count toward the 512 MiB scan budget.
+Brotli decoding requires a runtime exposing the CVE-2026-111497 fix; otherwise
+`.br` files make the scan incomplete (exit `2`) and gzip/plain-file scanning
+continues. Use a patched Node.js release or the current standalone dotenc binary.
 Recognized unsupported archives (including ZIP and tar), nested compression,
 malformed compressed files, and exceeded limits return exit `2`. Scan an
 unpacked build directory before packaging; the command never extracts files.

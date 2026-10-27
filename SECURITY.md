@@ -610,6 +610,15 @@ fragmentation, mixed/nested encodings, encryption, unsupported transformations,
 and unknown containers can evade it and require provider-specific review.
 
 Gzip is identified by suffix or magic bytes, and Brotli by `.br` suffix.
+Before Brotli decoding, the scanner requires the runtime error constant
+`BROTLI_DECODER_ERROR_FORMAT_BLOCK_SWITCH` added with the CVE-2026-111497 fix
+(Node22.23.4/24.22.1/26.12.1 and Bun1.4.4). This capability check recognizes
+vendor backports that expose the fix without relying on a version string. A
+runtime without that marker skips Brotli decoding and reports an incomplete
+scan (exit`2`); gzip/plain-file scanning continues. Byte limits alone do not
+protect against native decoder memory corruption. Use a patched runtime or
+scan unpacked assets. This does not gate ordinary run/dev commands or change
+the informational npm OpenSSL notice.
 Decompression uses the runtime's bounded zlib APIs in memory, with at most
 16 MiB compressed input and 32 MiB expanded output per file, also bounded by
 the remaining overall byte budget. Raw and expanded bytes both count toward
@@ -1005,7 +1014,7 @@ implementation actions in `actions/`, which are thin wrappers around the dotenc
 CLI:
 
 - `actions/setup` installs `@dotenc/cli` through npm. Its default is the exact
-  CLI package version shipped with this repository (`0.15.2`), not npm's
+  CLI package version shipped with this repository (`0.15.3`), not npm's
   mutable `latest` tag. Pin the action ref to a commit when workflows also need
   an immutable action implementation.
 - `actions/run` writes the requested command to a temporary script and executes
@@ -1142,7 +1151,7 @@ provider-specific runbook for that provider's own runner.
 
 ## Build Runtime
 
-Development, CI, container builds, and standalone compilation pin Bun 1.4.3.
+Development, CI, container builds, and standalone compilation pin Bun 1.4.4.
 The root text `bun.lock` records the dependency graph for reproducible installs.
 Standalone releases embed the Bun runtime used at compilation; updating the
 build pin does not update binaries already installed by users. Those receive
@@ -1177,7 +1186,7 @@ runtimes. Neither a notice nor a dotenc update patches the user's Node or OS.
 ### Node.js authoring runtime
 
 CI and publication Node steps use the reviewed `.node-version` baseline
-(24.21.0). README demo authoring requires Node 24.21.0 or a newer 24.x patch
+(24.22.1). README demo authoring requires Node 24.22.1 or a newer 24.x patch
 and a compatible native PTY. This replaces the obsolete Node 16 authoring
 requirement. npm users supply and patch their own Node.js runtime; this build
 pin does not upgrade that runtime or the Node runtime hosted by GitHub Actions.

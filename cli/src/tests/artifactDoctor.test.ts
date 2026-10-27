@@ -518,3 +518,39 @@ test("artifact doctor charges failed decompression against the shared budget", a
 		report.findings.find((finding) => finding.id === "scan.incomplete")?.paths,
 	).toEqual(["a.gz", "z.txt"])
 })
+
+describe("Brotli decoder security capability", () => {
+	test("skips Brotli on an unverified runtime while scanning gzip and reporting no clean result", async () => {
+		const { artifacts } = await makeArtifactDirectory()
+		const value = "synthetic-brotli-runtime-secret"
+		await fs.writeFile(
+			path.join(artifacts, "app.br"),
+			brotliCompressSync(Buffer.from(value)),
+		)
+		await fs.writeFile(
+			path.join(artifacts, "app.gz"),
+			gzipSync(Buffer.from(value)),
+		)
+		const report = await createArtifactDoctorReport(
+			artifacts,
+			{ secretNames: ["TEST_SECRET"] },
+			{
+				environment: { TEST_SECRET: value },
+				brotliDecoderPatched: false,
+			},
+		)
+		expect(report.complete).toBe(false)
+		expect(report.exitCode).toBe(2)
+		expect(report.passed).toEqual([])
+		expect(report.summary.filesScanned).toBe(1)
+		expect(
+			report.findings.find((finding) => finding.id === "scan.incomplete")
+				?.message,
+		).toContain("CVE-2026-111497")
+		expect(
+			report.findings.find((finding) => finding.id === "artifact.secret-value")
+				?.paths,
+		).toEqual(["app.gz"])
+		expect(JSON.stringify(report)).not.toContain(value)
+	})
+})
