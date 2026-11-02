@@ -81,8 +81,9 @@ legacy argument aliases, conversions and error paths; validate rendering when
 changing either override. These tools are for sanitized local demo assets and
 are not shipped in the CLI package.
 
-The `follow-redirects` 1.16.2 override fixes cross-origin credential stripping
-for array-form headers, declared sensitive header names containing regular
-expression metacharacters, and cross-realm sensitive-header arrays. It also
-applies to the separate extension publishing toolchain; it is not part of the
-installed extension or CLI runtime.
+The `follow-redirects` 1.16.2 override strips declared sensitive headers on
+redirects to unrelated hosts or less secure protocols, including array-form
+headers, names containing regular-expression metacharacters, and cross-realm
+arrays. It retains those headers on redirects to related subdomains, which
+callers must trust. This override also applies to the separate extension
+publishing toolchain; it is not part of the installed extension or CLI runtime.
