@@ -74,14 +74,15 @@ The committed outputs are:
 
 ### Dependency security overrides
 
-Electron is pinned to 43.8.3 for its upstream security backports. The `argparse`
+Electron is pinned to 43.8.6 for its upstream security backports. The `argparse`
 2.0.1 override removes the unpatched `sprintf-js` dependency from js-yaml 3's
 CLI without replacing Terminalizer's YAML API. `bun run test` exercises the
 legacy argument aliases, conversions and error paths; validate rendering when
 changing either override. These tools are for sanitized local demo assets and
 are not shipped in the CLI package.
 
-The `follow-redirects` 1.16.1 override fixes cross-origin credential stripping
-for array-form headers and declared sensitive header names containing regular
-expression metacharacters. It also applies to the separate extension publishing
-toolchain; it is not part of the installed extension or CLI runtime.
+The `follow-redirects` 1.16.2 override fixes cross-origin credential stripping
+for array-form headers, declared sensitive header names containing regular
+expression metacharacters, and cross-realm sensitive-header arrays. It also
+applies to the separate extension publishing toolchain; it is not part of the
+installed extension or CLI runtime.
