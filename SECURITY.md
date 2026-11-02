@@ -1222,10 +1222,14 @@ manifests enforce compatible patched versions for known vulnerable transitive
 dependencies. Reassess these constraints with upstream fixes instead of removing
 them solely because the root audit is clean. Electron's embedded browser runtime
 also requires upstream release review beyond npm advisories. The separate tool
-lockfiles pin `follow-redirects` 1.16.1 to preserve credential stripping on
-cross-origin redirects, including array-form headers and custom sensitive-header
-names. This dependency belongs to publishing/demo tools, not installed extension
-or CLI runtime code.
+lockfiles pin `follow-redirects` 1.16.2 to strip sensitive headers on redirects
+to unrelated hosts or less secure protocols, including array-form headers,
+custom sensitive-header names and cross-realm arrays. The library retains these
+headers on redirects to related subdomains, which callers must trust. The
+publishing toolchain also overrides affected `glob`, `minimatch` and `qs`
+versions. Package and test runs cover ordinary tooling compatibility; the
+synthetic redirect test exercises the sensitive-header guard. These dependencies
+are not included in the installed extension or CLI runtime.
 
 ### CI dependency verification
 
