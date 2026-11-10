@@ -26,7 +26,10 @@ require_alpine_version() {
 
 case "$ID:$VERSION_ID" in
 	debian:13)
+		require_debian_version apt '3.0.4'
+		require_debian_version libapt-pkg7.0 '3.0.4'
 		require_debian_version ca-certificates '20250419+deb13u1'
+		require_debian_version zlib1g '1:1.3.dfsg+really1.3.1-1+deb13u1'
 		require_debian_version openssl '3.5.7-1~deb13u3'
 		require_debian_version libssl3t64 '3.5.7-1~deb13u3'
 		require_debian_version openssl-provider-legacy '3.5.7-1~deb13u3'
@@ -39,11 +42,11 @@ case "$ID:$VERSION_ID" in
 		require_alpine_version musl-utils '1.2.6-r3'
 		require_alpine_version ca-certificates '20261020-r0'
 		require_alpine_version ca-certificates-bundle '20261020-r0'
-		require_alpine_version zlib '1.3.2-r1'
+		require_alpine_version zlib '1.4-r0'
 		require_alpine_version libssl3 '3.5.9-r0'
 		require_alpine_version libcrypto3 '3.5.9-r0'
 		for package in openssh-client-common openssh-client-default openssh-keygen; do
-			require_alpine_version "$package" '10.3_p1-r1'
+			require_alpine_version "$package" '10.3_p1-r2'
 		done
 		;;
 	*)

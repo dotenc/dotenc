@@ -10,7 +10,7 @@
     },
     "cli": {
       "name": "@dotenc/cli",
-      "version": "0.15.3",
+      "version": "0.15.4",
       "bin": {
         "dotenc": "./dist/cli.js",
       },

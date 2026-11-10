@@ -44,20 +44,22 @@ Every runtime architecture must pass `scripts/check-image-security.sh` during
 its build. You can rerun the same read-only check on a published image:
 
 ```bash
-docker run --rm --entrypoint sh ghcr.io/dotenc/cli:0.15.2 /usr/local/bin/check-image-security
+docker run --rm --entrypoint sh ghcr.io/dotenc/cli:0.15.4 /usr/local/bin/check-image-security
 ```
 
-Reviewed minimum package versions (2026-10-12):
+Reviewed minimum package versions (2026-11-09):
 
 | Distribution | Packages | Minimum version |
 | --- | --- | --- |
+| Debian 13 | `apt`, `libapt-pkg7.0` | `3.0.4` |
+| Debian 13 | `zlib1g` | `1:1.3.dfsg+really1.3.1-1+deb13u1` |
 | Debian 13 | `openssl`, `libssl3t64`, `openssl-provider-legacy` | `3.5.7-1~deb13u3` |
 | Debian 13 | `libpcre2-8-0` | `10.46-1~deb13u3` |
 | Debian 13 | `perl-base` | `5.40.1-6+deb13u1` |
 | Debian 13 | `liblzma5` | `5.8.1-1+deb13u2` |
-| Alpine 3.24 | `zlib` | `1.3.2-r1` |
+| Alpine 3.24 | `zlib` | `1.4-r0` |
 | Alpine 3.24 | `libssl3`, `libcrypto3` | `3.5.9-r0` |
-| Alpine 3.24 | `openssh-client-common`, `openssh-client-default`, `openssh-keygen` | `10.3_p1-r1` |
+| Alpine 3.24 | `openssh-client-common`, `openssh-client-default`, `openssh-keygen` | `10.3_p1-r2` |
 
 The Debian OpenSSL floor follows [DSA-6531-1](https://security-tracker.debian.org/tracker/DSA-6531-1),
 which backports the September 29 fixes into Trixie's 3.5.7 package.
@@ -79,20 +81,32 @@ The defect requires decoder reinitialization after allocation failure; no direct
 dotenc call path was established. The image includes liblzma through packaging
 tools, so rebuilds require the available vendor fix.
 
-Alpine additionally requires the [zlib backport for CVE-2026-85091](https://github.com/alpinelinux/aports/commit/0afa2da0e8c8051c6f8f64a7a388e5a259904245).
-The vulnerable non-blocking gzip write/printf sequence is not used by dotenc.
-Debian still tracks its zlib source package as unresolved; the affected-range
-discussion is ongoing, so do not treat an older version string as proof of safety.
+Alpine additionally requires zlib `1.4-r0`: its security database tracks
+`CVE-2026-4738` at that revision. Upstream's
+[1.4 correction](https://github.com/madler/zlib/releases/tag/v1.4) is in
+`contrib/infback9`, outside the libz loaded by the image. The earlier
+gzip-write issue `CVE-2026-85091` was already fixed by Alpine's
+[`1.3.2-r1` backport](https://github.com/alpinelinux/aports/commit/0afa2da0e8c8051c6f8f64a7a388e5a259904245). Debian's
+[DSA-6613-1](https://security-tracker.debian.org/tracker/DSA-6613-1)
+backports fixes for `CVE-2026-27171`, `CVE-2026-76844`, and
+`CVE-2026-85091` to Trixie zlib `1:1.3.dfsg+really1.3.1-1+deb13u1`.
+No dotenc call path to the vulnerable gzip write sequence was established;
+the runtime images still ship zlib, so their package floors require the fixes.
+
+Debian's [DSA-6607-1](https://security-tracker.debian.org/tracker/DSA-6607-1)
+fixes APT's `CVE-2026-109518` download verification bypass in `3.0.4`.
+Fresh official Trixie base images contain the fixed APT on both architectures,
+and the image build pulls the base afresh and upgrades packages before use.
 
 **Older Bookworm images and npm hosts:** the Trixie migration fixes the reviewed
 September OpenSSL issues in default OCI images starting with 0.15.1. It does not upgrade
-previously pulled Bookworm images or the host's Node/OpenSSL. As of 2026-10-12,
-Bookworm still lacks the CVE-2026-35189 fix even with its newer
-`3.0.22-1~deb12u1` OpenSSL candidate. The npm runtime notice is informational
+previously pulled Bookworm images or the host's Node/OpenSSL. Bookworm's
+`3.0.22-1~deb12u2` OpenSSL update now fixes `CVE-2026-35189`, but old images
+and npm hosts need their own update. The npm runtime notice is informational
 and separate from the standalone OCI binary; it is not a mitigation or a claim
 that the host is patched.
 
-**Remaining Debian OpenSSH limitation:** as of 2026-10-12, Debian Trixie
+**Remaining Debian OpenSSH limitation:** as of 2026-11-09, Debian Trixie
 (`openssh-client` `1:10.0p1-7+deb13u4`) and Bookworm have no fixed package recorded for the reviewed client issues CVE-2026-59995,
 CVE-2026-59996, CVE-2026-60002, CVE-2026-73281 and CVE-2026-73282. For example,
 [Debian tracks CVE-2026-73282 without a stable update](https://security-tracker.debian.org/tracker/CVE-2026-73282),
@@ -112,8 +126,8 @@ review; there is no separate daily checker.
 
 **New OpenSSH 10.6 advisories:** the [October 6 upstream release](https://www.openssh.org/txt/release-10.6)
 fixes additional SFTP traversal, SSH username handling, compression and certificate
-expiry issues. As of October 12, no corresponding backport was verified in either
-Trixie `1:10.0p1-7+deb13u4` or Alpine `10.3_p1-r1`. Alpine's earlier backports
+expiry issues. As of November 9, no corresponding client backport was verified in either
+Trixie `1:10.0p1-7+deb13u4` or Alpine `10.3_p1-r2`. Alpine's earlier backports
 cover the five previously tracked client advisories, not this new set. dotenc
 uses key creation/passphrase conversion, not SSH certificate signing or network
 SSH/SFTP. Wrapped commands must avoid untrusted SSH usernames and unsafe recursive
@@ -275,4 +289,10 @@ format changes are tied to the image distribution path.
 
 The October 26 security baseline also requires Debian `ca-certificates >=20250419+deb13u1` and Alpine `ca-certificates`/`ca-certificates-bundle >=20261020-r0`, available for both architectures, to remove compromised eMudhra trust anchors. Bun 1.4.4 embedded in the rebuilt CLI independently updates its bundled trust store and blocks the compromised intermediate public keys. System trust and embedded-runtime trust are separate surfaces.
 
-Alpine `musl` and `musl-utils` must also be at least `1.2.6-r3` for CVE-2026-107891. Vendor security metadata and fresh main indexes confirm that revision on amd64 and arm64; the published 0.15.2 images still contain 1.2.6-r2 until this release is verified.
+Alpine `musl` and `musl-utils` must also be at least `1.2.6-r3` for CVE-2026-107891. Vendor security metadata and main indexes confirm that revision on amd64 and arm64; published images from 0.15.3 onward contain it.
+
+Alpine's `10.3_p1-r2` OpenSSH package backports the
+[server authentication fix](https://alpinelinux.org/posts/2026-11-05-openssh-password-authentication-bypass/)
+for `CVE-2026-123158`. The dotenc images include client tools and `ssh-keygen`,
+not `sshd`; this server-only exploit path is absent from them. Derived images
+that add `sshd` must use a patched server package and restart it after upgrading.
