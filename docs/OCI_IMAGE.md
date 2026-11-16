@@ -44,7 +44,7 @@ Every runtime architecture must pass `scripts/check-image-security.sh` during
 its build. You can rerun the same read-only check on a published image:
 
 ```bash
-docker run --rm --entrypoint sh ghcr.io/dotenc/cli:0.15.4 /usr/local/bin/check-image-security
+docker run --rm --entrypoint sh ghcr.io/dotenc/cli:0.15.5 /usr/local/bin/check-image-security
 ```
 
 Reviewed minimum package versions (2026-11-09):

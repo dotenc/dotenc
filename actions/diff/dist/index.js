@@ -11625,6 +11625,7 @@ Or create/select a passwordless key for dotenc.`;
 var import_node_path = __toESM(require("node:path"), 1);
 
 // cli/src/helpers/getEnvironmentByPath.ts
+var import_node_fs = require("node:fs");
 var import_promises = __toESM(require("node:fs/promises"), 1);
 
 // cli/src/helpers/parseEnvironmentDocument.ts
@@ -11761,19 +11762,45 @@ var readBoundedEnvironmentFile = async (handle) => {
     input.fill(0);
   }
 };
-var getEnvironmentByPath = async (filePath) => {
+var readEncryptedEnvironmentFileByPath = async (filePath) => {
+  let pathStat;
+  try {
+    pathStat = await import_promises.default.lstat(filePath, { bigint: true });
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      throw new Error(`Environment file not found: ${filePath}`);
+    }
+    throw new Error("Encrypted environment could not be inspected safely.");
+  }
+  if (pathStat.isSymbolicLink() || !pathStat.isFile()) {
+    throw new Error("Encrypted environment must be a regular, non-symbolic link file.");
+  }
   let handle;
   try {
-    handle = await import_promises.default.open(filePath, "r");
+    handle = await import_promises.default.open(filePath, import_node_fs.constants.O_RDONLY | (import_node_fs.constants.O_NOFOLLOW ?? 0) | (import_node_fs.constants.O_NONBLOCK ?? 0));
   } catch {
-    throw new Error(`Environment file not found: ${filePath}`);
+    throw new Error("Encrypted environment could not be opened safely.");
   }
   try {
-    return parseEnvironmentDocument(await readBoundedEnvironmentFile(handle));
-  } catch {
-    throw new Error("Failed to parse the environment file. Please ensure it is a valid JSON file.");
+    const openedStat = await handle.stat({ bigint: true });
+    if (!openedStat.isFile() || openedStat.dev !== pathStat.dev || openedStat.ino !== pathStat.ino) {
+      throw new Error("Encrypted environment changed during validation.");
+    }
+    try {
+      return await readBoundedEnvironmentFile(handle);
+    } catch {
+      throw new Error("Failed to parse the environment file. Please ensure it is a valid JSON file.");
+    }
   } finally {
     await handle.close().catch(() => {});
+  }
+};
+var getEnvironmentByPath = async (filePath) => {
+  const raw = await readEncryptedEnvironmentFileByPath(filePath);
+  try {
+    return parseEnvironmentDocument(raw);
+  } catch {
+    throw new Error("Failed to parse the environment file. Please ensure it is a valid JSON file.");
   }
 };
 
@@ -11785,7 +11812,7 @@ var getEnvironmentByName = async (name, dir) => {
 
 // cli/src/helpers/getPrivateKeys.ts
 var import_node_crypto6 = __toESM(require("node:crypto"), 1);
-var import_node_fs = require("node:fs");
+var import_node_fs2 = require("node:fs");
 var import_promises4 = __toESM(require("node:fs/promises"), 1);
 var import_node_os3 = __toESM(require("node:os"), 1);
 var import_node_path3 = __toESM(require("node:path"), 1);
@@ -12338,7 +12365,7 @@ var readDiagnosticPrivateKey = async (filePath, maximumBytes) => {
     return { status: "too-large" };
   let handle;
   try {
-    handle = await import_promises4.default.open(filePath, import_node_fs.constants.O_RDONLY | (import_node_fs.constants.O_NOFOLLOW ?? 0) | (import_node_fs.constants.O_NONBLOCK ?? 0));
+    handle = await import_promises4.default.open(filePath, import_node_fs2.constants.O_RDONLY | (import_node_fs2.constants.O_NOFOLLOW ?? 0) | (import_node_fs2.constants.O_NONBLOCK ?? 0));
   } catch {
     return { status: "incomplete" };
   }
@@ -12484,7 +12511,7 @@ var getPrivateKeys = async (options = {}) => {
       incompleteKeyCount += 1;
       return result();
     }
-  } else if (!import_node_fs.existsSync(sshDir)) {
+  } else if (!import_node_fs2.existsSync(sshDir)) {
     return result();
   }
   let files;
@@ -12661,7 +12688,7 @@ var import_node_child_process2 = require("node:child_process");
 var import_node_crypto9 = __toESM(require("node:crypto"), 1);
 // cli/src/helpers/onePasswordLocatorCache.ts
 var import_node_crypto7 = require("node:crypto");
-var import_node_fs2 = require("node:fs");
+var import_node_fs3 = require("node:fs");
 var import_promises5 = __toESM(require("node:fs/promises"), 1);
 var import_node_os4 = __toESM(require("node:os"), 1);
 var import_node_path4 = __toESM(require("node:path"), 1);
@@ -12710,7 +12737,7 @@ async function probeOnePasswordLocator(fingerprint, options = {}) {
   }
   let handle;
   try {
-    handle = await import_promises5.default.open(filePath, import_node_fs2.constants.O_RDONLY | (import_node_fs2.constants.O_NOFOLLOW ?? 0) | (import_node_fs2.constants.O_NONBLOCK ?? 0));
+    handle = await import_promises5.default.open(filePath, import_node_fs3.constants.O_RDONLY | (import_node_fs3.constants.O_NOFOLLOW ?? 0) | (import_node_fs3.constants.O_NONBLOCK ?? 0));
   } catch {
     return { status: "incomplete" };
   }

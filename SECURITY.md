@@ -280,6 +280,14 @@ not a physical-erasure guarantee.
 | `.env.*.enc` files | Default umask | Encrypted; safe to be world-readable |
 | `.dotenc/*.pub` files | Default umask | Public keys; intentionally public |
 
+Encrypted environment reads reject a symbolic link in the final file component
+and compare the opened file's device and inode with the inspected path. This
+prevents a project-controlled `.env.*.enc` symlink from selecting a valid
+same-named envelope outside the project during `run` or `dev`. The `textconv`
+raw-content fallback applies the same bounded file-open guard before emitting
+content. Directory ancestors remain part of the caller's filesystem trust
+boundary.
+
 The operating system's resolved home directory is the trust anchor for home
 configuration. dotenc rejects a symlink or non-standard file at the managed
 `~/.dotenc` directory or `config.json` component. On POSIX, it also opens the
@@ -1014,7 +1022,7 @@ implementation actions in `actions/`, which are thin wrappers around the dotenc
 CLI:
 
 - `actions/setup` installs `@dotenc/cli` through npm. Its default is the exact
-  CLI package version shipped with this repository (`0.15.4`), not npm's
+  CLI package version shipped with this repository (`0.15.5`), not npm's
   mutable `latest` tag. Pin the action ref to a commit when workflows also need
   an immutable action implementation.
 - `actions/run` writes the requested command to a temporary script and executes
@@ -1186,10 +1194,14 @@ runtimes. Neither a notice nor a dotenc update patches the user's Node or OS.
 ### Node.js authoring runtime
 
 CI and publication Node steps use the reviewed `.node-version` baseline
-(24.22.1). README demo authoring requires Node 24.22.1 or a newer 24.x patch
+(24.22.3). README demo authoring requires Node 24.22.3 or a newer 24.x patch
 and a compatible native PTY. This replaces the obsolete Node 16 authoring
 requirement. npm users supply and patch their own Node.js runtime; this build
 pin does not upgrade that runtime or the Node runtime hosted by GitHub Actions.
+The [November 2026 Node security release](https://nodejs.org/en/blog/vulnerability/november-2026-security-releases)
+fixes server-side HTTP/2, HTTPS, TLS and proxy-error issues. dotenc does not
+start an HTTP/TLS server; no direct server exploit path was found in the CLI.
+The updated authoring pin does not patch older Node installations used for npm.
 
 ## Known Limitations
 

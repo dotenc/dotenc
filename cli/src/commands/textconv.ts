@@ -1,9 +1,11 @@
-import fs from "node:fs/promises"
 import path from "node:path"
 import { decryptData } from "../helpers/crypto"
 import { decryptDataKey } from "../helpers/decryptDataKey"
 import { decryptEnvironmentData } from "../helpers/decryptEnvironment"
-import { getEnvironmentByPath } from "../helpers/getEnvironmentByPath"
+import {
+	getEnvironmentByPath,
+	readEncryptedEnvironmentFileByPath,
+} from "../helpers/getEnvironmentByPath"
 import { getPrivateKeys } from "../helpers/getPrivateKeys"
 import { loadCachedOnePasswordPrivateKey } from "../helpers/onePasswordKeyProvider"
 
@@ -15,7 +17,7 @@ type TextconvDeps = {
 }
 
 const defaultDeps: TextconvDeps = {
-	readFile: (filePath, encoding) => fs.readFile(filePath, encoding),
+	readFile: (filePath) => readEncryptedEnvironmentFileByPath(filePath),
 	getEnvironmentByPath,
 	decryptEnvironmentData,
 	writeStdout: (content) => process.stdout.write(content),
