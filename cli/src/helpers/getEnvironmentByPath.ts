@@ -1,4 +1,4 @@
-import { constants } from "node:fs"
+import { type BigIntStats, constants } from "node:fs"
 import type { FileHandle } from "node:fs/promises"
 import fs from "node:fs/promises"
 import type { Environment } from "../schemas/environment"
@@ -40,9 +40,9 @@ const readBoundedEnvironmentFile = async (
 export const readEncryptedEnvironmentFileByPath = async (
 	filePath: string,
 ): Promise<string> => {
-	let pathStat: Awaited<ReturnType<typeof fs.lstat>>
+	let pathStat: BigIntStats
 	try {
-		pathStat = await fs.lstat(filePath)
+		pathStat = await fs.lstat(filePath, { bigint: true })
 	} catch (error) {
 		if (
 			error instanceof Error &&
@@ -72,7 +72,7 @@ export const readEncryptedEnvironmentFileByPath = async (
 	}
 
 	try {
-		const openedStat = await handle.stat()
+		const openedStat = await handle.stat({ bigint: true })
 		if (
 			!openedStat.isFile() ||
 			openedStat.dev !== pathStat.dev ||

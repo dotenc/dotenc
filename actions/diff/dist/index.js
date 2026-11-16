@@ -11765,7 +11765,7 @@ var readBoundedEnvironmentFile = async (handle) => {
 var readEncryptedEnvironmentFileByPath = async (filePath) => {
   let pathStat;
   try {
-    pathStat = await import_promises.default.lstat(filePath);
+    pathStat = await import_promises.default.lstat(filePath, { bigint: true });
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
       throw new Error(`Environment file not found: ${filePath}`);
@@ -11782,7 +11782,7 @@ var readEncryptedEnvironmentFileByPath = async (filePath) => {
     throw new Error("Encrypted environment could not be opened safely.");
   }
   try {
-    const openedStat = await handle.stat();
+    const openedStat = await handle.stat({ bigint: true });
     if (!openedStat.isFile() || openedStat.dev !== pathStat.dev || openedStat.ino !== pathStat.ino) {
       throw new Error("Encrypted environment changed during validation.");
     }
