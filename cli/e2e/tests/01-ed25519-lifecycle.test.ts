@@ -1,9 +1,11 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import {
 	existsSync,
+	mkdirSync,
 	mkdtempSync,
 	readFileSync,
 	rmSync,
+	symlinkSync,
 	writeFileSync,
 } from "node:fs"
 import os from "node:os"
@@ -70,5 +72,46 @@ describe("Ed25519 Lifecycle", () => {
 	test("run decrypts and exposes env vars", () => {
 		const result = runCli(home, workspace, ["run", "-e", "staging", "--", "sh", "-c", "echo $MY_SECRET"])
 		expect(result.stdout).toContain("hunter2")
+	}, TIMEOUT)
+
+	test("run rejects a symlink selecting another project's encrypted environment", () => {
+		const linkedWorkspace = mkdtempSync(path.join(os.tmpdir(), "e2e-01-linked-"))
+		try {
+			mkdirSync(path.join(linkedWorkspace, ".dotenc"))
+			symlinkSync(
+				path.join(workspace, ".env.staging.enc"),
+				path.join(linkedWorkspace, ".env.staging.enc"),
+			)
+			const result = runCli(home, linkedWorkspace, [
+				"run",
+				"-e",
+				"staging",
+				"--",
+				"sh",
+				"-c",
+				"echo $MY_SECRET",
+			])
+			expect(result.exitCode).not.toBe(0)
+			expect(result.stderr).toContain("non-symbolic link")
+			expect(result.stdout).not.toContain("hunter2")
+		} finally {
+			rmSync(linkedWorkspace, { recursive: true, force: true })
+		}
+	}, TIMEOUT)
+
+	test("textconv does not emit raw content through an encrypted-file symlink", () => {
+		const linkedWorkspace = mkdtempSync(path.join(os.tmpdir(), "e2e-01-textconv-link-"))
+		try {
+			const outsidePath = path.join(linkedWorkspace, "outside.txt")
+			const linkPath = path.join(linkedWorkspace, ".env.staging.enc")
+			writeFileSync(outsidePath, "SYNTHETIC_TEXTCONV_OUTSIDE_CONTENT")
+			symlinkSync(outsidePath, linkPath)
+			const result = runCli(home, linkedWorkspace, ["textconv", linkPath])
+			expect(result.exitCode).not.toBe(0)
+			expect(result.stdout).not.toContain("SYNTHETIC_TEXTCONV_OUTSIDE_CONTENT")
+			expect(result.stderr).toContain("non-symbolic link")
+		} finally {
+			rmSync(linkedWorkspace, { recursive: true, force: true })
+		}
 	}, TIMEOUT)
 })

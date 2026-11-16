@@ -1,5 +1,11 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import {
+	mkdirSync,
+	mkdtempSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { getEnvironmentByPath } from "../helpers/getEnvironmentByPath"
@@ -42,6 +48,34 @@ describe("getEnvironmentByPath", () => {
 			/Environment file not found/,
 		)
 	})
+
+	test.skipIf(process.platform === "win32")(
+		"rejects a symlinked encrypted environment instead of loading its target",
+		async () => {
+			const outsidePath = path.join(tmpDir, "outside.enc")
+			const projectDir = path.join(tmpDir, "project")
+			mkdirSync(projectDir)
+			const linkPath = path.join(projectDir, ".env.linked.enc")
+			writeFileSync(
+				outsidePath,
+				JSON.stringify({
+					keys: [
+						{
+							name: "alice",
+							fingerprint: "abc123",
+							encryptedDataKey: "ZW5jcnlwdGVk",
+							algorithm: "ed25519",
+						},
+					],
+					encryptedContent: "ZW5jcnlwdGVk",
+				}),
+			)
+			symlinkSync(outsidePath, linkPath)
+			await expect(getEnvironmentByPath(linkPath)).rejects.toThrow(
+				/symbolic link/,
+			)
+		},
+	)
 
 	test("throws when file contains invalid JSON", async () => {
 		const filePath = path.join(tmpDir, "bad.enc")

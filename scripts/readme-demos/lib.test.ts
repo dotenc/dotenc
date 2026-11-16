@@ -58,16 +58,14 @@ describe("README demo YAML CLI compatibility", () => {
 })
 
 describe("README demo Node security baseline", () => {
-	test.each([
-		"v24.22.1",
-		"v24.22.2",
-		"v24.23.0",
-	])("accepts patched %s", (version) => {
+	test.each(["v24.22.3", "v24.23.0"])("accepts patched %s", (version) => {
 		expect(isSupportedDemoNode(version)).toBe(true)
 	})
 	test.each([
 		"v24.21.0",
 		"v24.22.0",
+		"v24.22.1",
+		"v24.22.2",
 		"v22.23.4",
 		"v26.12.1",
 		"v24.22.1-rc.1",
