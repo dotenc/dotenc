@@ -28,6 +28,11 @@ case "$ID:$VERSION_ID" in
 	debian:13)
 		require_debian_version apt '3.0.4'
 		require_debian_version libapt-pkg7.0 '3.0.4'
+		require_debian_version libc6 '2.41-12+deb13u5'
+		require_debian_version libc-bin '2.41-12+deb13u5'
+		for package in libgssapi-krb5-2 libk5crypto3 libkrb5-3 libkrb5support0; do
+			require_debian_version "$package" '1.21.3-5+deb13u2'
+		done
 		require_debian_version ca-certificates '20250419+deb13u1'
 		require_debian_version zlib1g '1:1.3.dfsg+really1.3.1-1+deb13u1'
 		require_debian_version openssl '3.5.7-1~deb13u3'
@@ -43,8 +48,8 @@ case "$ID:$VERSION_ID" in
 		require_alpine_version ca-certificates '20261020-r0'
 		require_alpine_version ca-certificates-bundle '20261020-r0'
 		require_alpine_version zlib '1.4-r0'
-		require_alpine_version libssl3 '3.5.9-r0'
-		require_alpine_version libcrypto3 '3.5.9-r0'
+		require_alpine_version libssl3 '3.5.9-r1'
+		require_alpine_version libcrypto3 '3.5.9-r1'
 		for package in openssh-client-common openssh-client-default openssh-keygen; do
 			require_alpine_version "$package" '10.3_p1-r2'
 		done

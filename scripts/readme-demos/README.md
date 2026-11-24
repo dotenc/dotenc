@@ -12,7 +12,7 @@ updating the lockfile.
 
 ## Prerequisites
 
-- Bun 1.4.4
+- Bun 1.4.5
 - Node 24.22.3 or newer in the 24.x LTS line active on `PATH` (for Terminalizer's native PTY)
 - WebP tools (`gif2webp` and `webpmux`; installed by Homebrew's `webp` formula)
 - `git`, `ssh-keygen`, `nano`, and `expect`
@@ -74,7 +74,7 @@ The committed outputs are:
 
 ### Dependency security overrides
 
-Electron is pinned to 43.8.10 for its upstream security backports. The `argparse`
+Electron is pinned to 43.8.12 for its upstream security backports. The `argparse`
 2.0.1 override removes the unpatched `sprintf-js` dependency from js-yaml 3's
 CLI without replacing Terminalizer's YAML API. `bun run test` exercises the
 legacy argument aliases, conversions and error paths; validate rendering when
