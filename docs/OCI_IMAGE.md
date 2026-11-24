@@ -44,21 +44,23 @@ Every runtime architecture must pass `scripts/check-image-security.sh` during
 its build. You can rerun the same read-only check on a published image:
 
 ```bash
-docker run --rm --entrypoint sh ghcr.io/dotenc/cli:0.15.5 /usr/local/bin/check-image-security
+docker run --rm --entrypoint sh ghcr.io/dotenc/cli:0.15.6 /usr/local/bin/check-image-security
 ```
 
-Reviewed minimum package versions (2026-11-09):
+Reviewed minimum package versions (2026-11-24):
 
 | Distribution | Packages | Minimum version |
 | --- | --- | --- |
 | Debian 13 | `apt`, `libapt-pkg7.0` | `3.0.4` |
+| Debian 13 | `libc6`, `libc-bin` | `2.41-12+deb13u5` |
+| Debian 13 | `libgssapi-krb5-2`, `libk5crypto3`, `libkrb5-3`, `libkrb5support0` | `1.21.3-5+deb13u2` |
 | Debian 13 | `zlib1g` | `1:1.3.dfsg+really1.3.1-1+deb13u1` |
 | Debian 13 | `openssl`, `libssl3t64`, `openssl-provider-legacy` | `3.5.7-1~deb13u3` |
 | Debian 13 | `libpcre2-8-0` | `10.46-1~deb13u3` |
 | Debian 13 | `perl-base` | `5.40.1-6+deb13u1` |
 | Debian 13 | `liblzma5` | `5.8.1-1+deb13u2` |
 | Alpine 3.24 | `zlib` | `1.4-r0` |
-| Alpine 3.24 | `libssl3`, `libcrypto3` | `3.5.9-r0` |
+| Alpine 3.24 | `libssl3`, `libcrypto3` | `3.5.9-r1` |
 | Alpine 3.24 | `openssh-client-common`, `openssh-client-default`, `openssh-keygen` | `10.3_p1-r2` |
 
 The Debian OpenSSL floor follows [DSA-6531-1](https://security-tracker.debian.org/tracker/DSA-6531-1),
@@ -69,6 +71,8 @@ version; use the [Alpine 3.24 security database](https://secdb.alpinelinux.org/v
 when reviewing it. These minimums block known regressions, but are not a complete
 or continuously updated vulnerability scan. Reassess all OS packages during
 security reviews and raise the floors when new fixes become available.
+
+The November 24 floors follow the [Debian security tracker](https://security-tracker.debian.org/tracker/data/json) and [Alpine 3.24 security database](https://secdb.alpinelinux.org/v3.24/main.json). Fresh package indexes in disposable copies of both published image architectures offered Debian glibc `2.41-12+deb13u5`, krb5 `1.21.3-5+deb13u2`, and Alpine OpenSSL `3.5.9-r1`. Package availability alone does not upgrade an already pulled image. The krb5 advisories include KDC and GSSAPI paths; dotenc uses local SSH key generation rather than a Kerberos service, so a source-package match does not establish a direct CLI exploit path.
 
 The October 5 floors also require Debian's [PCRE2 backport](https://security-tracker.debian.org/tracker/CVE-2026-103111)
 and [Perl update](https://security-tracker.debian.org/tracker/CVE-2026-7017), plus
@@ -287,7 +291,7 @@ You can also switch the job back to `npm install -g @dotenc/cli`, Homebrew,
 Scoop, or a standalone binary from GitHub Releases. No encrypted environment
 format changes are tied to the image distribution path.
 
-The October 26 security baseline also requires Debian `ca-certificates >=20250419+deb13u1` and Alpine `ca-certificates`/`ca-certificates-bundle >=20261020-r0`, available for both architectures, to remove compromised eMudhra trust anchors. Bun 1.4.4 embedded in the rebuilt CLI independently updates its bundled trust store and blocks the compromised intermediate public keys. System trust and embedded-runtime trust are separate surfaces.
+The October 26 security baseline also requires Debian `ca-certificates >=20250419+deb13u1` and Alpine `ca-certificates`/`ca-certificates-bundle >=20261020-r0`, available for both architectures, to remove compromised eMudhra trust anchors. Bun 1.4.5 embedded in the current CLI independently updates its bundled trust store and blocks the compromised intermediate public keys. System trust and embedded-runtime trust are separate surfaces.
 
 Alpine `musl` and `musl-utils` must also be at least `1.2.6-r3` for CVE-2026-107891. Vendor security metadata and main indexes confirm that revision on amd64 and arm64; published images from 0.15.3 onward contain it.
 
