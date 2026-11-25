@@ -37,8 +37,13 @@ jobs:
 Keep this job on trusted base/action code, do not check out the pull-request
 head, and do not install, build, source, or execute pull-request content. See
 the full [setup and security guide](https://github.com/dotenc/dotenc/blob/main/docs/GITHUB_ACTIONS.md#redacted-pull-request-diffs).
-The guide also explains immutable SHA pinning and the inherent chosen-plaintext
-equality signal exposed by semantic changed/unchanged classification.
+The guide also explains immutable SHA pinning. A pull-request author, including
+someone using a fork, can encrypt a guessed value with the committed recipient
+public key and observe whether the diff classifies that value as changed.
+Repeated runs can confirm guesses for low-entropy values, such as a short
+shared code or a value chosen from a small set. The report does not show the
+value, but grant the dedicated diff identity only to environments where this
+equality signal and variable or recipient names may be disclosed to PR authors.
 Use the workflow's `github.token`; custom PAT and GitHub App comment identities
 are not supported by the marker-ownership check.
 
