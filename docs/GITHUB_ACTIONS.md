@@ -340,7 +340,8 @@ action classifies that variable as changed. Repeated runs can therefore test
 guesses for a base value even though the value, its hash, length, and prefixes
 are never reported. Treat this as a chosen-plaintext equality oracle: grant the
 dedicated diff key only to environments where that signal is acceptable, and
-do not use it for low-entropy secrets whose values could be guessed feasibly.
+do not use it for low-entropy secrets, such as a short shared code or a value
+chosen from a small set, whose values could be guessed feasibly.
 
 The convenient `dotenc/diff-action@v1` wrapper and the implementation `v1` ref
 are moving major-version tags. They are available for consistency with the
